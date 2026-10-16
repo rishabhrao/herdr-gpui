@@ -117,8 +117,27 @@ impl SettingsWindow {
         }));
     }
 
-    fn forget_device(&mut self, id: String, cx: &mut Context<Self>) {
+    /// Asks first, in the app's own dialog: a device that is forgotten must
+    /// pair again, and a stray tap on a phone should not do that.
+    fn forget_device(
+        &mut self,
+        id: String,
+        label: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let detail = format!("{label} must pair again to use Herdr UI. Its open pages close.");
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("Forget {label}?"),
+            Some(&detail),
+            &["Forget", "Cancel"],
+            cx,
+        );
         cx.spawn(async move |this, cx| {
+            if answer.await != Ok(0) {
+                return;
+            }
             let error = cx
                 .background_executor()
                 .spawn(async move { forget(&id) })
@@ -182,7 +201,7 @@ impl SettingsWindow {
             );
         }
         for device in &access.devices {
-            let id = device.id.clone();
+            let (id, label) = (device.id.clone(), device.label.clone());
             page = page.child(
                 ui::row(
                     theme,
@@ -201,8 +220,8 @@ impl SettingsWindow {
                         "Forget",
                         true,
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.forget_device(id.clone(), cx);
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.forget_device(id.clone(), label.clone(), window, cx);
                     })),
                 ),
             );

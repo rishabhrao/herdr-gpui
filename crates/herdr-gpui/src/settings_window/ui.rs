@@ -126,8 +126,10 @@ impl IntoElement for Row {
             .debug_selector(move || id.to_string())
             .relative()
             .flex()
+            .flex_wrap()
             .items_center()
-            .gap(px(16.))
+            .gap_x(px(16.))
+            .gap_y(px(6.))
             .min_h(px(ROW_HEIGHT))
             .py(px(6.))
             .border_b_1()
@@ -137,9 +139,10 @@ impl IntoElement for Row {
                 // Only the text dims: a control a disabled row cannot use is
                 // built disabled and dims itself, and GPUI multiplies nested
                 // opacity, so dimming the whole row would show it at 25 %.
+                // Narrower than this, the controls go under the text.
                 div()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(160.))
                     .when(dimmed, |text| text.opacity(0.5))
                     .child(
                         div()

@@ -12,6 +12,7 @@ mod layouts;
 mod navigation;
 mod pages;
 pub(crate) use layouts::{apply_loaded_layout, layout_load_revision};
+mod narrow;
 #[cfg(all(feature = "integration-test", target_os = "macos"))]
 mod native;
 mod persistence;
@@ -176,6 +177,8 @@ struct SettingsWindow {
     navigation_width: crate::panel_resize::PanelWidth,
     /// The window's width at its last render, which caps the section list.
     viewport_width: f32,
+    /// A narrow window shows the chosen page instead of the section list.
+    narrow_page: bool,
     loading: bool,
     saving: bool,
     quitting: bool,
@@ -308,6 +311,7 @@ impl SettingsWindow {
             thumb_grab: 0.,
             navigation_width: crate::panel_resize::SETTINGS_NAVIGATION,
             viewport_width: 0.,
+            narrow_page: false,
             loading: false,
             saving: false,
             quitting: false,
@@ -636,6 +640,7 @@ impl SettingsWindow {
         self.dismiss_control_font_picker(window, cx);
         self.clear_search(cx);
         self.section = section;
+        self.narrow_page = true;
         // A page opened from search or elsewhere shows in a short list too.
         self.navigation_scroll.scroll_to_item(section.nav_item());
         if section == Section::Code {
@@ -664,6 +669,7 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.viewport_width = f32::from(window.viewport_size().width);
         let searching = self.search_results.clone();
         let content = match &searching {
             Some(_) => self.render_search_results(cx),
@@ -677,92 +683,99 @@ impl Render for SettingsWindow {
                 _ => self.render_controls(window, cx),
             },
         };
-        self.viewport_width = f32::from(window.viewport_size().width);
-        let navigation = self.navigation(cx);
+        let navigation = self.navigation_shown().then(|| self.navigation(cx));
+        let page_shown = self.page_shown();
+        let back = self.back_to_sections(cx);
+        let padding = if self.narrow() { 16. } else { 28. };
         let font_picker = self.render_control_font_picker(window, cx);
         let this = cx.entity().downgrade();
         let header = crate::titlebar::header(&self.theme, window, move |window, cx| {
             let _ = this.update(cx, |view, cx| view.close(window, cx));
         });
         let theme = &self.theme;
-        let root = div()
-            .key_context("SettingsWindow")
-            .relative()
-            .track_focus(&self.focus)
-            .on_key_down(cx.listener(Self::settings_key))
-            .on_action(cx.listener(|this, action: &crate::RunCommand, window, cx| {
-                match action.command {
-                    // Its own close path, which saves pending edits first.
-                    crate::controls::Command::CloseWindow => this.close(window, cx),
-                    command if crate::window::run_window_command(command, window, cx) => {}
-                    crate::controls::Command::Settings => window.activate_window(),
-                    crate::controls::Command::NewWindow => {
-                        if let Some(target) = this.additional_window_target(cx) {
-                            crate::app::open_additional_window(target, cx);
+        let root =
+            div()
+                .key_context("SettingsWindow")
+                .relative()
+                .track_focus(&self.focus)
+                .on_key_down(cx.listener(Self::settings_key))
+                .on_action(cx.listener(|this, action: &crate::RunCommand, window, cx| {
+                    match action.command {
+                        // Its own close path, which saves pending edits first.
+                        crate::controls::Command::CloseWindow => this.close(window, cx),
+                        command if crate::window::run_window_command(command, window, cx) => {}
+                        crate::controls::Command::Settings => window.activate_window(),
+                        crate::controls::Command::NewWindow => {
+                            if let Some(target) = this.additional_window_target(cx) {
+                                crate::app::open_additional_window(target, cx);
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
-                }
-                // Session commands never cross from this independent root to
-                // the integration source, even when it is still alive.
-                cx.stop_propagation();
-            }))
-            .on_action(cx.listener(|this, _: &Close, window, cx| {
-                cx.stop_propagation();
-                this.close(window, cx);
-            }))
-            .size_full()
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .text_font(&self.config.ui)
-            .text_size(px(12.))
-            .line_height(px(18.))
-            .bg(rgb(theme.background))
-            .text_color(rgb(theme.foreground))
-            .children(header)
-            .child(
-                div().flex_1().min_h_0().flex().child(navigation).child(
-                    self.scroll_area(
-                        scrollbar::Pane::Body,
-                        div()
-                            .id("settings-body")
-                            .debug_selector(|| "settings-body".into())
-                            .flex_1()
-                            .min_w_0()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.body_scroll)
-                            .p(px(28.))
-                            .child(
+                    // Session commands never cross from this independent root to
+                    // the integration source, even when it is still alive.
+                    cx.stop_propagation();
+                }))
+                .on_action(cx.listener(|this, _: &Close, window, cx| {
+                    cx.stop_propagation();
+                    this.close(window, cx);
+                }))
+                .size_full()
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .text_font(&self.config.ui)
+                .text_size(px(12.))
+                .line_height(px(18.))
+                .bg(rgb(theme.background))
+                .text_color(rgb(theme.foreground))
+                .children(header)
+                .child(div().flex_1().min_h_0().flex().children(navigation).when(
+                    page_shown,
+                    |row| {
+                        row.child(
+                            self.scroll_area(
+                                scrollbar::Pane::Body,
                                 div()
-                                    .text_size(px(18.))
-                                    .line_height(px(26.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(if searching.is_some() {
-                                        "Results"
-                                    } else {
-                                        self.section.label()
-                                    }),
-                            )
-                            .child(div().mb(px(16.)).when_some(
-                                self.section.lead().filter(|_| searching.is_none()),
-                                |header, lead| {
-                                    header.mt(px(2.)).child(
+                                    .id("settings-body")
+                                    .debug_selector(|| "settings-body".into())
+                                    .flex_1()
+                                    .min_w_0()
+                                    .min_h_0()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.body_scroll)
+                                    .p(px(padding))
+                                    .children(back)
+                                    .child(
                                         div()
-                                            .text_size(px(12.))
-                                            .text_color(rgb(theme.subtext()))
-                                            .child(lead),
+                                            .text_size(px(18.))
+                                            .line_height(px(26.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(if searching.is_some() {
+                                                "Results"
+                                            } else {
+                                                self.section.label()
+                                            }),
                                     )
-                                },
-                            ))
-                            .child(content),
-                        cx,
-                    ),
-                ),
-            )
-            .child(self.footer(cx))
-            .children(font_picker);
+                                    .child(div().mb(px(16.)).when_some(
+                                        self.section.lead().filter(|_| searching.is_none()),
+                                        |header, lead| {
+                                            header.mt(px(2.)).child(
+                                                div()
+                                                    .text_size(px(12.))
+                                                    .text_color(rgb(theme.subtext()))
+                                                    .child(lead),
+                                            )
+                                        },
+                                    ))
+                                    .child(content),
+                                cx,
+                            ),
+                        )
+                    },
+                ))
+                .child(self.footer(cx))
+                .children(font_picker);
         let border = self.theme.active;
         crate::titlebar::frame(window, border, root)
     }

@@ -9,7 +9,16 @@ impl SettingsWindow {
         div()
             .id("settings-navigation")
             .relative()
-            .w(px(self.navigation_width.width(self.viewport_width)))
+            .map(|navigation| {
+                // Narrow, the list is the whole window until a page opens.
+                if self.narrow() {
+                    navigation.flex_1()
+                } else {
+                    navigation
+                        .w(px(self.navigation_width.width(self.viewport_width)))
+                        .flex_none()
+                }
+            })
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<PanelDrag>, _, cx| {
                     if *event.drag(cx) == PanelDrag::SettingsNavigation
@@ -33,7 +42,6 @@ impl SettingsWindow {
                 }),
             ))
             .h_full()
-            .flex_none()
             .flex()
             .flex_col()
             .p(px(12.))
