@@ -62,7 +62,7 @@ fn write_queued(
         let keep: Vec<bool> = batch
             .iter()
             .rev()
-            .map(|message| message.frame.is_none_or(|window| newest.insert(window)))
+            .map(|message| message.frame.is_none_or(|picture| newest.insert(picture)))
             .collect();
         let mut socket = socket.lock().unwrap_or_else(PoisonError::into_inner);
         for (message, keep) in batch.iter().zip(keep.iter().rev()) {
@@ -301,6 +301,7 @@ fn read_messages(
                     return "the page sent a message this build cannot read";
                 }
             },
+            ws::Message::Text(_) => {}
             ws::Message::Ping(payload) => {
                 let mut writer = writer.lock().unwrap_or_else(PoisonError::into_inner);
                 if ws::write_frame(&mut *writer, ws::PONG, &payload).is_err() {

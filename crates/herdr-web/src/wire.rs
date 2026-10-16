@@ -8,7 +8,7 @@ pub use scene::{WireScene, WireTile};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bumped whenever a message changes shape.
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 /// No message the page sends is larger; the host refuses bigger frames.
 pub const MAX_TO_HOST_BYTES: usize = 1024 * 1024;
 /// A frame of a very dense window, with room to spare; larger ones are refused.
@@ -167,6 +167,18 @@ pub enum PageOp {
     Blur {
         page: PageId,
     },
+    /// A web page browsed on the host: the page shows its pictures, which
+    /// [`PageOp::Frame`] sends, in place of an `<iframe>`, and sends its
+    /// input back as [`PageEvent::Input`].
+    Stream {
+        window: WindowId,
+        page: PageId,
+    },
+    /// The streamed page's latest picture, a JPEG.
+    Frame {
+        page: PageId,
+        jpeg: Vec<u8>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -244,6 +256,47 @@ pub enum PageEvent {
         page: PageId,
         body: String,
     },
+    /// Input for a streamed page, in its CSS pixels.
+    Input {
+        page: PageId,
+        input: StreamInput,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MouseKind {
+    Down,
+    Up,
+    Move,
+}
+
+/// What a streamed page is sent: pointer and wheel in its CSS pixels, keys
+/// by their DOM `key` and `code`, and text from a keyboard or IME.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum StreamInput {
+    Mouse {
+        kind: MouseKind,
+        x: f32,
+        y: f32,
+        button: Option<Button>,
+        clicks: u8,
+        mods: Mods,
+    },
+    Wheel {
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+    },
+    Key {
+        down: bool,
+        key: String,
+        code: String,
+        /// The text a press types, if any.
+        text: Option<String>,
+        mods: Mods,
+    },
+    Text(String),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

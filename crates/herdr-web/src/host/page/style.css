@@ -166,6 +166,17 @@ body {
   background: #ffffff;
 }
 
+/* A web page browsed on the serving machine, shown as its pictures. */
+.herdr-canvas-box img.herdr-stream {
+  position: absolute;
+  background: #ffffff;
+  object-fit: fill;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
 /* The keys a phone keyboard lacks, above the keyboard: the keys scroll,
    the keyboard and menu buttons stay at the end. */
 #herdr-bar {

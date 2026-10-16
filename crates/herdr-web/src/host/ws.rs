@@ -1,6 +1,7 @@
 //! The little of RFC 6455 a single page needs: the handshake, masked frames
 //! from the page with fragments joined, unmasked frames to it, and
-//! `permessage-deflate` when the page offers it.
+//! `permessage-deflate` when the page offers it. The same reader, as a
+//! client, reads a browser's DevTools socket, which speaks text.
 use super::deflate;
 use crate::{Error, Result};
 use base64::Engine as _;
@@ -10,7 +11,7 @@ use std::io::{self, Read, Write};
 const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 pub(super) const BINARY: u8 = 0x2;
 const CONTINUATION: u8 = 0x0;
-const TEXT: u8 = 0x1;
+pub(super) const TEXT: u8 = 0x1;
 pub(super) const CLOSE: u8 = 0x8;
 const PING: u8 = 0x9;
 pub(super) const PONG: u8 = 0xA;
@@ -26,6 +27,8 @@ pub(super) fn accept_key(key: &str) -> String {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Message {
     Binary(Vec<u8>),
+    /// Only a client reader returns text; a server reader skips it.
+    Text(Vec<u8>),
     Ping(Vec<u8>),
     Close,
 }
@@ -37,11 +40,13 @@ struct Frame {
     payload: Vec<u8>,
 }
 
-/// Reads whole messages; text messages and pongs are skipped.
+/// Reads whole messages; pongs, and a server's text messages, are skipped.
 pub(super) struct Reader<R> {
     inner: R,
     limit: usize,
     deflate: bool,
+    /// A client: frames come unmasked, and text is returned.
+    client: bool,
 }
 
 impl<R: Read> Reader<R> {
@@ -51,6 +56,17 @@ impl<R: Read> Reader<R> {
             inner,
             limit,
             deflate,
+            client: false,
+        }
+    }
+
+    /// Reads a server's unmasked frames, text included.
+    pub(super) fn client(inner: R, limit: usize) -> Self {
+        Self {
+            inner,
+            limit,
+            deflate: false,
+            client: true,
         }
     }
 
@@ -88,7 +104,14 @@ impl<R: Read> Reader<R> {
                 }
                 other => return Err(Error::Opcode(other)),
             }
-            // A finished text message is taken and dropped.
+            // A server takes a finished text message and drops it.
+            if frame.fin
+                && self.client
+                && message.as_ref().is_some_and(|(opcode, ..)| *opcode == TEXT)
+                && let Some((_, _, payload)) = message.take()
+            {
+                return Ok(Some(Message::Text(payload)));
+            }
             if frame.fin
                 && let Some((opcode, compressed, payload)) = message.take()
                 && opcode == BINARY
@@ -113,7 +136,8 @@ impl<R: Read> Reader<R> {
         let fin = head[0] & 0x80 != 0;
         let compressed = head[0] & RSV1 != 0;
         let opcode = head[0] & 0x0F;
-        if head[1] & 0x80 == 0 {
+        let masked = head[1] & 0x80 != 0;
+        if !masked && !self.client {
             return Err(Error::Unmasked);
         }
         let length = match head[1] & 0x7F {
@@ -133,7 +157,9 @@ impl<R: Read> Reader<R> {
             return Err(Error::FrameTooLarge(length));
         }
         let mut mask = [0; 4];
-        self.inner.read_exact(&mut mask)?;
+        if masked {
+            self.inner.read_exact(&mut mask)?;
+        }
         let mut payload = vec![0; length as usize];
         self.inner.read_exact(&mut payload)?;
         for (index, byte) in payload.iter_mut().enumerate() {
@@ -146,6 +172,37 @@ impl<R: Read> Reader<R> {
             payload,
         }))
     }
+}
+
+/// Writes one final frame masked with `mask`, as a client must.
+pub(super) fn write_masked(
+    writer: &mut impl Write,
+    opcode: u8,
+    payload: &[u8],
+    mask: [u8; 4],
+) -> io::Result<()> {
+    let mut frame = Vec::with_capacity(payload.len() + 14);
+    frame.push(0x80 | opcode);
+    match payload.len() {
+        length @ 0..=125 => frame.push(0x80 | length as u8),
+        length @ 126..=0xFFFF => {
+            frame.push(0x80 | 126);
+            frame.extend_from_slice(&(length as u16).to_be_bytes());
+        }
+        length => {
+            frame.push(0x80 | 127);
+            frame.extend_from_slice(&(length as u64).to_be_bytes());
+        }
+    }
+    frame.extend_from_slice(&mask);
+    frame.extend(
+        payload
+            .iter()
+            .enumerate()
+            .map(|(index, byte)| byte ^ mask[index % 4]),
+    );
+    writer.write_all(&frame)?;
+    writer.flush()
 }
 
 /// Writes one final, unmasked frame.

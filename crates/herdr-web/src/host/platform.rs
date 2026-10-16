@@ -203,6 +203,7 @@ impl Shared {
                 for prompt in self.prompts.borrow().iter() {
                     self.hub.send_to(link, &prompt.message);
                 }
+                self.hub.replay_pages(link);
                 self.hub.ready(link);
             }
             Inbound::Disconnected(link) => {

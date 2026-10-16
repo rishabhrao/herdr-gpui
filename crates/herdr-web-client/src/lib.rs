@@ -16,6 +16,8 @@ mod keys;
 #[cfg(target_family = "wasm")]
 mod pages;
 #[cfg(target_family = "wasm")]
+mod stream;
+#[cfg(target_family = "wasm")]
 mod surface;
 #[cfg(target_family = "wasm")]
 mod touch;

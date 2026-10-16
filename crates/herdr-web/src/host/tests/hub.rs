@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    host::hub::{Outbound, Visitor},
+    host::hub::{Outbound, Picture, Visitor},
     wire::{self, ToBrowser},
 };
 use std::sync::mpsc;
@@ -65,7 +65,7 @@ fn frames_name_their_window_and_a_full_page_is_cut_off_alone() {
     });
     hub.send(&ToBrowser::Toast { text: "x".into() });
     let first = slow_queue.try_recv().unwrap();
-    assert_eq!(first.frame, Some(9));
+    assert_eq!(first.frame, Some(Picture::Window(9)));
     // The slow page's queue was full: it was cut off, the other stays.
     assert!(slow_queue.try_recv().is_err());
     assert_eq!(received(&fast_queue).len(), 2);

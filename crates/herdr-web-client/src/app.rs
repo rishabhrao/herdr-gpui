@@ -59,7 +59,7 @@ pub(crate) struct App {
     /// Bottom to top; the main window first.
     surfaces: Vec<Surface>,
     focused: Option<WindowId>,
-    pages: Pages,
+    pub(crate) pages: Pages,
     pub(crate) input: input::State,
     pub(crate) dragging: Option<(WindowId, (f64, f64))>,
     /// Whether this page has been connected; a later connection reloads it,
@@ -494,6 +494,23 @@ impl App {
         {
             let _ = storage.set_item(ZOOM_KEY, &self.zoom.to_string());
         }
+    }
+
+    /// Sends keys to streamed page `page` until the app's canvas is used.
+    pub(crate) fn focus_stream(&mut self, page: wire::PageId) {
+        self.pages.set_focus(Some(page));
+        if !dom::coarse_pointer() {
+            self.keep_keyboard();
+        }
+    }
+
+    /// Sends `input` to the focused streamed page; whether one has focus.
+    pub(crate) fn to_stream(&self, input: wire::StreamInput) -> bool {
+        let Some(page) = self.pages.focused_stream() else {
+            return false;
+        };
+        self.send(&ToHost::Page(wire::PageEvent::Input { page, input }));
+        true
     }
 
     /// Shows or hides the phone keyboard, which follows the hidden input.

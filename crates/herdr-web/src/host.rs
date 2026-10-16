@@ -19,6 +19,7 @@ mod platform;
 mod routes;
 mod served;
 mod server;
+mod stream;
 mod window;
 mod ws;
 
@@ -89,6 +90,7 @@ pub fn bind(options: &Options) -> Result<Server> {
             )
         })
         .transpose()?;
+    stream::set_profile(options.state_dir.join("web-browser"));
     let (hub, inbound, requests) = hub::Hub::new(hub::Setup {
         doors: gate::Doors::new(port, &options.public_hosts),
         token: hub::saved_token(&options.state_dir.join("web-token"))?,

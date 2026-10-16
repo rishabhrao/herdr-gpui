@@ -210,10 +210,17 @@ herdr-gpui serve --port 8080 --session work
   clicks and scrolling.
 - Closing the page, or stopping `serve` with Ctrl-C, leaves the daemon and its
   terminals running.
-- Browser tabs show pages in an `<iframe>`. Sites that refuse to be framed
-  stay blank, page screenshots and notes on web pages are not available, and
-  local pages run sandboxed. Settings, logs, and other windows open as panels
-  inside the page.
+- Browser tabs with a web address are browsed by a headless Chrome on the
+  serving machine (Chrome, Chromium, or Edge; `HERDR_WEB_CHROME` names
+  another), and every page shows its pictures: `localhost` addresses reach
+  this machine's servers, and `http` pages work through an `https` tunnel.
+  Taps, scrolling, keys, and text go back to it. Its profile is kept in
+  `$XDG_STATE_HOME/herdr/gpui/web-browser`, so sign-ins last. Some sites
+  recognize a headless browser and ask for a check or refuse it. Without
+  Chrome, a web page loads in an `<iframe>` on each device instead, where
+  sites that refuse to be framed stay blank. Local pages always show in a
+  sandboxed `<iframe>`. Settings, logs, and other windows open as panels
+  inside the page, full screen on a phone.
 - Chrome keeps some shortcuts, such as Cmd-T, Cmd-W, and Cmd-N, for itself;
   use the app's other bindings for those commands (for example `ctrl-b c` for
   a new tab). There is no menu bar; every binding still works.

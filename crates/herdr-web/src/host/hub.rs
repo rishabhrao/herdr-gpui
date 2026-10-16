@@ -1,5 +1,6 @@
 //! What the threads share: the connected pages, the front doors and the
 //! devices allowed through them, and the browser tabs' pages.
+use super::stream::{self, Stream};
 use super::{
     access::Access,
     assets::Assets,
@@ -45,10 +46,16 @@ pub(super) enum Inbound {
     Disconnected(u64),
 }
 
-/// One message for a page's socket. A frame names its window, so a page
-/// that falls behind skips to the newest one.
+/// What a picture shows, so a page that falls behind skips to the newest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum Picture {
+    Window(WindowId),
+    Page(PageId),
+}
+
+/// One message for a page's socket. A picture names what it shows.
 pub(super) struct Outbound {
-    pub(super) frame: Option<WindowId>,
+    pub(super) frame: Option<Picture>,
     pub(super) bytes: Vec<u8>,
 }
 
@@ -65,8 +72,44 @@ pub type PageFiles = Arc<dyn Fn(&str) -> Option<(Vec<u8>, &'static str)> + Send 
 
 struct PageEntry {
     secret: String,
-    events: Box<dyn Fn(PageEvent) + Send + Sync>,
+    events: stream::Events,
     files: Option<PageFiles>,
+    /// A web page browsed here and streamed, which takes its input.
+    stream: Option<Arc<Stream>>,
+    shown: Shown,
+}
+
+/// What the pages were told about one page, for a page that connects later.
+#[derive(Default)]
+struct Shown {
+    /// `Open` with the latest address, or `Stream`.
+    opened: Option<PageOp>,
+    placed: Option<PageOp>,
+    /// A streamed page's latest picture.
+    picture: Option<PageOp>,
+}
+
+impl Shown {
+    fn record(&mut self, op: &PageOp) {
+        match op {
+            PageOp::Open { .. } | PageOp::Stream { .. } => self.opened = Some(op.clone()),
+            PageOp::Load { url, .. } => {
+                if let Some(PageOp::Open { url: shown, .. }) = &mut self.opened {
+                    shown.clone_from(url);
+                }
+            }
+            PageOp::Place { .. } => self.placed = Some(op.clone()),
+            PageOp::Hide { .. } => self.placed = None,
+            PageOp::Frame { .. } => self.picture = Some(op.clone()),
+            PageOp::Close { .. }
+            | PageOp::Script { .. }
+            | PageOp::Back { .. }
+            | PageOp::Forward { .. }
+            | PageOp::Reload { .. }
+            | PageOp::Focus { .. }
+            | PageOp::Blur { .. } => {}
+        }
+    }
 }
 
 /// What the server needs beyond the hub's own state.
@@ -222,7 +265,8 @@ impl Hub {
 
     fn encode(message: &ToBrowser) -> Option<Outbound> {
         let frame = match message {
-            ToBrowser::Frame { window, .. } => Some(*window),
+            ToBrowser::Frame { window, .. } => Some(Picture::Window(*window)),
+            ToBrowser::Page(PageOp::Frame { page, .. }) => Some(Picture::Page(*page)),
             _ => None,
         };
         match wire::encode(message) {
@@ -281,6 +325,58 @@ impl Hub {
         }
     }
 
+    /// Sends a page operation to every page, remembering what a page that
+    /// connects later needs to show the same.
+    pub(super) fn send_page(&self, op: PageOp) {
+        let page = match &op {
+            PageOp::Open { page, .. }
+            | PageOp::Place { page, .. }
+            | PageOp::Hide { page }
+            | PageOp::Close { page }
+            | PageOp::Load { page, .. }
+            | PageOp::Script { page, .. }
+            | PageOp::Back { page }
+            | PageOp::Forward { page }
+            | PageOp::Reload { page }
+            | PageOp::Focus { page }
+            | PageOp::Blur { page }
+            | PageOp::Stream { page, .. }
+            | PageOp::Frame { page, .. } => *page,
+        };
+        if let Some(entry) = self
+            .pages
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(&page)
+        {
+            entry.shown.record(&op);
+        }
+        self.send(&ToBrowser::Page(op));
+    }
+
+    /// Shows page `link`, which just connected, every page the others show.
+    pub(super) fn replay_pages(&self, link: u64) {
+        let ops: Vec<PageOp> = self
+            .pages
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .flat_map(|entry| {
+                [
+                    &entry.shown.opened,
+                    &entry.shown.placed,
+                    &entry.shown.picture,
+                ]
+                .into_iter()
+                .flatten()
+                .cloned()
+            })
+            .collect();
+        for op in ops {
+            self.send_to(link, &ToBrowser::Page(op));
+        }
+    }
+
     /// Hands a reader's message to the UI thread, waiting while it is busy.
     /// Returns false once the app has stopped listening.
     pub(super) fn receive(&self, inbound: Inbound) -> bool {
@@ -299,11 +395,23 @@ impl Hub {
         let page = match &event {
             PageEvent::Loaded { page, .. }
             | PageEvent::Title { page, .. }
-            | PageEvent::Posted { page, .. } => *page,
+            | PageEvent::Posted { page, .. }
+            | PageEvent::Input { page, .. } => *page,
         };
-        let pages = self.pages.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(entry) = pages.get(&page) {
-            (entry.events)(event);
+        let entry = {
+            let pages = self.pages.lock().unwrap_or_else(PoisonError::into_inner);
+            pages
+                .get(&page)
+                .map(|entry| (entry.events.clone(), entry.stream.clone()))
+        };
+        let Some((events, stream)) = entry else {
+            return;
+        };
+        match (event, stream) {
+            (PageEvent::Input { input, .. }, Some(stream)) => stream.input(input),
+            // Only a streamed page takes input.
+            (PageEvent::Input { .. }, None) => {}
+            (event, _) => events(event),
         }
     }
 
@@ -328,7 +436,9 @@ impl Pages {
     }
 
     /// Registers a page whose reports go to `events`, and whose local files,
-    /// if it shows any, `files` reads. Dropping the handle closes it.
+    /// if it shows any, `files` reads. A web page, with no files, is browsed
+    /// here and streamed when this machine has Chrome; otherwise each page
+    /// loads it itself. Dropping the handle closes it.
     pub fn register(
         &self,
         events: impl Fn(PageEvent) + Send + Sync + 'static,
@@ -337,6 +447,9 @@ impl Pages {
         let id = self.0.next_page.fetch_add(1, Ordering::Relaxed);
         let secret = random_hex(16)?;
         let base = format!("/page/{id}/{secret}");
+        let events: stream::Events = Arc::new(events);
+        let stream = (files.is_none() && stream::available())
+            .then(|| Stream::new(id, Arc::downgrade(&self.0), events.clone()));
         self.0
             .pages
             .lock()
@@ -345,14 +458,17 @@ impl Pages {
                 id,
                 PageEntry {
                     secret,
-                    events: Box::new(events),
+                    events,
                     files,
+                    stream: stream.clone(),
+                    shown: Shown::default(),
                 },
             );
         Ok(PageHandle {
             hub: self.0.clone(),
             id,
             base,
+            stream,
         })
     }
 }
@@ -362,6 +478,7 @@ pub struct PageHandle {
     hub: Arc<Hub>,
     id: PageId,
     base: String,
+    stream: Option<Arc<Stream>>,
 }
 
 impl PageHandle {
@@ -376,7 +493,10 @@ impl PageHandle {
     }
 
     pub fn send(&self, op: PageOp) {
-        self.hub.send(&ToBrowser::Page(op));
+        match &self.stream {
+            Some(stream) => stream.op(op),
+            None => self.hub.send_page(op),
+        }
     }
 }
 

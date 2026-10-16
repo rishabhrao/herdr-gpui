@@ -1,6 +1,7 @@
-//! Browser tabs in a served app. The page shows each tab's page as an
-//! `<iframe>` laid over the window where the native view would be; this
-//! side places it each frame and forwards its reports to the window's
+//! Browser tabs in a served app. The page shows each tab's page where the
+//! native view would be: a local page as an `<iframe>`, and a web page as
+//! the pictures of the page the server browses with Chrome on this machine.
+//! This side places it each frame and forwards its reports to the window's
 //! event queue, as a native view's handlers do.
 use super::{
     Location, Tab, TabId,
@@ -164,21 +165,28 @@ impl Remote {
         };
         let id = tab.id;
         let events = sender.clone();
-        let report = move |event: PageEvent| {
-            let event = match event {
-                PageEvent::Loaded { url, .. } => Event::Loaded(Source::Tab(id), url),
-                PageEvent::Title { title, .. } => Event::Title(Source::Tab(id), title),
-                PageEvent::Posted { body, .. } => {
-                    Event::Posted(Source::Tab(id), body, super::PostedFrom::Preview)
-                }
-            };
-            let _ = events.try_send(event);
-        };
         let local = match location {
             Location::Local { file } => Some(files(file.root().to_owned(), self.theme.clone())),
             _ => None,
         };
         let is_local = local.is_some();
+        // A local page is the app's preview; a web page, streamed from
+        // Chrome, posts as untrusted as any other site.
+        let from = if is_local {
+            super::PostedFrom::Preview
+        } else {
+            super::PostedFrom::Elsewhere
+        };
+        let report = move |event: PageEvent| {
+            let event = match event {
+                PageEvent::Loaded { url, .. } => Event::Loaded(Source::Tab(id), url),
+                PageEvent::Title { title, .. } => Event::Title(Source::Tab(id), title),
+                PageEvent::Posted { body, .. } => Event::Posted(Source::Tab(id), body, from),
+                // The server hands a streamed page's input to its browser.
+                PageEvent::Input { .. } => return,
+            };
+            let _ = events.try_send(event);
+        };
         let handle = served.register(report, local)?;
         handle.send(PageOp::Open {
             window: window.window_handle().window_id().as_u64(),

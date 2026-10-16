@@ -7,7 +7,7 @@ use crate::{
     keys,
     surface::Surface,
 };
-use herdr_web::wire::{Button, Delta, Input, Mods, TextOp, ToHost, WindowId};
+use herdr_web::wire::{Button, Delta, Input, Mods, StreamInput, TextOp, ToHost, WindowId};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
     CompositionEvent, EventTarget, HtmlTextAreaElement, InputEvent, KeyboardEvent, PointerEvent,
@@ -137,6 +137,12 @@ pub(crate) fn install(shared: &Shared, text: &HtmlTextAreaElement) -> Vec<Listen
         if event.is_composing() || event.key_code() == 229 {
             return;
         }
+        // A streamed page with focus takes every key but Command's, which
+        // stay the app's shortcuts.
+        if !event.meta_key() && app.to_stream(stream_key(&event, true)) {
+            event.prevent_default();
+            return;
+        }
         let key = keys::key(&event);
         let mods = keys::mods(&event);
         let capslock = event.get_modifier_state("CapsLock");
@@ -187,6 +193,9 @@ pub(crate) fn install(shared: &Shared, text: &HtmlTextAreaElement) -> Vec<Listen
         let Ok(mut app) = app.try_borrow_mut() else {
             return;
         };
+        if !event.meta_key() && app.to_stream(stream_key(&event, false)) {
+            return;
+        }
         let key = keys::key(&event);
         let mods = keys::mods(&event);
         let Some(window) = app.focused_window() else {
@@ -228,10 +237,23 @@ pub(crate) fn install(shared: &Shared, text: &HtmlTextAreaElement) -> Vec<Listen
         }
         event.prevent_default();
         area.set_value("");
+        let kind = event.input_type();
+        if app.pages.focused_stream().is_some() {
+            let data = event.data().filter(|data| !data.is_empty());
+            match (kind.as_str(), data) {
+                ("deleteContentBackward", _) => press_stream(&app, "Backspace", "Backspace"),
+                ("deleteContentForward", _) => press_stream(&app, "Delete", "Delete"),
+                ("insertLineBreak" | "insertParagraph", _) => press_stream(&app, "Enter", "Enter"),
+                (_, Some(data)) => {
+                    app.to_stream(StreamInput::Text(data));
+                }
+                _ => {}
+            }
+            return;
+        }
         let Some(window) = app.focused_window() else {
             return;
         };
-        let kind = event.input_type();
         // A phone keyboard sends its keys this way rather than as key presses.
         let key = match kind.as_str() {
             "deleteContentBackward" => Some("backspace"),
@@ -314,6 +336,12 @@ pub(crate) fn install(shared: &Shared, text: &HtmlTextAreaElement) -> Vec<Listen
             };
             app.input.composing = false;
             area.set_value("");
+            if app.pages.focused_stream().is_some() {
+                if let Some(text) = event.data().filter(|data| !data.is_empty()) {
+                    app.to_stream(StreamInput::Text(text));
+                }
+                return;
+            }
             let Some(window) = app.focused_window() else {
                 return;
             };
@@ -395,6 +423,8 @@ pub(crate) fn attach(shared: &Shared, surface: &Surface) -> Vec<Listener> {
         };
         app.raise(id);
         app.focus_window(id);
+        // The app's own canvas takes the keys back from a streamed page.
+        app.pages.set_focus(None);
         if let Some(canvas) = app.surface(id).map(|surface| surface.canvas.clone()) {
             let _ = canvas.set_pointer_capture(event.pointer_id());
         }
@@ -649,4 +679,30 @@ fn drag(shared: &Shared, id: WindowId, bar: &EventTarget) -> Vec<Listener> {
         }
     }));
     listeners
+}
+
+/// A key event as a streamed page's key.
+fn stream_key(event: &KeyboardEvent, down: bool) -> StreamInput {
+    let key = event.key();
+    let typing = key.chars().count() == 1 && !event.ctrl_key() && !event.meta_key();
+    StreamInput::Key {
+        down,
+        text: typing.then(|| key.clone()),
+        key,
+        code: event.code(),
+        mods: keys::mods(event),
+    }
+}
+
+/// A key a phone keyboard sends as an edit, pressed and released.
+fn press_stream(app: &crate::app::App, key: &str, code: &str) {
+    for down in [true, false] {
+        app.to_stream(StreamInput::Key {
+            down,
+            key: key.to_owned(),
+            code: code.to_owned(),
+            text: None,
+            mods: Mods::default(),
+        });
+    }
 }
