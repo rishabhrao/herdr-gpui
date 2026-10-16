@@ -57,8 +57,10 @@ pub(super) struct Fold {
 
 pub(super) struct WorkspaceRow<'a> {
     pub(super) workspace: &'a ClientShellWorkspace,
-    /// What the row is called: a child's branch unless the user renamed it.
+    /// The row's key: a child's branch unless the user renamed it.
     pub(super) label: &'a str,
+    /// What the row shows: the workspace's own name.
+    pub(super) title: &'a str,
     pub(super) tree: RowTree,
     pub(super) icon: RowIcon,
     pub(super) fold: Option<Fold>,

@@ -107,6 +107,7 @@ impl RowLayout for Orca {
         let (branch, status, upstream) = (row.branch(), row.status(), row.upstream());
         let WorkspaceRow {
             label,
+            title,
             tree,
             fold,
             grouped,
@@ -203,7 +204,7 @@ impl RowLayout for Orca {
                     .when(state.selected, |title| {
                         title.font_weight(FontWeight::SEMIBOLD)
                     }),
-                label,
+                title,
             )
             .when_some(primary, |line, primary| {
                 let width = (7. * glyph).ceil() + 10.;

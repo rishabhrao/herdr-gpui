@@ -283,7 +283,8 @@ impl HerdrWindow {
                     tokens::space_rows(
                         &self.config.sidebar_layout.spaces,
                         SpaceContext {
-                            label,
+                            // The `workspace` token shows the name, as rows do.
+                            label: super::workspaces::workspace_title(workspace),
                             branch: workspace.branch.as_deref(),
                             status: shown_status,
                             ahead_behind: workspace.git_ahead_behind,
@@ -384,6 +385,7 @@ impl HerdrWindow {
                     RowData::Workspace(WorkspaceRow {
                         workspace,
                         label,
+                        title: super::workspaces::workspace_title(workspace),
                         tree,
                         icon: if indented || !self.config.show_repository_icons {
                             RowIcon::None

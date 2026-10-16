@@ -135,12 +135,25 @@ pub(super) fn workspace_note<'a>(
     )
 }
 
+/// A row's key, as Herdr names a worktree: its branch under a repository
+/// unless renamed. Selectors, search, and notifications use it.
 pub(crate) fn workspace_label(workspace: &ClientShellWorkspace, indented: bool) -> &str {
     let branch = (indented && !workspace.custom_label)
         .then_some(workspace.branch.as_deref())
         .flatten()
         .map(|branch| branch.strip_prefix("worktree/").unwrap_or(branch));
     first_text([branch, Some(&workspace.label)], "workspace")
+}
+
+/// The name a row shows: the workspace's own, as the user named it. The
+/// branch stands in only for a workspace with no name; rows that have room
+/// show it on their second line.
+pub(crate) fn workspace_title(workspace: &ClientShellWorkspace) -> &str {
+    let branch = workspace
+        .branch
+        .as_deref()
+        .map(|branch| branch.strip_prefix("worktree/").unwrap_or(branch));
+    first_text([Some(workspace.label.as_str()), branch], "workspace")
 }
 
 /// Collapsed groups show their most urgent member's status.

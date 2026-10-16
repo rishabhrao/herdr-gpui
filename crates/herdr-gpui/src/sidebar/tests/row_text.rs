@@ -171,6 +171,7 @@ fn cells_hand_their_state_and_data_to_the_layout() {
         RowData::Workspace(WorkspaceRow {
             workspace: &snapshot.workspaces[0],
             label: "herdr",
+            title: "herdr",
             tree: RowTree::None,
             icon: RowIcon::None,
             fold: None,

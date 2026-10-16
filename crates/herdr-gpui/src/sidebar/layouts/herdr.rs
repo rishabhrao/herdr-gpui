@@ -25,6 +25,7 @@ impl RowLayout for Herdr {
         let (branch, status, upstream) = (row.branch().unwrap_or(""), row.status(), row.upstream());
         let WorkspaceRow {
             label,
+            title,
             tree,
             icon,
             fold,
@@ -42,7 +43,7 @@ impl RowLayout for Herdr {
         });
         super::super::row::row(
             label,
-            &[(label, true)],
+            &[(title, true)],
             branch,
             RowKind::Workspace,
             status,

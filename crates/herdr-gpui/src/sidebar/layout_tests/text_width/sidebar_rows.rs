@@ -247,11 +247,9 @@ pub(super) fn check_collapse_toggle(
                 "\u{25be}"
             }));
             assert_eq!(view.collapsed_repos.contains(REPO_KEY), collapsed);
-            assert_eq!(
-                !cx.global::<TextProbes>().0.contains_key("sidebar-child"),
-                collapsed
-            );
         });
+        // The child row is found by its key; it shows the workspace's name.
+        assert_eq!(cx.debug_bounds("row-sidebar-child").is_none(), collapsed);
     }
     before
 }

@@ -179,3 +179,23 @@ fn child_labels_follow_upstream_custom_label_and_branch_rules() {
     workspace.branch = None;
     assert_eq!(workspace_label(&workspace, true), "herdr");
 }
+
+#[test]
+fn rows_show_the_workspace_name_and_the_branch_only_without_one() {
+    let mut workspace = layout_tests::snapshot(1).workspaces.remove(0);
+    workspace.branch = Some("worktree/fix-sidebar".into());
+    assert_eq!(
+        crate::sidebar::workspaces::workspace_title(&workspace),
+        "herdr"
+    );
+    workspace.label = String::new();
+    assert_eq!(
+        crate::sidebar::workspaces::workspace_title(&workspace),
+        "fix-sidebar"
+    );
+    workspace.branch = None;
+    assert_eq!(
+        crate::sidebar::workspaces::workspace_title(&workspace),
+        "workspace"
+    );
+}

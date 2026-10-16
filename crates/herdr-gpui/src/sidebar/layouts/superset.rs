@@ -209,6 +209,7 @@ impl RowLayout for Superset {
         let (status, upstream) = (row.status(), row.upstream());
         let WorkspaceRow {
             label,
+            title,
             tree,
             icon,
             fold,
@@ -273,7 +274,7 @@ impl RowLayout for Superset {
                     } else {
                         text_color(state, theme)
                     })),
-                label,
+                title,
             )
             // Configured rows show the counts only through `git_status`.
             .when_some(upstream, |line, upstream| {

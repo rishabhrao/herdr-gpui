@@ -211,11 +211,12 @@ fn the_workspace_menu_folds_and_unfolds_a_worktree_group(cx: &mut gpui::TestAppC
             // Folding is the client's own view of the list, not a daemon request.
             assert!(view.menu.page.is_none(), "{item} left the menu open");
             assert_eq!(view.collapsed_repos.contains(REPO_KEY), collapsed);
-            assert_eq!(
-                !cx.global::<TextProbes>().0.contains_key("sidebar-child"),
-                collapsed,
-                "{item} did not change the visible children"
-            );
         });
+        // The child row is found by its key; it shows the workspace's name.
+        assert_eq!(
+            cx.debug_bounds("row-sidebar-child").is_none(),
+            collapsed,
+            "{item} did not change the visible children"
+        );
     }
 }
