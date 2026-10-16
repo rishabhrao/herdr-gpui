@@ -558,9 +558,12 @@ impl HerdrWindow {
             Row::Local(name) => {
                 self.dismiss_menu(window, cx);
                 self.select_local_session(&name, cx);
-                // The picker's own follow-up: the sidebar follows the host that
-                // was just chosen, and another session's tree is not this one's.
-                self.device_filter = Some(self.endpoints[0].id.clone());
+                // The picker's own follow-up: a sidebar showing one device
+                // follows the host just chosen, and another session's tree is
+                // not this one's. All Devices stays All Devices.
+                if self.device_filter.is_some() {
+                    self.device_filter = Some(self.endpoints[0].id.clone());
+                }
                 for scroll in &self.sidebar_scroll {
                     scroll.set_offset(Point::default());
                 }
@@ -585,10 +588,11 @@ impl HerdrWindow {
                 }
                 self.dismiss_menu(window, cx);
                 self.select_device_session(&id, &session, cx);
-                // The local branch's own follow-up: the sidebar follows the host
-                // that was just chosen, and another session's tree is not this
-                // one's.
-                self.device_filter = Some(id);
+                // The local branch's own follow-up: a sidebar showing one
+                // device follows the host just chosen. All Devices stays.
+                if self.device_filter.is_some() {
+                    self.device_filter = Some(id);
+                }
                 for scroll in &self.sidebar_scroll {
                     scroll.set_offset(Point::default());
                 }
