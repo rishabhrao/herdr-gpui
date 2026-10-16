@@ -856,6 +856,12 @@ impl Render for HerdrWindow {
                     .min_h_0()
                     .relative()
                     .children(sidebar.map(|(sidebar, width)| {
+                        // The drawer draws the sidebar; its column keeps the room.
+                        if self.drawer_open()
+                            && let Some(spacer) = self.drawer_spacer()
+                        {
+                            return spacer;
+                        }
                         let column = match merged {
                             true => self.sidebar_column(sidebar, window, cx).into_any_element(),
                             false => sidebar.into_any_element(),
@@ -873,7 +879,8 @@ impl Render for HerdrWindow {
                             .child(content)
                             .children(self.render_notices(cx))
                             .children(self.zen_status_bar(cx)),
-                    ),
+                    )
+                    .children(self.render_drawer(cx)),
             )
             .when(merged && !zen, |root| {
                 root.children(self.render_worktree_banner())

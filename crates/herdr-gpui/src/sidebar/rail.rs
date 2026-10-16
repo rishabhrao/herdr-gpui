@@ -64,7 +64,8 @@ impl HerdrWindow {
     /// SSH host is shown, as Herdr keeps presentation local. Before shared
     /// settings load, Herdr's default rail applies.
     pub(crate) fn chrome_sidebar_mode(&self) -> SidebarMode {
-        if self.sidebar_visible {
+        // A compact window opens the expanded sidebar as a drawer instead.
+        if self.sidebar_visible && !self.compact() {
             return SidebarMode::Expanded;
         }
         match self
@@ -80,6 +81,10 @@ impl HerdrWindow {
     }
 
     pub(crate) fn toggle_sidebar(&mut self) {
+        if self.compact() {
+            self.sidebar_drawer = !self.sidebar_drawer;
+            return;
+        }
         self.sidebar_visible = !self.sidebar_visible;
         self.sidebar_start_pending = false;
     }

@@ -270,7 +270,10 @@ impl HerdrWindow {
                 cx.stop_propagation();
                 this.command(crate::controls::Command::ToggleSidebar, window, cx);
             }))
-            .child(sidebar_glyph(self.sidebar_visible, &self.theme))
+            .child(sidebar_glyph(
+                self.drawer_open() || (self.sidebar_visible && !self.compact()),
+                &self.theme,
+            ))
             .into_any_element()
     }
 
@@ -418,7 +421,9 @@ pub(crate) fn header(
     window: &Window,
     close: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Option<Stateful<Div>> {
-    (cfg!(target_os = "macos") || decorations::client(window)).then(|| {
+    // A served window's panel has the page's own title bar and close button.
+    let needed = cfg!(target_os = "macos") || decorations::client(window);
+    (needed && !crate::served::active()).then(|| {
         let buttons = controls(window, theme, close);
         render(bar(theme.surface), None, window).children(buttons)
     })

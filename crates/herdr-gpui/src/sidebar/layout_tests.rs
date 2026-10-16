@@ -606,6 +606,7 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
         wheel: WheelAccumulator::default(),
         sidebar_width: None,
         sidebar_drag: None,
+        sidebar_drawer: false,
         workspace_drag: None,
         device_drag: None,
         device_order: Vec::new(),

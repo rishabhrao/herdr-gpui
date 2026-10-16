@@ -271,6 +271,8 @@ pub(crate) struct HerdrWindow {
     pub(crate) settings: crate::settings_panel::SettingsPanel,
     pub(super) shift_taps: double_shift::ShiftTaps,
     pub(crate) sidebar_drag: Option<sidebar::SidebarDrag>,
+    /// A compact window's sidebar drawer is open.
+    pub(crate) sidebar_drawer: bool,
     /// Whether the last spaces list render was folded to its headers for a
     /// lifted device, whose geometry the next frame must not pin from.
     pub(crate) sidebar_folded: std::cell::Cell<bool>,

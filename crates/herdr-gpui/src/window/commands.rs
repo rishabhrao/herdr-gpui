@@ -59,6 +59,8 @@ impl HerdrWindow {
         if self.menu.page.is_some() {
             return false;
         }
+        // Choosing a place in the drawer is done with it.
+        self.close_drawer();
         self.dispatch_navigation(target, cx)
     }
 

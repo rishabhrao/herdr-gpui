@@ -233,6 +233,7 @@ impl HerdrWindow {
             settings: Default::default(),
             shift_taps: Default::default(),
             sidebar_drag: None,
+            sidebar_drawer: false,
             sidebar_folded: Default::default(),
             sidebar_modified: false,
             sidebar_pin_reveal: Default::default(),

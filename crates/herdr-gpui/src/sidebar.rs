@@ -4,6 +4,7 @@
 mod agents;
 mod cell;
 mod device_drag;
+mod drawer;
 mod host_row;
 mod hover;
 mod layout;
