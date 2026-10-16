@@ -76,6 +76,23 @@ body {
   max-height: 100%;
 }
 
+/* On a phone a panel, such as Settings, is a full screen of its own. */
+@media (max-width: 600px) {
+  .herdr-window.floating {
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .herdr-window.floating .herdr-titlebar {
+    cursor: default;
+  }
+}
+
 .herdr-titlebar {
   flex: none;
   display: flex;
@@ -149,20 +166,43 @@ body {
   background: #ffffff;
 }
 
-/* The keys a phone keyboard lacks, above the keyboard. */
+/* The keys a phone keyboard lacks, above the keyboard: the keys scroll,
+   the keyboard and menu buttons stay at the end. */
 #herdr-bar {
   flex: none;
   display: flex;
+  align-items: center;
   gap: 4px;
-  overflow-x: auto;
   padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
   background: var(--herdr-panel);
   border-top: 1px solid var(--herdr-border);
-  scrollbar-width: none;
 }
 
 #herdr-bar[hidden] {
   display: none;
+}
+
+.herdr-keys {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+}
+
+.herdr-keys::-webkit-scrollbar {
+  display: none;
+}
+
+.herdr-pinned {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding-left: 4px;
+  border-left: 1px solid var(--herdr-border);
 }
 
 #herdr-bar button {
@@ -176,6 +216,17 @@ body {
   color: var(--herdr-fg);
   font: 15px ui-monospace, SFMono-Regular, Menlo, monospace;
   touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#herdr-bar button:active {
+  background: var(--herdr-border);
+}
+
+#herdr-bar button.herdr-icon {
+  display: grid;
+  place-items: center;
+  padding: 0;
 }
 
 #herdr-bar button[aria-pressed="true"] {
@@ -322,6 +373,20 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.herdr-device {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.herdr-card button.herdr-danger {
+  background: #d1242f;
+  border-color: #d1242f;
+  color: #ffffff;
 }
 
 #herdr-toasts {

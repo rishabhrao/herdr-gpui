@@ -8,6 +8,8 @@ mod dom;
 #[cfg(target_family = "wasm")]
 mod exports;
 #[cfg(target_family = "wasm")]
+mod fling;
+#[cfg(target_family = "wasm")]
 mod input;
 #[cfg(target_family = "wasm")]
 mod keys;

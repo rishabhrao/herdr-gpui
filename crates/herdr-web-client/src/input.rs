@@ -427,13 +427,14 @@ pub(crate) fn attach(shared: &Shared, surface: &Surface) -> Vec<Listener> {
     }));
 
     let app = shared.clone();
+    let owner = shared.clone();
     listeners.push(Listener::new(target, "pointerup", false, move |event| {
         let event: PointerEvent = event.unchecked_into();
         let Ok(mut app) = app.try_borrow_mut() else {
             return;
         };
         if is_touch(&event) {
-            crate::touch::up(&mut app, &event, false);
+            crate::touch::up(&owner, &mut app, &event, false);
             return;
         }
         let Some((x, y)) = position(&event, &app, id) else {
@@ -497,7 +498,7 @@ pub(crate) fn attach(shared: &Shared, surface: &Surface) -> Vec<Listener> {
         if is_touch(&event)
             && let Ok(mut app) = cancel.try_borrow_mut()
         {
-            crate::touch::up(&mut app, &event, true);
+            crate::touch::up(&cancel, &mut app, &event, true);
         }
     }));
 

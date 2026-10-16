@@ -166,6 +166,9 @@ function waitForApproval(reply) {
 // --- The app's notes ----------------------------------------------------
 
 let app;
+// What `/auth/status` said when the app started: whether this browser is
+// on this machine.
+let appStatus;
 // The app's open questions, oldest first; the page shows one at a time.
 let prompts = [];
 let shownPrompt = null;
@@ -284,19 +287,42 @@ async function devices() {
     toast(String(error));
     return;
   }
-  const rows = list.map((device) =>
-    element("li", {}, [
-      element("span", { text: device.current ? `${device.label} (this device)` : device.label }),
-      element("button", {
-        text: "Forget",
-        onclick: async () => {
-          await post("/auth/forget", { id: device.id }).catch((error) => toast(String(error.message || error)));
-          if (device.current) location.reload();
-          else devices();
-        },
-      }),
-    ]),
-  );
+  const seen = (seconds) => {
+    const minutes = Math.floor((Date.now() / 1000 - seconds) / 60);
+    if (minutes < 1) return "seen just now";
+    if (minutes < 60) return `seen ${minutes} min ago`;
+    if (minutes < 1440) return `seen ${Math.floor(minutes / 60)} h ago`;
+    return `seen ${Math.floor(minutes / 1440)} days ago`;
+  };
+  const rows = list.map((device) => {
+    // A second tap forgets: one stray tap must not lock a device out.
+    let armed = false;
+    const forget = element("button", {
+      text: "Forget",
+      onclick: async () => {
+        if (!armed) {
+          armed = true;
+          forget.textContent = "Tap to forget";
+          forget.classList.add("herdr-danger");
+          return;
+        }
+        await post("/auth/forget", { id: device.id }).catch((error) => toast(String(error.message || error)));
+        if (device.current) location.reload();
+        else devices();
+      },
+    });
+    return element("li", {}, [
+      element("div", { class: "herdr-device" }, [
+        element("span", { text: device.current ? `${device.label} (this device)` : device.label }),
+        element("span", {
+          class: "herdr-hint",
+          text: `${device.remote ? "Through the tunnel" : "On this Mac"} \u00b7 ${seen(device.lastSeen)}`,
+        }),
+      ]),
+      forget,
+    ]);
+  });
+  if (rows.length === 0) rows.push(element("li", { class: "herdr-hint", text: "No device is paired." }));
   overlay([
     element("h1", { text: "Paired devices" }),
     element("ul", { class: "herdr-devices" }, rows),
@@ -308,49 +334,77 @@ function menu() {
   const zoom = (factor) => {
     const next = Math.min(2, Math.max(0.5, Math.round(app.zoom() * factor * 20) / 20));
     app.set_zoom(next);
-    toast(`Zoom ${Math.round(next * 100)}%`);
+    toast(`Text size ${Math.round(next * 100)}%`);
   };
+  const remote = !(appStatus && appStatus.local);
   overlay([
     element("h1", { text: "Herdr UI" }),
+    element("p", { class: "herdr-hint", text: "Text size on this device" }),
     element("div", { class: "herdr-row" }, [
-      element("button", { text: "Zoom out", onclick: () => zoom(1 / 1.1) }),
-      element("button", { text: "Reset", onclick: () => { app.set_zoom(1); toast("Zoom 100%"); } }),
-      element("button", { text: "Zoom in", onclick: () => zoom(1.1) }),
+      element("button", { text: "A−", "aria-label": "Smaller", onclick: () => zoom(1 / 1.1) }),
+      element("button", { text: "100%", "aria-label": "Reset", onclick: () => { app.set_zoom(1); toast("Text size 100%"); } }),
+      element("button", { text: "A+", "aria-label": "Larger", onclick: () => zoom(1.1) }),
     ]),
-    element("button", { text: "Allow notifications", onclick: () => "Notification" in window && Notification.requestPermission() }),
-    element("button", { text: "Paired devices", onclick: devices }),
     element("button", {
-      text: "Sign out this device",
-      onclick: () => post("/auth/sign-out", {}).finally(() => location.reload()),
+      text: "Allow notifications",
+      onclick: () => "Notification" in window && Notification.requestPermission().then((answer) => toast(`Notifications: ${answer}`)),
     }),
+    element("button", { text: "Paired devices", onclick: devices }),
+    ...(remote
+      ? [element("button", { text: "Sign out this device", onclick: () => post("/auth/sign-out", {}).finally(() => location.reload()) })]
+      : []),
     element("button", { class: "herdr-primary", text: "Close", onclick: closeOverlay }),
   ]);
 }
+
+// A key that also holds Control, as `ctrl` then the key would.
+function chord(name) {
+  app.send_key(name, true, false, false, false);
+}
+
+// Line-art icons for keys whose symbol many phone fonts lack. Static markup.
+const ICONS = {
+  keyboard:
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg>',
+  more:
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
+};
 
 function keysBar() {
   const bar = $("herdr-bar");
   const button = (label, title, run, extra = {}) =>
     element("button", { text: label, title, "aria-label": title, onclick: run, ...extra });
+  const icon = (name, title, run) => {
+    const node = button("", title, run);
+    node.innerHTML = ICONS[name];
+    node.classList.add("herdr-icon");
+    return node;
+  };
   let keyboard = false;
-  const items = [
-    button("⌨", "Keyboard", () => {
-      keyboard = !keyboard;
-      app.keyboard(keyboard);
-    }),
+  // The keys scroll; the keyboard and the menu stay in reach at the end.
+  const keys = element("div", { class: "herdr-keys" }, [
     button("esc", "Escape", () => key("escape")),
     button("tab", "Tab", () => key("tab")),
     button("ctrl", "Control (next key)", () => { sticky.control = !sticky.control; stickyChanged(bar); }, { "data-sticky": "control" }),
-    button("alt", "Option (next key)", () => { sticky.alt = !sticky.alt; stickyChanged(bar); }, { "data-sticky": "alt" }),
-    button("⌘", "Command (next key)", () => { sticky.platform = !sticky.platform; stickyChanged(bar); }, { "data-sticky": "platform" }),
+    button("^C", "Interrupt (Control-C)", () => chord("c")),
     button("←", "Left", () => key("left")),
     button("↑", "Up", () => key("up")),
     button("↓", "Down", () => key("down")),
     button("→", "Right", () => key("right")),
     button("⏎", "Return", () => key("enter")),
+    button("alt", "Option (next key)", () => { sticky.alt = !sticky.alt; stickyChanged(bar); }, { "data-sticky": "alt" }),
+    button("⌘", "Command (next key)", () => { sticky.platform = !sticky.platform; stickyChanged(bar); }, { "data-sticky": "platform" }),
+    button("^D", "End of input (Control-D)", () => chord("d")),
     button("paste", "Paste", paste),
-    button("⋯", "Menu", menu),
-  ];
-  bar.replaceChildren(...items);
+  ]);
+  const pinned = element("div", { class: "herdr-pinned" }, [
+    icon("keyboard", "Keyboard", () => {
+      keyboard = !keyboard;
+      app.keyboard(keyboard);
+    }),
+    icon("more", "Menu", menu),
+  ]);
+  bar.replaceChildren(keys, pinned);
   // A tap on the bar must not take the keyboard away from the app.
   bar.addEventListener("pointerdown", (event) => event.preventDefault());
   window.addEventListener("herdr", (event) => {
@@ -375,9 +429,13 @@ function followViewport() {
   apply();
 }
 
-export function start(wasm, status) {
+export function start(wasm, started) {
   app = wasm;
+  appStatus = started;
   followViewport();
-  if (window.matchMedia("(pointer: coarse)").matches) keysBar();
-  if (status && status.label) document.title = "Herdr UI";
+  // `?touch` shows the touch controls on any screen, such as a touch
+  // laptop's, or a desktop browser trying the phone layout.
+  const touch = new URLSearchParams(location.search).has("touch");
+  if (touch || window.matchMedia("(pointer: coarse)").matches) keysBar();
+  if (started && started.label) document.title = "Herdr UI";
 }

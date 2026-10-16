@@ -4,7 +4,7 @@
 //! only from the keys bar.
 use crate::{
     app::{App, Shared},
-    dom,
+    dom, fling,
 };
 use herdr_web::wire::{Button, Delta, Input, Mods, ToHost, WindowId};
 use wasm_bindgen::{JsCast, closure::Closure};
@@ -41,6 +41,8 @@ pub(crate) struct Touch {
     last: (f64, f64),
     /// Tells a long-press timer whether its gesture is still the current one.
     generation: u32,
+    /// The finger's recent path, for a swipe's momentum.
+    tracker: fling::Tracker,
 }
 
 fn client(event: &PointerEvent) -> (f64, f64) {
@@ -95,6 +97,19 @@ fn click(app: &mut App, id: WindowId, at: (f32, f32), button: Button) {
     ] {
         app.send(&ToHost::Input { window: id, input });
     }
+    // A finger leaves nothing under it: without this, the hover and
+    // tooltip of whatever was tapped stay up until the next tap.
+    if button == Button::Left {
+        app.send(&ToHost::Input {
+            window: id,
+            input: Input::MouseExit {
+                x,
+                y,
+                pressed: None,
+                mods,
+            },
+        });
+    }
 }
 
 pub(crate) fn down(shared: &Shared, app: &mut App, id: WindowId, event: &PointerEvent) {
@@ -106,6 +121,10 @@ pub(crate) fn down(shared: &Shared, app: &mut App, id: WindowId, event: &Pointer
     touch.fingers.push((event.pointer_id(), point.0, point.1));
     match touch.fingers.len() {
         1 => {
+            // A new touch stops a swipe still moving.
+            fling::stop();
+            touch.tracker.reset();
+            touch.tracker.push(fling::now(), point.0, point.1);
             touch.mode = Mode::Pending;
             touch.window = Some(id);
             touch.start = point;
@@ -160,6 +179,7 @@ pub(crate) fn moved(app: &mut App, event: &PointerEvent) {
     {
         (finger.1, finger.2) = point;
     }
+    touch.tracker.push(fling::now(), point.0, point.1);
     match touch.mode {
         Mode::Pending => {
             let (sx, sy) = touch.start;
@@ -203,7 +223,7 @@ fn scroll(app: &mut App, point: (f64, f64)) {
     });
 }
 
-pub(crate) fn up(app: &mut App, event: &PointerEvent, cancelled: bool) {
+pub(crate) fn up(shared: &Shared, app: &mut App, event: &PointerEvent, cancelled: bool) {
     let touch = &mut app.input.touch;
     touch
         .fingers
@@ -220,6 +240,34 @@ pub(crate) fn up(app: &mut App, event: &PointerEvent, cancelled: bool) {
     }
     touch.mode = Mode::Idle;
     touch.generation = touch.generation.wrapping_add(1);
+    // A quick swipe keeps scrolling, slowing down, after the finger lifts.
+    if mode == Mode::Scrolling
+        && !cancelled
+        && let Some(id) = window
+        && let Some(velocity) = touch.tracker.velocity()
+    {
+        let shared = shared.clone();
+        fling::start(velocity, move |dx, dy| {
+            let Ok(app) = shared.try_borrow_mut() else {
+                return true;
+            };
+            let Some((x, y)) = app_point(&app, id, start) else {
+                return false;
+            };
+            let zoom = app.surface(id).map_or(app.zoom, |surface| surface.scale);
+            app.send(&ToHost::Input {
+                window: id,
+                input: Input::Scroll {
+                    x,
+                    y,
+                    delta: Delta::Pixels((dx / zoom) as f32, (dy / zoom) as f32),
+                    mods: Mods::default(),
+                },
+            });
+            true
+        });
+        return;
+    }
     if mode == Mode::Pending
         && !cancelled
         && let Some(id) = window
