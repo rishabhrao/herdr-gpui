@@ -2,6 +2,7 @@ use super::*;
 use control::BrowserCommand;
 
 mod control_commands;
+mod serve;
 
 #[test]
 fn build_info_is_an_informational_mode() {

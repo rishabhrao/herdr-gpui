@@ -39,6 +39,11 @@ mod popup;
 #[cfg(any(target_os = "macos", windows))]
 mod preview;
 #[cfg(target_os = "macos")]
+mod remote_page;
+#[cfg(windows)]
+#[path = "browser/remote_page_none.rs"]
+mod remote_page;
+#[cfg(target_os = "macos")]
 mod snapshot;
 mod store;
 mod tab_appear;

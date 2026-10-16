@@ -78,7 +78,7 @@ fn content_type(path: &Path) -> &'static str {
 
 /// Reads `path` under `root`, refusing anything a link leads out of the
 /// folder, anything that is not a regular file, and anything too large.
-fn read(root: &Path, request_path: &str) -> Result<(Vec<u8>, &'static str), u16> {
+pub(super) fn read(root: &Path, request_path: &str) -> Result<(Vec<u8>, &'static str), u16> {
     let file = requested_file(root, request_path).ok_or(404_u16)?;
     let root = root.canonicalize().map_err(|_| 404_u16)?;
     let resolved = file.canonicalize().map_err(|_| 404_u16)?;

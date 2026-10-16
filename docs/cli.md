@@ -170,6 +170,55 @@ herdr-gpui wait tab-closed 12 --timeout 600
 herdr-gpui wait window            # also waits for the app to start
 ```
 
+## Serving to a browser
+
+`herdr-gpui serve [--port PORT]` starts the app with its windows in a browser
+tab instead of on the desktop. It prints an address such as
+`http://localhost:1234/?token=…`; open it in Chrome on the same machine. The
+app runs here as usual, on this machine's daemon, clipboard, keychain, and
+files; the page only draws its frames with GPUI's own renderer and sends input
+back. The other launch options (`--socket`, `--session`, `--dev`) still apply.
+
+```sh
+just serve            # builds the page, then serves on port 1234
+just serve 8080       # another port
+herdr-gpui serve --port 8080 --session work
+```
+
+- Build the page first with `just web-build` (it needs the
+  `wasm32-unknown-unknown` target and `wasm-bindgen-cli` 0.2.128, which
+  `just setup-ci` installs). `HERDR_WEB_CLIENT_DIR` points at another build.
+- The server listens on `127.0.0.1` only and answers only to `localhost` and
+  `127.0.0.1` names, and to the names given with `--public-host`. A browser
+  on this machine needs no pairing; the WebSocket still needs the page's own
+  origin.
+- `--public-host NAME` serves the same app through a tunnel, such as
+  Cloudflare Tunnel. Requests through it need a valid Cloudflare Access token:
+  the first signed request names the Access application, which is kept in
+  `$XDG_STATE_HOME/herdr/gpui/web-access.json` (`--access-team` and
+  `--access-aud` name it up front; `--no-access-check` turns the check off).
+  A new device through the tunnel also asks to pair: approve it in the app's
+  dialog, or type `allow CODE` or `deny CODE` in the `serve` terminal.
+  `herdr-gpui serve devices` lists paired devices and
+  `herdr-gpui serve forget NAME` removes one.
+- Any number of pages show the app at once, up to eight, on any devices.
+  The app has one size per window, so it lays out for the page used last:
+  focusing a page, typing in it, or finishing a click in it makes it that
+  page. The other pages show the same picture scaled to fit, and still take
+  clicks and scrolling.
+- Closing the page, or stopping `serve` with Ctrl-C, leaves the daemon and its
+  terminals running.
+- Browser tabs show pages in an `<iframe>`. Sites that refuse to be framed
+  stay blank, page screenshots and notes on web pages are not available, and
+  local pages run sandboxed. Settings, logs, and other windows open as panels
+  inside the page.
+- Chrome keeps some shortcuts, such as Cmd-T, Cmd-W, and Cmd-N, for itself;
+  use the app's other bindings for those commands (for example `ctrl-b c` for
+  a new tab). There is no menu bar; every binding still works.
+- Dropping files from Finder does not reach the app: a browser hands pages
+  file contents, never paths.
+- macOS and Linux only; Windows refuses `serve`.
+
 ## What stays in the app
 
 Commands never bypass a confirmation. Restoring a checkpoint, teleporting a

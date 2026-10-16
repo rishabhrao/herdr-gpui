@@ -1,5 +1,8 @@
 mod args;
 pub mod control;
+mod serve;
+
+pub use serve::{DEFAULT_SERVE_PORT, ServeAction, ServeOptions};
 
 use herdr_client::ConnectTarget;
 use std::ffi::OsString;
@@ -40,6 +43,8 @@ pub struct MockupOptions {
 pub struct LaunchOptions {
     pub target: ConnectTarget,
     pub mode: LaunchMode,
+    /// Set for `serve`: the app runs as usual, drawn in the browser.
+    pub serve: Option<ServeOptions>,
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -163,6 +168,7 @@ impl LaunchOptions {
             return Ok(Self {
                 target: ConnectTarget::Local,
                 mode: LaunchMode::Control(control::parse(family, args)?),
+                serve: None,
             });
         }
         #[cfg(feature = "mockup")]
@@ -171,8 +177,10 @@ impl LaunchOptions {
             return Ok(Self {
                 target: ConnectTarget::Local,
                 mode: parse_mockup(args)?,
+                serve: None,
             });
         }
+        let mut serve = serve::start(&mut args);
         let mut socket = None;
         let mut session = None;
         let mut development = false;
@@ -190,6 +198,7 @@ impl LaunchOptions {
                         } else {
                             LaunchMode::Help
                         },
+                        serve: None,
                     });
                 }
                 Some("--socket" | "--session") => {
@@ -219,6 +228,10 @@ impl LaunchOptions {
                     }
                 }
                 Some("--dev") => development = true,
+                Some(flag) if serve::takes(flag) => match serve.as_mut() {
+                    Some(serve) => serve.flag(flag, &mut args)?,
+                    None => return Err(CliError::UnknownOption(arg)),
+                },
                 #[cfg(feature = "integration-test")]
                 Some(flag @ ("--integration-test" | "--sidebar-test" | "--performance-test")) => {
                     let next = match flag {
@@ -263,7 +276,11 @@ impl LaunchOptions {
             },
             _ => ConnectTarget::Local,
         };
-        Ok(Self { target, mode })
+        Ok(Self {
+            target,
+            mode,
+            serve,
+        })
     }
 }
 

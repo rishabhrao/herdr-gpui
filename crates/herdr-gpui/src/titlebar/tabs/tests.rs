@@ -64,7 +64,7 @@ fn the_tab_row_stands_in_for_the_header(cx: &mut TestAppContext) {
     assert_eq!(header.size, size(sidebar.size.width, px(HEIGHT)));
     assert_eq!(sidebar.top(), header.bottom());
     let toggle = cx.debug_bounds("toggle-sidebar").unwrap();
-    assert_eq!(toggle.left(), px(LEADING));
+    assert_eq!(toggle.left(), px(leading_inset()));
     assert!(header.contains(&toggle.center()));
     // Back and Forward follow the toggle in the sidebar's header, so the
     // strip leads with its tabs.
@@ -126,9 +126,9 @@ fn a_collapsed_sidebar_keeps_the_toggle_in_the_header_when_it_fits(cx: &mut Test
             .map_or(px(0.), |bar| bar.bottom());
         assert_eq!(leading.top(), top, "{mode}");
         // Clear of the traffic lights, whatever the column beside it covers.
-        assert!(toggle.left() >= px(LEADING), "{mode}");
+        assert!(toggle.left() >= px(leading_inset()), "{mode}");
         if expected.is_none() {
-            assert_eq!(toggle.left(), px(LEADING), "{mode}");
+            assert_eq!(toggle.left(), px(leading_inset()), "{mode}");
         }
     }
 }
@@ -266,7 +266,7 @@ fn a_narrow_sidebar_hands_back_and_forward_to_the_strip(cx: &mut TestAppContext)
     let (view, cx) = window(cx);
     // What the header needs differs by platform: the traffic lights'
     // clearance and each style's buttons.
-    let needed = LEADING + SIDEBAR_TOGGLE_SIZE + Style::NATIVE.width() + SIDEBAR_END;
+    let needed = leading_inset() + SIDEBAR_TOGGLE_SIZE + Style::NATIVE.width() + SIDEBAR_END;
     for width in [None, Some(160.)] {
         cx.update(|_, cx| {
             view.update(cx, |view, cx| {

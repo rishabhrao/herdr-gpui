@@ -5,6 +5,13 @@
 use crate::{HerdrWindow, config::corners, endpoint::Step, titlebar::SIDEBAR_TOGGLE_INSET};
 use gpui::{prelude::*, *};
 
+/// Whether the window draws the pair. A served window leaves them to the
+/// browser's own Back and Forward, which the page turns into the mouse's side
+/// buttons.
+pub(crate) fn shown() -> bool {
+    !crate::served::active()
+}
+
 /// Visible room the pair keeps on each side, so it sits the same distance
 /// from the sidebar toggle's glyph before it and the tabs after it on every
 /// platform.

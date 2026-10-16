@@ -749,6 +749,8 @@ pub enum Error {
     SelectionSize,
     #[error("The selected pane is no longer on screen.")]
     SelectionStale,
+    #[error(transparent)]
+    Served(#[from] herdr_web::Error),
     #[error("the host did not publish its keybindings")]
     ServerKeybindingsMissing,
     #[error("the host's keybindings have no [keys] table")]

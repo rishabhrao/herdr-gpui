@@ -119,6 +119,10 @@ fn open_window_placed(
         let step = px(28. * existing.min(6) as f32);
         let mut bounds = Bounds::centered(None, size(px(1200.), px(780.)), cx);
         bounds.origin += point(step, step);
+        // A served window's size comes from the page, not the desktop.
+        if crate::served::active() {
+            return (bounds, None);
+        }
         crate::window_state::WindowState::placement(bounds, cx)
     });
     cx.open_window(
@@ -141,7 +145,9 @@ fn open_window_placed(
                     fixture,
                 );
                 view.updater = updater;
-                crate::window_state::WindowState::observe(window, cx);
+                if !crate::served::active() {
+                    crate::window_state::WindowState::observe(window, cx);
+                }
                 view
             })
         },
@@ -217,7 +223,11 @@ pub(crate) fn run() -> std::process::ExitCode {
     }
     // A control command asked for JSON gets its usage errors as JSON too.
     let json_errors = cli::control::wants_json(&args);
-    let LaunchOptions { target, mode } = match LaunchOptions::parse(args) {
+    let LaunchOptions {
+        target,
+        mode,
+        serve,
+    } = match LaunchOptions::parse(args) {
         Ok(options) => options,
         Err(error) if json_errors => {
             println!(
@@ -233,6 +243,9 @@ pub(crate) fn run() -> std::process::ExitCode {
             return std::process::ExitCode::from(2);
         }
     };
+    if let Some(exit) = crate::served::manage(serve.as_ref()) {
+        return exit;
+    }
     if let LaunchMode::Control(invocation) = mode {
         return crate::control::run(invocation);
     }
@@ -251,6 +264,10 @@ pub(crate) fn run() -> std::process::ExitCode {
         );
         println!(
             "  --build-info        Print the executable's build identity without starting the GUI"
+        );
+        println!(
+            "  serve [--port PORT] [--public-host HOST]\n                      Show the app in a browser (port {}); see docs/cli.md\n  serve devices       List the browsers paired with `serve`\n  serve forget NAME   Unpair a browser by its name or id",
+            cli::DEFAULT_SERVE_PORT
         );
         println!(
             "  browser open URL    Show URL in a browser tab of the running app (see browser --help)"
@@ -312,7 +329,9 @@ pub(crate) fn run() -> std::process::ExitCode {
         }
     };
     let failed = startup_failed.clone();
-    let window_state = (mode == LaunchMode::Normal).then(crate::window_state::WindowState::load);
+    // A served app's windows are sized by the page; the desktop's stay put.
+    let window_state = (mode == LaunchMode::Normal && serve.is_none())
+        .then(crate::window_state::WindowState::load);
     // Fixtures never ask about, or touch, agent configuration.
     let agent_skill = if mode == LaunchMode::Normal {
         crate::agent_skill::AgentSkill::load()
@@ -355,101 +374,112 @@ pub(crate) fn run() -> std::process::ExitCode {
     } else {
         crate::dispatch::History::default()
     };
-    gpui_platform::application()
-        .with_assets(icons::Icons)
-        .run(move |cx| {
-            let window_count = window_state.as_ref().map_or(1, |state| state.count());
-            if let Some(state) = window_state {
-                state.install(cx);
-            }
-            browser_tabs.install(cx);
-            group_layouts.install(cx);
-            worktree_notes.install(cx);
-            palette_frecency.install(cx);
-            dispatch_history.install(cx);
-            agent_skill.install_global(cx);
-            keychain_grants.install(cx);
-            // Only the user's own app answers agents; native test modes stay private.
-            if mode == LaunchMode::Normal {
-                crate::control::install(cx);
-                crate::window::system_notifications::install(cx);
-                // Nor do they start VS Code.
-                crate::code_server::Launcher::install(cx);
-            }
-            cx.set_global(appearance.select(light_appearance(cx)));
+    let (application, approvals) = match crate::served::application(serve.as_ref()) {
+        Ok(application) => application,
+        Err(error) => {
+            eprintln!("Unable to serve Herdr UI: {error}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    application.with_assets(icons::Icons).run(move |cx| {
+        if let Some(approvals) = approvals {
+            crate::served::ask_about_devices(approvals, cx);
+        }
+        let window_count = window_state.as_ref().map_or(1, |state| state.count());
+        if let Some(state) = window_state {
+            state.install(cx);
+        }
+        browser_tabs.install(cx);
+        group_layouts.install(cx);
+        worktree_notes.install(cx);
+        palette_frecency.install(cx);
+        dispatch_history.install(cx);
+        agent_skill.install_global(cx);
+        keychain_grants.install(cx);
+        // Only the user's own app answers agents; native test modes stay private.
+        if mode == LaunchMode::Normal {
+            crate::control::install(cx);
+            crate::window::system_notifications::install(cx);
+            // Nor do they start VS Code.
+            crate::code_server::Launcher::install(cx);
+        }
+        cx.set_global(appearance.select(light_appearance(cx)));
+        // A served app has no Dock icon to draw or badge.
+        if !crate::served::active() {
             app_icon::install();
-            crate::caffeine::install(cx);
             #[cfg(target_os = "macos")]
             crate::app_badge::install(cx);
-            cx.on_action(|_: &Quit, cx| cx.quit());
-            cx.on_action(|_: &Hide, cx| cx.hide());
-            cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
-            cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
-            cx.on_action(|_: &ShowLogs, cx| log_window::open(cx));
-            bind_keys(cx);
-            menus::install(cx);
-            cx.on_window_closed(move |cx, _| {
-                if cx.windows().is_empty() {
-                    #[cfg(feature = "integration-test")]
-                    if performance_test {
-                        std::process::exit(1);
-                    }
-                    cx.quit();
-                }
-            })
-            .detach();
-            // Native test modes and CLI invocations never start an updater worker.
-            let updater = if mode == LaunchMode::Normal {
-                updater::Updater::start(cx.global::<InitialAppearance>().config.updates.channel)
-            } else {
-                updater::Updater::default()
-            };
-            let opened = open_window(
-                target.clone(),
-                updater,
-                cx,
+        }
+        crate::caffeine::install(cx);
+        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &Hide, cx| cx.hide());
+        cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+        cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+        cx.on_action(|_: &ShowLogs, cx| log_window::open(cx));
+        bind_keys(cx);
+        menus::install(cx);
+        cx.on_window_closed(move |cx, _| {
+            if cx.windows().is_empty() {
                 #[cfg(feature = "integration-test")]
-                {
-                    sidebar_test || performance_test
-                },
-            );
-            match opened {
-                Ok(_window) => {
-                    if mode == LaunchMode::Normal {
-                        let sound = shared_sound(cx);
-                        let _ = _window.update(cx, |view, _, _| {
-                            view.use_sound(sound);
-                        });
-                        for _ in 1..window_count {
-                            open_additional_window(target.clone(), cx);
-                        }
-                    }
-                    #[cfg(feature = "integration-test")]
-                    if performance_test {
-                        performance::start(_window, cx);
-                    }
-                    #[cfg(feature = "integration-test")]
-                    if integration_test {
-                        smoke::start(_window, cx);
-                    }
-                    #[cfg(feature = "integration-test")]
-                    if sidebar_test {
-                        smoke::start_sidebar(_window, cx);
+                if performance_test {
+                    std::process::exit(1);
+                }
+                cx.quit();
+            }
+        })
+        .detach();
+        // Native test modes and CLI invocations never start an updater worker.
+        let updater = if mode == LaunchMode::Normal && !crate::served::active() {
+            updater::Updater::start(cx.global::<InitialAppearance>().config.updates.channel)
+        } else {
+            updater::Updater::default()
+        };
+        let opened = open_window(
+            target.clone(),
+            updater,
+            cx,
+            #[cfg(feature = "integration-test")]
+            {
+                sidebar_test || performance_test
+            },
+        );
+        match opened {
+            Ok(_window) => {
+                if mode == LaunchMode::Normal {
+                    let sound = shared_sound(cx);
+                    let _ = _window.update(cx, |view, _, _| {
+                        view.use_sound(sound);
+                    });
+                    for _ in 1..window_count {
+                        open_additional_window(target.clone(), cx);
                     }
                 }
-                Err(error) => {
-                    tracing::error!("Unable to open main window");
-                    eprintln!("Unable to open Herdr window: {error}");
-                    failed.set(true);
-                    #[cfg(feature = "integration-test")]
-                    if performance_test {
-                        std::process::exit(1);
-                    }
-                    cx.quit();
+                #[cfg(feature = "integration-test")]
+                if performance_test {
+                    performance::start(_window, cx);
+                }
+                #[cfg(feature = "integration-test")]
+                if integration_test {
+                    smoke::start(_window, cx);
+                }
+                #[cfg(feature = "integration-test")]
+                if sidebar_test {
+                    smoke::start_sidebar(_window, cx);
                 }
             }
-            cx.activate(true);
-        });
+            Err(error) => {
+                tracing::error!("Unable to open main window");
+                eprintln!("Unable to open Herdr window: {error}");
+                failed.set(true);
+                #[cfg(feature = "integration-test")]
+                if performance_test {
+                    std::process::exit(1);
+                }
+                cx.quit();
+            }
+        }
+        cx.activate(true);
+    });
     if startup_failed.get() {
         std::process::ExitCode::FAILURE
     } else {

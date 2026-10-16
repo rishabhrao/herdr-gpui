@@ -8,7 +8,7 @@
 //! more tabs than fit still scroll.
 
 use super::{
-    HEIGHT, LEADING, SIDEBAR_TOGGLE_INSET, SIDEBAR_TOGGLE_SIZE, movable, navigation::Style,
+    HEIGHT, SIDEBAR_TOGGLE_INSET, SIDEBAR_TOGGLE_SIZE, leading_inset, movable, navigation::Style,
 };
 use crate::{HerdrWindow, browser::GroupId, herdr_settings::TabBarPosition, sidebar::SidebarMode};
 use gpui::{prelude::*, *};
@@ -56,7 +56,7 @@ impl HerdrWindow {
     fn sidebar_header_has_toggle(&self, window: &Window) -> bool {
         self.sidebar_mode()
             .width(self.sidebar_width, f32::from(window.viewport_size().width))
-            .is_some_and(|width| width >= LEADING + SIDEBAR_TOGGLE_SIZE)
+            .is_some_and(|width| width >= leading_inset() + SIDEBAR_TOGGLE_SIZE)
     }
 
     /// Whether Back and Forward fit in the expanded sidebar's header after
@@ -67,8 +67,9 @@ impl HerdrWindow {
         let column = mode
             .width(self.sidebar_width, f32::from(window.viewport_size().width))
             .unwrap_or(0.);
-        mode == SidebarMode::Expanded
-            && column >= LEADING + SIDEBAR_TOGGLE_SIZE + Style::NATIVE.width() + SIDEBAR_END
+        super::navigation::shown()
+            && mode == SidebarMode::Expanded
+            && column >= leading_inset() + SIDEBAR_TOGGLE_SIZE + Style::NATIVE.width() + SIDEBAR_END
     }
 
     /// The sidebar column's first row, level with the strips beside it. It
@@ -84,7 +85,7 @@ impl HerdrWindow {
             .h(px(self.tab_strip_height()))
             .overflow_hidden()
             .bg(self.fill().panel(self.theme.sidebar_background()))
-            .child(div().flex_none().w(px(LEADING)).h_full())
+            .child(div().flex_none().w(px(leading_inset())).h_full())
             .when(self.sidebar_header_has_toggle(window), |header| {
                 header.child(self.sidebar_toggle(cx))
             })
@@ -147,9 +148,14 @@ impl HerdrWindow {
             .overflow_hidden()
             .items_center();
         let mode = self.sidebar_mode();
+        let navigation = super::navigation::shown();
         // Keep the toggle in the rail or expanded sidebar when it fits;
         // Back and Forward alone lead the content beside it.
         if self.sidebar_header_has_toggle(window) {
+            // Without Back and Forward nothing is left to lead the strip.
+            if !navigation {
+                return None;
+            }
             // No toggle precedes them here, so its inset is not there to
             // complete the room before them.
             return Some(
@@ -167,11 +173,13 @@ impl HerdrWindow {
                     div()
                         .flex_none()
                         .self_stretch()
-                        .w(px((LEADING - column).max(0.))),
+                        .w(px((leading_inset() - column).max(0.))),
                     window,
                 ))
                 .child(self.sidebar_toggle(cx))
-                .child(self.strip_navigation(cx)),
+                .when(navigation, |leading| {
+                    leading.child(self.strip_navigation(cx))
+                }),
         )
     }
 
@@ -210,9 +218,10 @@ impl HerdrWindow {
                 .absolute()
                 .size_full(),
             )
-            .when(self.strip_navigation_fits, |slot| {
-                slot.child(self.navigation(cx))
-            })
+            .when(
+                self.strip_navigation_fits && super::navigation::shown(),
+                |slot| slot.child(self.navigation(cx)),
+            )
     }
 
     /// What ends the rightmost strip: the same controls the header ends with.

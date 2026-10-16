@@ -110,6 +110,7 @@ mod repo_items;
 mod review;
 mod scrollback;
 mod search_input;
+mod served;
 mod sessions;
 mod settings_panel;
 mod settings_window;

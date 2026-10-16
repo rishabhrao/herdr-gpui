@@ -257,7 +257,7 @@ impl HerdrWindow {
         #[cfg(not(any(target_os = "macos", windows)))]
         let (annotate_button, panel): (Option<Stateful<Div>>, Option<AnyElement>) = (None, None);
         #[cfg(any(target_os = "macos", windows))]
-        let page = self.browser.pages.page(id).cloned();
+        let page = self.browser.pages.view(id);
         #[cfg(not(any(target_os = "macos", windows)))]
         let page: Option<AnyView> = None;
         let failure = self.browser.failed.get(&id).cloned();

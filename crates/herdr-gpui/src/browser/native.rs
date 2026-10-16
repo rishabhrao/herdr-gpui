@@ -2,8 +2,9 @@
 //! is a platform child view layered above the GPUI surface: one per side of a
 //! split is visible, and the window hides them while an overlay is open.
 use super::{Location, Tab, TabId, WebUrl, location::PREVIEW_SCHEME, preview::Preview};
-use gpui::{App, AppContext as _, Entity, Window};
+use gpui::{AnyView, App, AppContext as _, Entity, Window};
 use gpui_wry::WebView;
+use herdr_web::wire::PageOp;
 use std::{
     collections::HashMap,
     rc::Rc,
@@ -106,6 +107,8 @@ pub(crate) struct Pages {
     preview: Option<Rc<Preview>>,
     /// The theme the kit serves local pages, and the colors it came from.
     theme: (super::kit::ThemeKey, String),
+    /// Pages drawn by the browser when the app is served.
+    remote: super::remote_page::Remote,
 }
 
 impl Default for Pages {
@@ -128,6 +131,7 @@ impl Default for Pages {
             parked: HashMap::new(),
             preview: None,
             theme: Default::default(),
+            remote: Default::default(),
         }
     }
 }
@@ -231,13 +235,23 @@ fn navigable(url: &str) -> bool {
 
 impl Pages {
     pub(crate) fn ids(&self) -> impl Iterator<Item = TabId> + '_ {
-        self.pages.keys().copied()
+        self.pages.keys().copied().chain(self.remote.ids())
     }
 
     pub(crate) fn contains(&self, id: TabId) -> bool {
-        self.pages.contains_key(&id)
+        self.pages.contains_key(&id) || self.remote.contains(id)
     }
 
+    /// What draws tab `id`'s page: its native view, or its stand-in that
+    /// places the served page's frame.
+    pub(crate) fn view(&self, id: TabId) -> Option<AnyView> {
+        match self.pages.get(&id) {
+            Some(page) => Some(page.clone().into()),
+            None => self.remote.view(id),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
     pub(crate) fn page(&self, id: TabId) -> Option<&Entity<WebView>> {
         self.pages.get(&id)
     }
@@ -262,11 +276,16 @@ impl Pages {
             .location
             .as_ref()
             .filter(|location| location.is_page())
-            .filter(|_| !self.pages.contains_key(&tab.id))
+            .filter(|_| !self.contains(tab.id))
         else {
             return Ok(());
         };
         let id = tab.id;
+        if crate::served::active() {
+            return self
+                .remote
+                .ensure(tab, location, &self.outbox.sender, window, cx);
+        }
         let posted = self.outbox.sender.clone();
         let preview = match &self.preview {
             Some(preview) => preview.clone(),
@@ -330,6 +349,7 @@ impl Pages {
             return;
         }
         self.theme = (key, super::kit::theme_css(theme));
+        self.remote.set_theme(&self.theme.1);
         if let Some(preview) = &self.preview {
             preview.set_theme(self.theme.1.clone());
         }
@@ -339,6 +359,7 @@ impl Pages {
     /// where a hidden view still takes drags; see [`super::parking`].
     fn hide(&mut self, id: TabId, cx: &mut App) {
         let Some(page) = self.pages.get(&id) else {
+            self.remote.show(id, false);
             return;
         };
         page.update(cx, |page, _| page.hide());
@@ -352,6 +373,7 @@ impl Pages {
     /// Shows tab `id`'s page, back where it was.
     fn show(&mut self, id: TabId, cx: &mut App) {
         let Some(page) = self.pages.get(&id) else {
+            self.remote.show(id, true);
             return;
         };
         #[cfg(target_os = "macos")]
@@ -367,7 +389,7 @@ impl Pages {
         let ids: Vec<TabId> = ids
             .iter()
             .copied()
-            .filter(|id| self.pages.contains_key(id))
+            .filter(|id| self.contains(*id))
             .collect();
         if self.shown == ids {
             return;
@@ -417,11 +439,12 @@ impl Pages {
         // Dropping the entity hides the view; the platform releases it with
         // the last handle.
         self.pages.remove(&id);
+        self.remote.close(id);
     }
 
     /// Drops the pages of tabs the app no longer has.
     pub(crate) fn retain(&mut self, mut live: impl FnMut(TabId) -> bool) {
-        let gone: Vec<_> = self.pages.keys().copied().filter(|id| !live(*id)).collect();
+        let gone: Vec<_> = self.ids().filter(|id| !live(*id)).collect();
         for id in gone {
             self.close(id);
         }
@@ -432,11 +455,16 @@ impl Pages {
         if let Some(page) = self.pages.get(&id) {
             page.update(cx, |page, _| page.load_url(&url));
         }
+        self.remote.load(id, location);
     }
 
     /// Runs one of the app's own scripts in the page. Never page-supplied
     /// text: data goes in as JSON.
     pub(crate) fn script(&self, id: TabId, script: &str, cx: &App) {
+        self.remote.send(id, |page| PageOp::Script {
+            page,
+            script: script.to_owned(),
+        });
         if let Some(page) = self.pages.get(&id)
             && let Err(error) = page.read(cx).raw().evaluate_script(script)
         {
@@ -453,6 +481,7 @@ impl Pages {
     }
 
     pub(crate) fn reload(&self, id: TabId, cx: &App) {
+        self.remote.send(id, |page| PageOp::Reload { page });
         if let Some(page) = self.pages.get(&id)
             && let Err(error) = page.read(cx).raw().reload()
         {
@@ -506,6 +535,7 @@ impl Pages {
 
     /// Hands the keyboard back from the page to the window.
     pub(crate) fn blur(&self, id: TabId, cx: &App) {
+        self.remote.send(id, |page| PageOp::Blur { page });
         if let Some(page) = self.pages.get(&id) {
             let _ = page.read(cx).raw().focus_parent();
         }
@@ -513,6 +543,7 @@ impl Pages {
 
     /// Moves keyboard input into the shown page.
     pub(crate) fn focus(&self, id: TabId, cx: &App) {
+        self.remote.send(id, |page| PageOp::Focus { page });
         if let Some(page) = self.pages.get(&id) {
             let _ = page.read(cx).raw().focus();
         }

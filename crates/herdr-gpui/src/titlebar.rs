@@ -229,7 +229,8 @@ impl HerdrWindow {
             .h_full()
             .child(self.sidebar_toggle(cx))
             .when(
-                f32::from(window.viewport_size().width) >= NAVIGATION_MIN_WIDTH,
+                navigation::shown()
+                    && f32::from(window.viewport_size().width) >= NAVIGATION_MIN_WIDTH,
                 |leading| leading.child(self.navigation(cx)),
             )
             .into_any_element();
@@ -372,7 +373,7 @@ pub(super) fn render(
         .w_full()
         .h(px(HEIGHT))
         .bg(background)
-        .child(div().flex_none().w(px(LEADING)).h_full())
+        .child(div().flex_none().w(px(leading_inset())).h_full())
         .children(leading);
     movable(bar, window)
 }
@@ -431,7 +432,8 @@ const ZEN_INSET: f32 = 28.;
 /// and a client-decorated window has nothing else to move it by. Full
 /// screen, and a server-drawn frame, need none.
 pub(crate) fn zen_inset(ground: Hsla, window: &Window) -> Option<Stateful<Div>> {
-    let needed = cfg!(target_os = "macos") || decorations::client(window);
+    let needed =
+        (cfg!(target_os = "macos") && !crate::served::active()) || decorations::client(window);
     (needed && !window.is_fullscreen()).then(|| {
         movable(
             div()
@@ -447,8 +449,15 @@ pub(crate) fn zen_inset(ground: Hsla, window: &Window) -> Option<Stateful<Div>> 
 }
 
 /// Room before the first control: macOS keeps it clear for the traffic
-/// lights, which every other platform draws elsewhere or not at all.
-const LEADING: f32 = if cfg!(target_os = "macos") { 80. } else { 8. };
+/// lights, which every other platform draws elsewhere or not at all. A
+/// served window has none; the browser draws its own.
+pub(super) fn leading_inset() -> f32 {
+    if cfg!(target_os = "macos") && !crate::served::active() {
+        80.
+    } else {
+        8.
+    }
+}
 
 pub(super) fn options(title: &str) -> TitlebarOptions {
     TitlebarOptions {
@@ -513,7 +522,7 @@ mod tests {
                 assert_eq!(view.read_with(cx, |view, _| view.sidebar_visible), visible);
                 assert_eq!(cx.debug_bounds("sidebar").is_some(), visible);
                 let button = cx.debug_bounds("toggle-sidebar").unwrap();
-                assert_eq!(button.origin.x, px(super::LEADING));
+                assert_eq!(button.origin.x, px(super::leading_inset()));
                 assert_eq!(button.size, size(px(28.), px(28.)));
                 cx.simulate_click(button.center(), Modifiers::default());
             }
