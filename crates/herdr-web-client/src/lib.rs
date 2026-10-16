@@ -6,6 +6,8 @@ mod app;
 #[cfg(target_family = "wasm")]
 mod dom;
 #[cfg(target_family = "wasm")]
+mod edit;
+#[cfg(target_family = "wasm")]
 mod exports;
 #[cfg(target_family = "wasm")]
 mod fling;

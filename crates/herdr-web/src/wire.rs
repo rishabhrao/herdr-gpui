@@ -8,9 +8,9 @@ pub use scene::{WireScene, WireTile};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bumped whenever a message changes shape.
-pub const PROTOCOL: u32 = 6;
+pub const PROTOCOL: u32 = 7;
 /// No message the page sends is larger; the host refuses bigger frames.
-pub const MAX_TO_HOST_BYTES: usize = 1024 * 1024;
+pub const MAX_TO_HOST_BYTES: usize = 16 * 1024 * 1024;
 /// A frame of a very dense window, with room to spare; larger ones are refused.
 pub const MAX_TO_BROWSER_BYTES: usize = 64 * 1024 * 1024;
 
@@ -51,6 +51,9 @@ pub enum ToBrowser {
     Toast {
         text: String,
     },
+    /// Something to do in the browser that asked from Settings, such as
+    /// sizing its text: only it, not every device showing the app.
+    Device(DeviceAction),
     /// A question the app asks, as a dialog of the page's own: `level` is
     /// 0 for information, 1 for a warning, 2 for something critical.
     Prompt {
@@ -191,6 +194,11 @@ pub enum ToHost {
     Clipboard {
         text: String,
     },
+    /// An image the page pastes, such as one a phone keyboard inserts.
+    ClipboardImage {
+        mime: String,
+        bytes: Vec<u8>,
+    },
     /// The index of the answer chosen in prompt `id`.
     PromptAnswer {
         id: u64,
@@ -261,6 +269,16 @@ pub enum PageEvent {
         page: PageId,
         input: StreamInput,
     },
+}
+
+/// What Settings > Web access asks of the browser it is used in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeviceAction {
+    TextSmaller,
+    TextReset,
+    TextLarger,
+    AllowNotifications,
+    SignOut,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

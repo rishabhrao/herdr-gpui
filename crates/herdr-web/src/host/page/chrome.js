@@ -1,5 +1,5 @@
-// The page around the app's canvas: the pairing screen, the keys bar and
-// menu for touch screens, and notes the app sends (links, copies, toasts).
+// The page around the app's canvas: the pairing screen, the keys bar for
+// touch screens, pasting, and notes the app sends (links, copies, toasts).
 // Text from the app or the network only ever goes in through textContent.
 
 const $ = (id) => document.getElementById(id);
@@ -228,6 +228,10 @@ export function listen() {
       case "signed-out":
         location.reload();
         break;
+      case "device":
+        // The app is still handling the message that asked: act after it.
+        setTimeout(() => deviceAction(note.action), 0);
+        break;
       case "disconnected":
         fetch("/auth/status", { cache: "no-store" })
           .then((response) => (response.ok ? response.json() : null))
@@ -254,7 +258,7 @@ export function listen() {
   });
 }
 
-// --- Touch screens: the keys bar and menu ---------------------------------
+// --- Touch screens: the keys bar -------------------------------------------
 
 const sticky = { control: false, alt: false, platform: false };
 
@@ -278,83 +282,11 @@ async function paste() {
   }
 }
 
-async function devices() {
-  let list = [];
-  try {
-    const response = await fetch("/auth/devices", { cache: "no-store", credentials: "same-origin" });
-    list = (await response.json()).devices || [];
-  } catch (error) {
-    toast(String(error));
-    return;
-  }
-  const seen = (seconds) => {
-    const minutes = Math.floor((Date.now() / 1000 - seconds) / 60);
-    if (minutes < 1) return "seen just now";
-    if (minutes < 60) return `seen ${minutes} min ago`;
-    if (minutes < 1440) return `seen ${Math.floor(minutes / 60)} h ago`;
-    return `seen ${Math.floor(minutes / 1440)} days ago`;
-  };
-  const rows = list.map((device) => {
-    // A second tap forgets: one stray tap must not lock a device out.
-    let armed = false;
-    const forget = element("button", {
-      text: "Forget",
-      onclick: async () => {
-        if (!armed) {
-          armed = true;
-          forget.textContent = "Tap to forget";
-          forget.classList.add("herdr-danger");
-          return;
-        }
-        await post("/auth/forget", { id: device.id }).catch((error) => toast(String(error.message || error)));
-        if (device.current) location.reload();
-        else devices();
-      },
-    });
-    return element("li", {}, [
-      element("div", { class: "herdr-device" }, [
-        element("span", { text: device.current ? `${device.label} (this device)` : device.label }),
-        element("span", {
-          class: "herdr-hint",
-          text: `${device.remote ? "Through the tunnel" : "On this Mac"} \u00b7 ${seen(device.lastSeen)}`,
-        }),
-      ]),
-      forget,
-    ]);
-  });
-  if (rows.length === 0) rows.push(element("li", { class: "herdr-hint", text: "No device is paired." }));
-  overlay([
-    element("h1", { text: "Paired devices" }),
-    element("ul", { class: "herdr-devices" }, rows),
-    element("button", { text: "Close", onclick: closeOverlay }),
-  ]);
-}
-
-function menu() {
-  const zoom = (factor) => {
-    const next = Math.min(2, Math.max(0.5, Math.round(app.zoom() * factor * 20) / 20));
-    app.set_zoom(next);
-    toast(`Text size ${Math.round(next * 100)}%`);
-  };
-  const remote = !(appStatus && appStatus.local);
-  overlay([
-    element("h1", { text: "Herdr UI" }),
-    element("p", { class: "herdr-hint", text: "Text size on this device" }),
-    element("div", { class: "herdr-row" }, [
-      element("button", { text: "A−", "aria-label": "Smaller", onclick: () => zoom(1 / 1.1) }),
-      element("button", { text: "100%", "aria-label": "Reset", onclick: () => { app.set_zoom(1); toast("Text size 100%"); } }),
-      element("button", { text: "A+", "aria-label": "Larger", onclick: () => zoom(1.1) }),
-    ]),
-    element("button", {
-      text: "Allow notifications",
-      onclick: () => "Notification" in window && Notification.requestPermission().then((answer) => toast(`Notifications: ${answer}`)),
-    }),
-    element("button", { text: "Paired devices", onclick: devices }),
-    ...(remote
-      ? [element("button", { text: "Sign out this device", onclick: () => post("/auth/sign-out", {}).finally(() => location.reload()) })]
-      : []),
-    element("button", { class: "herdr-primary", text: "Close", onclick: closeOverlay }),
-  ]);
+// Whether the phone keyboard is up: it shrinks the visual viewport.
+function keyboardUp() {
+  const viewport = window.visualViewport;
+  const focused = document.activeElement === $("herdr-input");
+  return Boolean(focused && viewport && viewport.height < window.innerHeight * 0.8);
 }
 
 // A key that also holds Control, as `ctrl` then the key would.
@@ -366,8 +298,6 @@ function chord(name) {
 const ICONS = {
   keyboard:
     '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg>',
-  more:
-    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
 };
 
 function keysBar() {
@@ -380,8 +310,6 @@ function keysBar() {
     node.classList.add("herdr-icon");
     return node;
   };
-  let keyboard = false;
-  // The keys scroll; the keyboard and the menu stay in reach at the end.
   const keys = element("div", { class: "herdr-keys" }, [
     button("esc", "Escape", () => key("escape")),
     button("tab", "Tab", () => key("tab")),
@@ -397,12 +325,10 @@ function keysBar() {
     button("^D", "End of input (Control-D)", () => chord("d")),
     button("paste", "Paste", paste),
   ]);
+  // The keyboard button asks the page whether the keyboard is up: Android
+  // can close it on its own, and a remembered state would then be wrong.
   const pinned = element("div", { class: "herdr-pinned" }, [
-    icon("keyboard", "Keyboard", () => {
-      keyboard = !keyboard;
-      app.keyboard(keyboard);
-    }),
-    icon("more", "Menu", menu),
+    icon("keyboard", "Keyboard", () => app.keyboard(!keyboardUp())),
   ]);
   bar.replaceChildren(keys, pinned);
   // A tap on the bar must not take the keyboard away from the app.
@@ -429,9 +355,100 @@ function followViewport() {
   apply();
 }
 
+// What Settings > Web access asks of this browser.
+function deviceAction(action) {
+  const zoom = (factor) => {
+    const next = Math.min(2, Math.max(0.5, Math.round(app.zoom() * factor * 20) / 20));
+    app.set_zoom(next);
+    toast(`Text size ${Math.round(next * 100)}%`);
+  };
+  switch (action) {
+    case "text-smaller":
+      zoom(1 / 1.1);
+      break;
+    case "text-larger":
+      zoom(1.1);
+      break;
+    case "text-reset":
+      app.set_zoom(1);
+      toast("Text size 100%");
+      break;
+    case "allow-notifications":
+      if (!("Notification" in window)) {
+        toast("This browser has no notifications.");
+      } else if (Notification.permission === "granted") {
+        toast("Notifications are on.");
+      } else {
+        // Browsers ask only after a tap on the page itself.
+        toast("Show agent notifications on this device?", {
+          label: "Allow",
+          run: () => Notification.requestPermission().then((answer) => toast(`Notifications: ${answer}`)),
+        });
+      }
+      break;
+    case "sign-out":
+      if (appStatus && appStatus.local) {
+        toast("A browser on this Mac needs no sign-in.");
+      } else {
+        post("/auth/sign-out", {}).finally(() => location.reload());
+      }
+      break;
+  }
+}
+
+/// Image pastes: from the clipboard, a drop, or a phone keyboard's image.
+const MAX_IMAGE = 15 * 1024 * 1024;
+
+async function pasteImage(file) {
+  if (file.size > MAX_IMAGE) {
+    toast("That image is too large to paste.");
+    return;
+  }
+  app.paste_image(file.type || "image/png", new Uint8Array(await file.arrayBuffer()));
+}
+
+function imageIn(data) {
+  if (!data) return null;
+  const item = [...(data.items || [])].find((entry) => entry.kind === "file" && entry.type.startsWith("image/"));
+  return item ? item.getAsFile() : [...(data.files || [])].find((file) => file.type.startsWith("image/")) || null;
+}
+
+function listenForPastes() {
+  const field = $("herdr-input");
+  field.addEventListener("paste", (event) => {
+    event.preventDefault();
+    const image = imageIn(event.clipboardData);
+    if (image) {
+      pasteImage(image);
+      return;
+    }
+    const text = event.clipboardData && event.clipboardData.getData("text/plain");
+    if (text) app.paste(text);
+  });
+  field.addEventListener("beforeinput", (event) => {
+    const image = imageIn(event.dataTransfer);
+    if (image) {
+      event.preventDefault();
+      pasteImage(image);
+    }
+  });
+  // Some keyboards insert an image element into rich text instead.
+  new MutationObserver(() => {
+    for (const image of field.querySelectorAll("img")) {
+      const source = image.src;
+      image.remove();
+      fetch(source)
+        .then((response) => response.blob())
+        .then((blob) => pasteImage(new File([blob], "image", { type: blob.type || "image/png" })))
+        .catch(() => toast("That image could not be pasted."));
+    }
+  }).observe(field, { childList: true, subtree: true });
+}
+
 export function start(wasm, started) {
   app = wasm;
   appStatus = started;
+  listenForPastes();
   followViewport();
   // `?touch` shows the touch controls on any screen, such as a touch
   // laptop's, or a desktop browser trying the phone layout.

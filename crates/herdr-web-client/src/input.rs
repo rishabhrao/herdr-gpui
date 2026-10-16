@@ -10,8 +10,7 @@ use crate::{
 use herdr_web::wire::{Button, Delta, Input, Mods, StreamInput, TextOp, ToHost, WindowId};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
-    CompositionEvent, EventTarget, HtmlTextAreaElement, InputEvent, KeyboardEvent, PointerEvent,
-    WheelEvent,
+    CompositionEvent, EventTarget, HtmlElement, InputEvent, KeyboardEvent, PointerEvent, WheelEvent,
 };
 
 /// Presses closer together than this, in milliseconds and CSS pixels, count
@@ -23,7 +22,10 @@ const CLICK_DISTANCE: f32 = 5.;
 pub(crate) struct State {
     mods: Mods,
     capslock: bool,
-    composing: bool,
+    pub(crate) composing: bool,
+    /// What a phone keyboard has typed into the field since it last started
+    /// over; see `edit`.
+    pub(crate) typed: String,
     pressed: Option<Button>,
     clicks: (u8, f64, f32, f32),
     /// The newest pointer move, sent once per animation frame.
@@ -103,7 +105,13 @@ fn is_touch(event: &PointerEvent) -> bool {
 }
 
 /// A key pressed and released, as the keys bar and a phone keyboard send them.
-fn press(app: &crate::app::App, window: WindowId, key: &str, key_char: Option<String>, mods: Mods) {
+pub(crate) fn press(
+    app: &crate::app::App,
+    window: WindowId,
+    key: &str,
+    key_char: Option<String>,
+    mods: Mods,
+) {
     app.send(&ToHost::Input {
         window,
         input: Input::KeyDown {
@@ -124,7 +132,7 @@ fn press(app: &crate::app::App, window: WindowId, key: &str, key_char: Option<St
 }
 
 /// Keyboard, focus, visibility, and appearance listeners for the page.
-pub(crate) fn install(shared: &Shared, text: &HtmlTextAreaElement) -> Vec<Listener> {
+pub(crate) fn install(shared: &Shared, text: &HtmlElement) -> Vec<Listener> {
     let target: &EventTarget = text.as_ref();
     let mut listeners = Vec::new();
 
@@ -139,8 +147,22 @@ pub(crate) fn install(shared: &Shared, text: &HtmlTextAreaElement) -> Vec<Listen
         }
         // A streamed page with focus takes every key but Command's, which
         // stay the app's shortcuts.
+        // Cmd-V lets the browser paste, so the page's own clipboard, text
+        // or image, reaches the app.
+        if event.meta_key() && event.key().eq_ignore_ascii_case("v") {
+            return;
+        }
+        // A phone's Backspace edits what its keyboard typed; the field's
+        // change sends it.
+        let phone = dom::coarse_pointer();
+        if phone && event.key() == "Backspace" && !app.input.typed.is_empty() {
+            return;
+        }
         if !event.meta_key() && app.to_stream(stream_key(&event, true)) {
             event.prevent_default();
+            if phone {
+                crate::edit::reset(&mut app);
+            }
             return;
         }
         let key = keys::key(&event);
@@ -185,6 +207,9 @@ pub(crate) fn install(shared: &Shared, text: &HtmlTextAreaElement) -> Vec<Listen
                 held: event.repeat(),
             },
         });
+        if phone {
+            crate::edit::reset(&mut app);
+        }
     }));
 
     let app = shared.clone();
@@ -232,11 +257,15 @@ pub(crate) fn install(shared: &Shared, text: &HtmlTextAreaElement) -> Vec<Listen
         let Ok(mut app) = app.try_borrow_mut() else {
             return;
         };
+        if dom::coarse_pointer() {
+            crate::edit::before_input(&mut app, &event);
+            return;
+        }
         if app.input.composing || event.is_composing() {
             return;
         }
         event.prevent_default();
-        area.set_value("");
+        area.set_text_content(None);
         let kind = event.input_type();
         if app.pages.focused_stream().is_some() {
             let data = event.data().filter(|data| !data.is_empty());
@@ -291,6 +320,16 @@ pub(crate) fn install(shared: &Shared, text: &HtmlTextAreaElement) -> Vec<Listen
         });
     }));
 
+    // A phone keyboard's edits arrive as the field's changes.
+    let app = shared.clone();
+    listeners.push(Listener::new(target, "input", true, move |_| {
+        if dom::coarse_pointer()
+            && let Ok(mut app) = app.try_borrow_mut()
+        {
+            crate::edit::changed(&mut app);
+        }
+    }));
+
     let app = shared.clone();
     listeners.push(Listener::new(target, "compositionstart", true, move |_| {
         if let Ok(mut app) = app.try_borrow_mut() {
@@ -308,6 +347,10 @@ pub(crate) fn install(shared: &Shared, text: &HtmlTextAreaElement) -> Vec<Listen
             let Ok(app) = app.try_borrow_mut() else {
                 return;
             };
+            // A phone's words are sent as they change in the field.
+            if dom::coarse_pointer() {
+                return;
+            }
             let Some(window) = app.focused_window() else {
                 return;
             };
@@ -335,7 +378,10 @@ pub(crate) fn install(shared: &Shared, text: &HtmlTextAreaElement) -> Vec<Listen
                 return;
             };
             app.input.composing = false;
-            area.set_value("");
+            if dom::coarse_pointer() {
+                return;
+            }
+            area.set_text_content(None);
             if app.pages.focused_stream().is_some() {
                 if let Some(text) = event.data().filter(|data| !data.is_empty()) {
                     app.to_stream(StreamInput::Text(text));
@@ -423,8 +469,12 @@ pub(crate) fn attach(shared: &Shared, surface: &Surface) -> Vec<Listener> {
         };
         app.raise(id);
         app.focus_window(id);
-        // The app's own canvas takes the keys back from a streamed page.
+        // The app's own canvas takes the keys back from a streamed page,
+        // and a phone's typing starts over where the tap put the cursor.
         app.pages.set_focus(None);
+        if is_touch(&event) {
+            crate::edit::reset(&mut app);
+        }
         if let Some(canvas) = app.surface(id).map(|surface| surface.canvas.clone()) {
             let _ = canvas.set_pointer_capture(event.pointer_id());
         }

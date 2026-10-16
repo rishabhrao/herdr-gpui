@@ -1,6 +1,7 @@
 //! What the served app shows about its own serving: its addresses, the
 //! pages connected now, and the paired devices, which it can forget.
 use super::{devices::Device, hub::Hub};
+use crate::wire::{DeviceAction, ToBrowser};
 use std::sync::{Arc, OnceLock};
 
 static SERVED: OnceLock<Served> = OnceLock::new();
@@ -51,6 +52,14 @@ impl Served {
     /// it off the UI thread.
     pub fn devices(&self) -> Vec<Device> {
         self.0.devices.list()
+    }
+
+    /// Does `action` in the browser whose input the app is handling: the
+    /// one the user just tapped in. Called outside input, it does nothing.
+    pub fn device_action(&self, action: DeviceAction) {
+        if let Some(link) = self.0.acting() {
+            self.0.send_to(link, &ToBrowser::Device(action));
+        }
     }
 
     /// Forgets device `id` and closes its pages. Writes the devices file.

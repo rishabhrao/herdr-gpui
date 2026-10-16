@@ -129,6 +129,9 @@ pub(super) struct Hub {
     pub(super) access: Option<Arc<Access>>,
     links: Mutex<Vec<Link>>,
     next_link: AtomicU64,
+    /// The page whose input the app is handling now, so an action it takes
+    /// for "this device" reaches that page.
+    acting: Mutex<Option<u64>>,
     inbound: async_channel::Sender<Inbound>,
     approvals: async_channel::Sender<PairingRequest>,
     pages: Mutex<HashMap<PageId, PageEntry>>,
@@ -192,6 +195,7 @@ impl Hub {
             devices: setup.devices,
             access: setup.access,
             links: Mutex::default(),
+            acting: Mutex::new(None),
             next_link: AtomicU64::new(1),
             inbound,
             approvals,
@@ -247,6 +251,14 @@ impl Hub {
     /// Drops the pages of a device that was forgotten.
     pub(super) fn drop_device(&self, device: &str) {
         self.links().retain(|link| link.visitor.device != device);
+    }
+
+    pub(super) fn set_acting(&self, link: Option<u64>) {
+        *self.acting.lock().unwrap_or_else(PoisonError::into_inner) = link;
+    }
+
+    pub(super) fn acting(&self) -> Option<u64> {
+        *self.acting.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Who each connected page is, oldest first.

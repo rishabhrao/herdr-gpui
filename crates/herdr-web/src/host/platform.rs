@@ -36,6 +36,9 @@ pub(super) struct Shared {
     /// copied, or what the page sent before a paste. The Mac's own
     /// pasteboard is left alone while a phone is the page used last.
     remote_clipboard: RefCell<Option<ClipboardItem>>,
+    /// A page just sent its clipboard for a paste: the next read takes it,
+    /// even from a page on this Mac, whose image would otherwise be lost.
+    page_paste: Cell<bool>,
     cursor: RefCell<&'static str>,
     /// Questions the page shows as its own dialogs, until answered. A page
     /// that connects later is shown them too.
@@ -237,6 +240,13 @@ impl Shared {
     }
 
     fn message(&self, link: u64, message: ToHost) {
+        // Settings' "this device" actions reach the page being handled.
+        self.hub.set_acting(Some(link));
+        self.handle_message(link, message);
+        self.hub.set_acting(None);
+    }
+
+    fn handle_message(&self, link: u64, message: ToHost) {
         let driving = self.peers.borrow().driver() == Some(link);
         match message {
             ToHost::Hello { .. } | ToHost::Page(_) => {}
@@ -254,10 +264,19 @@ impl Shared {
                     self.hub.send(&ToBrowser::PromptClosed { id });
                 }
             }
+            ToHost::ClipboardImage { mime, bytes } => {
+                self.take_control(link);
+                if let Some(format) = image_format(&mime) {
+                    *self.remote_clipboard.borrow_mut() =
+                        Some(gpui::Image::from_bytes(format, bytes).into());
+                    self.page_paste.set(true);
+                }
+            }
             ToHost::Clipboard { text } => {
                 // A paste follows, from this page.
                 self.take_control(link);
                 *self.remote_clipboard.borrow_mut() = Some(ClipboardItem::new_string(text));
+                self.page_paste.set(true);
             }
             ToHost::Viewport {
                 window,
@@ -373,6 +392,7 @@ impl RemotePlatform {
                 appearance,
                 peers: RefCell::default(),
                 remote_clipboard: RefCell::new(None),
+                page_paste: Cell::new(false),
                 cursor: RefCell::new("default"),
                 prompts: RefCell::default(),
                 next_prompt: Cell::new(0),
@@ -380,6 +400,20 @@ impl RemotePlatform {
             inbound: RefCell::new(Some(inbound)),
         }
     }
+}
+
+/// The image format of a pasted image's MIME type.
+fn image_format(mime: &str) -> Option<gpui::ImageFormat> {
+    use gpui::ImageFormat;
+    Some(match mime {
+        "image/png" => ImageFormat::Png,
+        "image/jpeg" | "image/jpg" => ImageFormat::Jpeg,
+        "image/gif" => ImageFormat::Gif,
+        "image/webp" => ImageFormat::Webp,
+        "image/bmp" => ImageFormat::Bmp,
+        "image/tiff" => ImageFormat::Tiff,
+        _ => return None,
+    })
 }
 
 fn cursor_css(style: CursorStyle) -> &'static str {
@@ -670,7 +704,7 @@ impl Platform for RemotePlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        if self.shared.is_remote() {
+        if self.shared.page_paste.replace(false) || self.shared.is_remote() {
             return self.shared.remote_clipboard.borrow().clone();
         }
         self.inner.read_from_clipboard()

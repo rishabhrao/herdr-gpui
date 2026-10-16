@@ -245,6 +245,17 @@ impl HerdrWindow {
         fallback: Option<ClientPaneInputEvent>,
         cx: &mut Context<Self>,
     ) {
+        // A served app's clipboard is what the page sent for this paste, in
+        // memory: the Mac's own pasteboard belongs to whoever sits there.
+        if crate::served::active() {
+            let pasted = cx
+                .read_from_clipboard()
+                .is_some_and(|item| self.paste_terminal_clipboard(item, image_only, cx));
+            if !pasted && let Some(fallback) = fallback {
+                self.send(fallback, cx);
+            }
+            return;
+        }
         let Some(target) = self.focused_input_target() else {
             return;
         };

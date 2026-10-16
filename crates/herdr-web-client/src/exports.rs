@@ -1,12 +1,27 @@
-//! What `chrome.js` calls: the keys bar, paste, zoom, and taking over.
+//! What `chrome.js` calls: the keys bar, paste, zoom, and the keyboard.
 use crate::{app, keys};
-use herdr_web::wire::{Input, Mods, TextOp, ToHost};
+use herdr_web::wire::{Input, Mods, StreamInput, TextOp, ToHost};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 /// A key from the keys bar, with the modifiers held there.
 #[wasm_bindgen]
 pub fn send_key(key: String, control: bool, alt: bool, shift: bool, platform: bool) {
     app::with_app(|_, app| {
+        // A key from the bar ends what the phone keyboard was typing.
+        crate::edit::reset(app);
+        if app.pages.focused_stream().is_some() {
+            stream_key(
+                app,
+                &key,
+                Mods {
+                    control,
+                    alt,
+                    shift,
+                    platform,
+                },
+            );
+            return;
+        }
         let Some(window) = app.focused_window() else {
             return;
         };
@@ -55,35 +70,84 @@ pub fn send_text(text: String) {
     });
 }
 
-/// Pastes this device's clipboard text into the app.
+/// A keys-bar key for the focused streamed page, by its DOM name.
+fn stream_key(app: &app::App, key: &str, mods: Mods) {
+    let (name, code) = match key {
+        "escape" => ("Escape", "Escape"),
+        "tab" => ("Tab", "Tab"),
+        "enter" => ("Enter", "Enter"),
+        "left" => ("ArrowLeft", "ArrowLeft"),
+        "right" => ("ArrowRight", "ArrowRight"),
+        "up" => ("ArrowUp", "ArrowUp"),
+        "down" => ("ArrowDown", "ArrowDown"),
+        other => (other, ""),
+    };
+    let code = if code.is_empty() {
+        format!("Key{}", name.to_uppercase())
+    } else {
+        code.to_owned()
+    };
+    for down in [true, false] {
+        app.to_stream(StreamInput::Key {
+            down,
+            key: name.to_owned(),
+            code: code.clone(),
+            text: None,
+            mods,
+        });
+    }
+}
+
+/// Presses Cmd-V in the focused window, after the clipboard was sent.
+fn press_paste(app: &app::App) {
+    let Some(window) = app.focused_window() else {
+        return;
+    };
+    let mods = Mods {
+        platform: true,
+        ..Mods::default()
+    };
+    app.send(&ToHost::Input {
+        window,
+        input: Input::KeyDown {
+            key: "v".into(),
+            key_char: None,
+            mods,
+            held: false,
+        },
+    });
+    app.send(&ToHost::Input {
+        window,
+        input: Input::KeyUp {
+            key: "v".into(),
+            key_char: None,
+            mods,
+        },
+    });
+}
+
+/// Pastes this device's clipboard text into the app, or into the streamed
+/// page that has focus.
 #[wasm_bindgen]
 pub fn paste(text: String) {
     app::with_app(|_, app| {
-        let Some(window) = app.focused_window() else {
+        crate::edit::reset(app);
+        if app.to_stream(StreamInput::Text(text.clone())) {
             return;
-        };
+        }
         app.send(&ToHost::Clipboard { text });
-        let mods = Mods {
-            platform: true,
-            ..Mods::default()
-        };
-        app.send(&ToHost::Input {
-            window,
-            input: Input::KeyDown {
-                key: "v".into(),
-                key_char: None,
-                mods,
-                held: false,
-            },
-        });
-        app.send(&ToHost::Input {
-            window,
-            input: Input::KeyUp {
-                key: "v".into(),
-                key_char: None,
-                mods,
-            },
-        });
+        press_paste(app);
+    });
+}
+
+/// Pastes an image from this device, such as one a phone keyboard inserts:
+/// the app takes it as it takes an image copied on the Mac.
+#[wasm_bindgen]
+pub fn paste_image(mime: String, bytes: Vec<u8>) {
+    app::with_app(|_, app| {
+        crate::edit::reset(app);
+        app.send(&ToHost::ClipboardImage { mime, bytes });
+        press_paste(app);
     });
 }
 

@@ -11,9 +11,7 @@ use gpui_wgpu::{WebBackendPreference, WgpuContext, wgpu};
 use herdr_web::wire::{self, Button, Input, PROTOCOL, ToBrowser, ToHost, WindowId};
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
-use web_sys::{
-    BinaryType, HtmlCanvasElement, HtmlElement, HtmlTextAreaElement, MessageEvent, WebSocket,
-};
+use web_sys::{BinaryType, HtmlCanvasElement, HtmlElement, MessageEvent, WebSocket};
 
 pub(crate) type Shared = Rc<RefCell<App>>;
 
@@ -53,7 +51,9 @@ pub(crate) struct App {
     /// The canvas the GPU was set up on, for the first window.
     spare: Option<(HtmlCanvasElement, wgpu::Surface<'static>)>,
     root: HtmlElement,
-    text: HtmlTextAreaElement,
+    /// The hidden field keys and text arrive in: contenteditable, since a
+    /// phone keyboard inserts images only into rich text.
+    text: HtmlElement,
     socket: Option<WebSocket>,
     socket_handlers: Vec<Listener>,
     /// Bottom to top; the main window first.
@@ -76,7 +76,7 @@ pub(crate) struct App {
 
 pub(crate) async fn run() -> Result<(), String> {
     let root: HtmlElement = dom::by_id("herdr-root").ok_or("the page has no root")?;
-    let text: HtmlTextAreaElement = dom::by_id("herdr-input").ok_or("the page has no input")?;
+    let text: HtmlElement = dom::by_id("herdr-input").ok_or("the page has no input")?;
     let canvas: HtmlCanvasElement = dom::create("canvas").ok_or("no document")?;
     let prepared = WgpuContext::new_web(&canvas, WebBackendPreference::Auto)
         .await
@@ -324,6 +324,16 @@ fn receive(shared: &Shared, message: ToBrowser) {
             );
         }
         ToBrowser::PromptClosed { id } => dom::emit("prompt-closed", &[("id", &id.to_string())]),
+        ToBrowser::Device(action) => {
+            let action = match action {
+                wire::DeviceAction::TextSmaller => "text-smaller",
+                wire::DeviceAction::TextReset => "text-reset",
+                wire::DeviceAction::TextLarger => "text-larger",
+                wire::DeviceAction::AllowNotifications => "allow-notifications",
+                wire::DeviceAction::SignOut => "sign-out",
+            };
+            dom::emit("device", &[("action", action)]);
+        }
         ToBrowser::WindowOpened { .. } => {}
         ToBrowser::WindowClosed { window } => {
             app.pages.close_window(window);
@@ -514,8 +524,15 @@ impl App {
     }
 
     /// Shows or hides the phone keyboard, which follows the hidden input.
+    pub(crate) fn field(&self) -> &HtmlElement {
+        &self.text
+    }
+
     pub(crate) fn show_keyboard(&self, show: bool) {
         if show {
+            // A field still focused after the keyboard was closed opens it
+            // again only by focusing anew.
+            let _ = self.text.blur();
             let _ = self.text.focus();
         } else {
             let _ = self.text.blur();

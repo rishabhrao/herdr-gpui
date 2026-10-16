@@ -179,6 +179,20 @@ fn messages_round_trip() {
         ToHost::Clipboard {
             text: "copied on the phone".into(),
         },
+        ToHost::ClipboardImage {
+            mime: "image/png".into(),
+            bytes: vec![137, 80, 78, 71],
+        },
+        ToHost::Page(PageEvent::Input {
+            page: 3,
+            input: StreamInput::Key {
+                down: true,
+                key: "a".into(),
+                code: "KeyA".into(),
+                text: Some("a".into()),
+                mods: Mods::default(),
+            },
+        }),
         ToHost::Input {
             window: 1,
             input: Input::KeyDown {

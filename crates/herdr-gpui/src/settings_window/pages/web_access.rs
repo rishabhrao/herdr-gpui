@@ -78,6 +78,14 @@ fn forget(_: &str) -> Option<String> {
     None
 }
 
+/// What "This device" asks of the browser it is tapped in.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+fn device_action(action: herdr_web::wire::DeviceAction) {
+    if let Some(served) = herdr_web::host::Served::get() {
+        served.device_action(action);
+    }
+}
+
 /// When a device was last seen, from `now`, both in Unix seconds.
 pub(in crate::settings_window) fn seen(last_seen: u64, now: u64) -> String {
     let elapsed = now.saturating_sub(last_seen);
@@ -87,6 +95,52 @@ pub(in crate::settings_window) fn seen(last_seen: u64, now: u64) -> String {
         3_600..86_400 => format!("Seen {} h ago", elapsed / 3_600),
         _ => format!("Seen {} days ago", elapsed / 86_400),
     }
+}
+
+/// Settings for the browser Settings is used in: each device keeps its own.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+fn this_device(theme: &crate::config::Theme, cx: &mut Context<SettingsWindow>) -> Vec<AnyElement> {
+    use herdr_web::wire::DeviceAction;
+    let button = |id: &'static str, label: &'static str, action: DeviceAction| {
+        ui::button(theme, id, label, true).on_click(cx.listener(move |_, _, _, _| {
+            device_action(action);
+        }))
+    };
+    let (smaller, reset, larger) = (
+        button("web-text-smaller", "A\u{2212}", DeviceAction::TextSmaller),
+        button("web-text-reset", "100%", DeviceAction::TextReset),
+        button("web-text-larger", "A+", DeviceAction::TextLarger),
+    );
+    let allow = button(
+        "web-notifications-allow",
+        "Allow",
+        DeviceAction::AllowNotifications,
+    );
+    let sign_out = button("web-sign-out-button", "Sign out", DeviceAction::SignOut);
+    vec![
+        ui::section(theme, "This device", None).into_any_element(),
+        ui::row(theme, "web-text-size", "Text size")
+            .description("The app's size in this browser only.")
+            .control(smaller)
+            .control(reset)
+            .control(larger)
+            .into_any_element(),
+        ui::row(theme, "web-notifications", "Notifications")
+            .description("Agent notifications here while the page is in the background.")
+            .control(allow)
+            .into_any_element(),
+        ui::row(theme, "web-sign-out", "Sign out")
+            .description(
+                "This device must pair again to use the app. A browser on this Mac needs no sign-in.",
+            )
+            .control(sign_out)
+            .into_any_element(),
+    ]
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
+fn this_device(_: &crate::config::Theme, _: &mut Context<SettingsWindow>) -> Vec<AnyElement> {
+    Vec::new()
 }
 
 fn place(remote: bool) -> &'static str {
@@ -165,11 +219,14 @@ impl SettingsWindow {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_secs());
-        let mut page = page.child(ui::section(theme, "Serving", None)).child(
-            ui::row(theme, "web-local", "On this Mac")
-                .description("Any browser here opens it; no pairing is needed.")
-                .control(div().child(access.local_address.clone())),
-        );
+        let mut page = page
+            .children(this_device(theme, cx))
+            .child(ui::section(theme, "Serving", None))
+            .child(
+                ui::row(theme, "web-local", "On this Mac")
+                    .description("Any browser here opens it; no pairing is needed.")
+                    .control(div().child(access.local_address.clone())),
+            );
         for (index, host) in access.public_hosts.iter().enumerate() {
             page = page.child(
                 ui::row(theme, format!("web-public-{index}"), "Through the tunnel")

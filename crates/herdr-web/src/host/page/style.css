@@ -255,9 +255,10 @@ body {
   padding: 0;
   border: 0;
   opacity: 0;
-  resize: none;
   overflow: hidden;
   white-space: pre;
+  outline: none;
+  caret-color: transparent;
   font-size: 16px; /* Smaller text makes iOS zoom in on focus. */
   z-index: -1;
 }

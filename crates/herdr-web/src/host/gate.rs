@@ -114,7 +114,7 @@ impl Doors {
         }
         format!(
             "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; \
-             img-src 'self' data: blob:; connect-src 'self' {sockets}; worker-src 'self'; \
+             img-src 'self' data: blob:; connect-src 'self' data: blob: {sockets}; worker-src 'self'; \
              manifest-src 'self'; frame-src 'self' http: https:; base-uri 'none'; \
              form-action 'none'; frame-ancestors 'none'"
         )
