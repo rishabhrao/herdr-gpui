@@ -1,0 +1,369 @@
+:root {
+  color-scheme: light dark;
+  --herdr-bg: #ffffff;
+  --herdr-fg: #1f2328;
+  --herdr-muted: #59636e;
+  --herdr-panel: #f3f3f3;
+  --herdr-border: rgba(0, 0, 0, 0.18);
+  --herdr-accent: #2f6feb;
+  --herdr-accent-fg: #ffffff;
+  --herdr-shadow: rgba(0, 0, 0, 0.35);
+  --herdr-touch: 44px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --herdr-bg: #16181d;
+    --herdr-fg: #e6e6e6;
+    --herdr-muted: #9aa0a6;
+    --herdr-panel: #23262d;
+    --herdr-border: rgba(255, 255, 255, 0.18);
+    --herdr-accent: #4c8dff;
+    --herdr-accent-fg: #0b0d10;
+    --herdr-shadow: rgba(0, 0, 0, 0.6);
+  }
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--herdr-bg);
+  color: var(--herdr-fg);
+  font: 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
+/* The visible area: the visual viewport when a phone keyboard is open. */
+#herdr-app {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: var(--app-height, 100dvh);
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  box-sizing: border-box;
+}
+
+#herdr-root {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.herdr-window {
+  position: absolute;
+  overflow: hidden;
+}
+
+.herdr-window.main {
+  inset: 0;
+}
+
+.herdr-window.floating {
+  border: 1px solid var(--herdr-border);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px var(--herdr-shadow);
+  display: flex;
+  flex-direction: column;
+  background: var(--herdr-bg);
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.herdr-titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--herdr-panel);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  font-size: 13px;
+}
+
+.herdr-titlebar span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.herdr-titlebar button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  min-width: 28px;
+  height: 26px;
+  cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .herdr-titlebar {
+    height: var(--herdr-touch);
+  }
+
+  .herdr-titlebar button {
+    min-width: var(--herdr-touch);
+    height: var(--herdr-touch);
+  }
+}
+
+.herdr-titlebar button:hover {
+  background: var(--herdr-border);
+}
+
+.herdr-canvas-box {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.herdr-canvas-box canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.herdr-canvas-box iframe {
+  position: absolute;
+  border: 0;
+  background: #ffffff;
+}
+
+/* The keys a phone keyboard lacks, above the keyboard. */
+#herdr-bar {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
+  background: var(--herdr-panel);
+  border-top: 1px solid var(--herdr-border);
+  scrollbar-width: none;
+}
+
+#herdr-bar[hidden] {
+  display: none;
+}
+
+#herdr-bar button {
+  flex: none;
+  min-width: var(--herdr-touch);
+  height: var(--herdr-touch);
+  padding: 0 10px;
+  border: 1px solid var(--herdr-border);
+  border-radius: 8px;
+  background: var(--herdr-bg);
+  color: var(--herdr-fg);
+  font: 15px ui-monospace, SFMono-Regular, Menlo, monospace;
+  touch-action: manipulation;
+}
+
+#herdr-bar button[aria-pressed="true"] {
+  background: var(--herdr-accent);
+  color: var(--herdr-accent-fg);
+  border-color: var(--herdr-accent);
+}
+
+#herdr-input {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  font-size: 16px; /* Smaller text makes iOS zoom in on focus. */
+  z-index: -1;
+}
+
+#herdr-status {
+  position: fixed;
+  left: 50%;
+  top: 40%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - 48px);
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: var(--herdr-panel);
+  border: 1px solid var(--herdr-border);
+}
+
+#herdr-status[hidden],
+#herdr-overlay[hidden] {
+  display: none;
+}
+
+#herdr-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 10;
+}
+
+.herdr-card {
+  width: min(420px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border-radius: 14px;
+  background: var(--herdr-bg);
+  border: 1px solid var(--herdr-border);
+  box-shadow: 0 18px 48px var(--herdr-shadow);
+}
+
+.herdr-card h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.herdr-card p {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.herdr-card button,
+.herdr-card input {
+  min-height: var(--herdr-touch);
+  border-radius: 10px;
+  border: 1px solid var(--herdr-border);
+  background: var(--herdr-panel);
+  color: var(--herdr-fg);
+  font: inherit;
+  padding: 0 14px;
+}
+
+.herdr-card button.herdr-primary {
+  background: var(--herdr-accent);
+  border-color: var(--herdr-accent);
+  color: var(--herdr-accent-fg);
+  font-weight: 600;
+}
+
+.herdr-card button:disabled {
+  opacity: 0.6;
+}
+
+.herdr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.herdr-field input {
+  font-size: 16px;
+}
+
+.herdr-hint {
+  color: var(--herdr-muted);
+  font-size: 13px;
+}
+
+.herdr-code {
+  font: 600 34px ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 4px;
+  text-align: center;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--herdr-panel);
+}
+
+.herdr-row {
+  display: flex;
+  gap: 8px;
+}
+
+.herdr-row button {
+  flex: 1;
+}
+
+.herdr-devices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.herdr-devices li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#herdr-toasts {
+  position: fixed;
+  left: 50%;
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(460px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.herdr-toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 10px;
+  background: var(--herdr-panel);
+  border: 1px solid var(--herdr-border);
+  box-shadow: 0 8px 24px var(--herdr-shadow);
+  pointer-events: auto;
+}
+
+.herdr-toast span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.herdr-toast button {
+  min-height: 36px;
+  min-width: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--herdr-border);
+  background: var(--herdr-bg);
+  color: var(--herdr-fg);
+  font: inherit;
+}
+
+.herdr-prompt-detail {
+  white-space: pre-line;
+}

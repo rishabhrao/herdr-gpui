@@ -23,6 +23,17 @@ run *args:
     trap 'pkill -f "^$app/Contents/MacOS/Herdr" || true' INT TERM
     open -n -W --stdout "$out" --stderr "$out" ${env_args[@]+"${env_args[@]}"} "$app" --args {{args}}
 
+# Builds the page `herdr-gpui serve` shows into target/web-client. Needs the
+# wasm32-unknown-unknown target and wasm-bindgen-cli 0.2.128 (`just setup-ci`).
+web-build:
+    cargo build --locked --release -p herdr-web-client --target wasm32-unknown-unknown
+    wasm-bindgen --target web --no-typescript --out-dir target/web-client target/wasm32-unknown-unknown/release/herdr_web_client.wasm
+
+# Runs the app with its windows in a browser tab on this machine; open the
+# address it prints. Ctrl-C stops it; the daemon and terminals keep running.
+serve port="1234": web-build
+    cargo run --locked --release -p herdr-gpui -- serve --port {{port}}
+
 run-debug *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -43,6 +54,7 @@ format-check:
 lint:
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
     cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
+    cargo clippy --locked -p herdr-web-client --target wasm32-unknown-unknown -- -D warnings
 
 test:
     cargo test --locked --workspace

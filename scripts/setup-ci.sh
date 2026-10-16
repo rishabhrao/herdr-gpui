@@ -42,7 +42,7 @@ install_actionlint() {
 have rustup || fail 'rustup is required: https://rustup.rs'
 # The pinned toolchain from rust-toolchain.toml, as CI installs it, plus the
 # GNU target that `just lint-windows` cross-checks. Cargo installs below need it.
-(cd "$root" && rustup toolchain install && rustup target add x86_64-pc-windows-gnu)
+(cd "$root" && rustup toolchain install && rustup target add x86_64-pc-windows-gnu wasm32-unknown-unknown)
 
 case "$(uname -s)" in
     Darwin)
@@ -69,6 +69,7 @@ case "$(uname -s)" in
         have actionlint || install_actionlint
         have zizmor || cargo install --locked zizmor
         have cargo-deny || cargo install --locked cargo-deny
+        have wasm-bindgen || cargo install --locked wasm-bindgen-cli --version 0.2.128
         have git-cliff || cargo install --locked git-cliff --version "$git_cliff_version"
         ;;
     *)

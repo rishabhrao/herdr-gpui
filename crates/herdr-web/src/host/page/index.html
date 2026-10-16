@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#16181d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Herdr UI">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- With credentials: behind Cloudflare Access, a manifest fetched without
+     the login cookie is sent to the login page, and the app cannot install. -->
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<title>Herdr UI</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="herdr-app">
+  <div id="herdr-root"></div>
+  <div id="herdr-bar" role="toolbar" aria-label="Keys" hidden></div>
+</div>
+<textarea id="herdr-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Herdr UI keyboard input"></textarea>
+<div id="herdr-status" role="status">Connecting to Herdr UI…</div>
+<div id="herdr-overlay" hidden></div>
+<div id="herdr-toasts" aria-live="polite"></div>
+<script type="module" src="/boot.js"></script>
+</body>
+</html>

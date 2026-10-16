@@ -1,0 +1,61 @@
+[package]
+name = "herdr-web-client"
+description = "The browser page of `herdr-gpui serve`: draws the app's frames and sends input back"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+# Only the WebAssembly build has a body; `cargo build` for the host builds an
+# empty library so workspace commands keep working.
+[target.'cfg(target_family = "wasm")'.dependencies]
+gpui.workspace                 = true
+gpui_wgpu.workspace            = true
+herdr-web.workspace            = true
+js-sys.workspace               = true
+wasm-bindgen.workspace         = true
+wasm-bindgen-futures.workspace = true
+web-sys                        = { features = [
+  "AddEventListenerOptions",
+  "console",
+  "BinaryType",
+  "CloseEvent",
+  "CompositionEvent",
+  "CssStyleDeclaration",
+  "CustomEvent",
+  "CustomEventInit",
+  "Document",
+  "DomRect",
+  "DomTokenList",
+  "Element",
+  "Event",
+  "EventTarget",
+  "FocusEvent",
+  "History",
+  "PopStateEvent",
+  "Storage",
+  "HtmlButtonElement",
+  "HtmlCanvasElement",
+  "HtmlElement",
+  "HtmlIFrameElement",
+  "HtmlTextAreaElement",
+  "InputEvent",
+  "KeyboardEvent",
+  "Location",
+  "MediaQueryList",
+  "MessageEvent",
+  "MouseEvent",
+  "Node",
+  "Performance",
+  "PointerEvent",
+  "UrlSearchParams",
+  "WebSocket",
+  "WheelEvent",
+  "Window",
+], workspace = true }

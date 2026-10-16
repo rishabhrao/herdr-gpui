@@ -1,5 +1,5 @@
 [workspace]
-members  = ["crates/herdr-client", "crates/herdr-gpui", "crates/herdr-protocol"]
+members  = ["crates/herdr-client", "crates/herdr-gpui", "crates/herdr-protocol", "crates/herdr-web", "crates/herdr-web-client"]
 resolver = "2"
 
 [workspace.package]
@@ -24,6 +24,7 @@ unwrap_used = "deny"
 url = "2"
 anyhow               = "1"
 aes                  = "0.9.3"
+async-channel        = "2"
 ammonia              = "4.2.1"
 cbc                  = { features = ["block-padding"], version = "0.2.1" }
 percent-encoding     = "2"
@@ -43,21 +44,28 @@ font-kit             = { package = "zed-font-kit", version = "=0.14.1-zed" }
 # Locates installed font files on Linux, as GPUI's own text system does.
 fontdb               = "0.24"
 foreign-types        = "0.5"
+futures              = "0.3"
 futures-lite         = "2"
 getrandom            = "0.4.3"
 gpui                 = { package = "gpui-pre", version = "=0.3.6" }
 gpui_platform        = { package = "gpui-pre-platform", version = "=0.3.6" }
 gpui-wry             = "=0.6.6"
+# Draws the served app's frames in the browser; the version GPUI's web platform uses.
+gpui_wgpu            = { package = "gpui-pre-wgpu", version = "=0.3.6" }
 # The same wry gpui-wry builds on; it does not re-export the builder.
 wry                  = { package = "lb-wry", version = "=0.53.3" }
 herdr-client         = { path = "crates/herdr-client" }
 herdr-protocol       = { path = "crates/herdr-protocol" }
+herdr-web            = { path = "crates/herdr-web" }
+# Request heads for the `serve` loopback server.
+httparse             = "1"
 interprocess         = "2.4.2"
 # Local interface addresses, so Bonjour discovery skips this machine; the
 # version mdns-sd already uses.
 if-addrs             = "0.15"
 # Display and idle holds behind the status bar cup; `bin` would pull in a CLI.
 keepawake            = { default-features = false, version = "0.6.1" }
+js-sys               = "0.3"
 image                = { default-features = false, features = ["gif", "jpeg", "png", "webp"], version = "0.25.10" }
 # Helix's fzf-style scorer behind the command palette.
 nucleo-matcher       = "0.3.1"
@@ -81,6 +89,8 @@ objc2-web-kit        = { default-features = false, features = ["WKSnapshotConfig
 objc2-user-notifications ={ default-features = false, features = ["UNUserNotificationCenter", "block2", "std"], version = "0.3.2" }
 raw-window-handle    = "0.6"
 rusqlite             = { features = ["bundled"], version = "0.40" }
+# Verifies Cloudflare Access tokens for `serve`; the version rustls already locks.
+ring                 = "0.17"
 rodio                = { default-features = false, features = ["playback", "symphonia-mp3", "tracing"], version = "0.22.2" }
 rustix               = { features = ["event", "fs", "process", "pty", "termios"], version = "=1.1.5" }
 secrecy              = { features = ["serde"], version = "=0.10.3" }
@@ -110,5 +120,9 @@ unicode-segmentation = "1"
 unicode-width        = "0.2.2"
 ureq                 = "3"
 uuid                 = { features = ["serde", "v4", "v5"], version = "1" }
+# The browser side of `herdr-gpui serve`; wasm-bindgen must match `wasm-bindgen-cli`.
+wasm-bindgen         = "=0.2.128"
+wasm-bindgen-futures = "0.4"
+web-sys              = "0.3"
 windows-sys          = { features = ["Win32_Foundation", "Win32_System_Pipes"], version = "0.61.2" }
 zeroize              = "=1.9.0"

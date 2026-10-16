@@ -22,6 +22,12 @@ src/app/{state,mod}.rs, and src/client/shell.rs. Adaptations include native RGB
 palette projection, bounded parsing, conflict-aware atomic persistence, and
 GPUI indicator rendering. No upstream NOTICE file was present at that revision.
 
+The key naming in crates/herdr-web-client/src/keys.rs is adapted from GPUI's
+browser platform, the `gpui_web` crate of Zed (https://github.com/zed-industries/zed),
+Apache-2.0, as published in gpui-pre-web 0.3.6 (zed revision
+bcf6582ce3500df93a8a39366640173e6786cea6), src/events.rs. Adaptations include
+naming Option chords by their physical key and the keys the browser keeps.
+
 The notification policy and bundled audio assets adapted or copied from Herdr
 are attributed in crates/herdr-gpui/SOUND-NOTICE.md (Apache-2.0).
 Specifically, assets/sounds/done.mp3 and assets/sounds/request.mp3 are unmodified

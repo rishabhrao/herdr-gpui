@@ -1,0 +1,41 @@
+[package]
+name = "herdr-web"
+description = "Serves a GPUI app's windows to a browser: the wire format, the remote platform, and the local server"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bincode.workspace = true
+gpui.workspace     = true
+serde.workspace    = true
+thiserror.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))'.dependencies]
+anyhow.workspace            = true
+async-channel.workspace     = true
+base64.workspace            = true
+flate2.workspace            = true
+futures.workspace           = true
+getrandom.workspace         = true
+httparse.workspace          = true
+raw-window-handle.workspace = true
+ring.workspace              = true
+serde_json.workspace        = true
+sha1.workspace              = true
+sha2.workspace              = true
+tracing.workspace           = true
+ureq.workspace              = true
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))'.dev-dependencies]
+gpui_platform = { features = ["font-kit", "runtime_shaders"], workspace = true }
+
+# Opens a real window on the remote platform and checks the frame it sends; it
+# owns the main thread, which the macOS platform requires.
+[[test]]
+harness = false
+name    = "remote_window"
