@@ -5,6 +5,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+mod default_folder;
+
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 #[test]

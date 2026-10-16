@@ -225,8 +225,11 @@ fn names(dir: &Path) -> io::Result<Vec<String>> {
             continue;
         }
         let name = entry.file_name();
+        // The root session is `default` already; a leftover
+        // `sessions/default/` folder is not a second one.
         if let Some(name) = name.to_str()
             && valid_session_name(name)
+            && name != DEFAULT
         {
             named.push(name.to_owned());
         }
