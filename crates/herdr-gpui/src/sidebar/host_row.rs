@@ -103,13 +103,22 @@ impl HerdrWindow {
             - working_width
             - gauges.as_ref().map_or(0., |(width, _)| width + host_gap))
         .max(0.);
-        let lines = 1. + if load_line.is_some() { 1. } else { 0. };
         // The layout decides whether headers have a mark; the setting turns it off.
         let origin = (self.config.show_device_icons && self.config.layout.mode.device_icons())
             .then(|| crate::endpoint::origin::Origin::of(&endpoint.connection.target));
         let icon_size = (font.size * 0.9).round();
         let icon_room = origin.map_or(0., |_| icon_size + host_gap);
         let label_width = (label_width - icon_room).max(0.);
+        // In a narrow column memory goes under CPU instead of out of sight.
+        let load_room = look.content_width(width) - HOST_ARROW_WIDTH - host_gap - icon_room;
+        let stacked = load_line.is_some()
+            && !crate::system_load::line_fits(load_room, super::metrics::glyph_width(font));
+        let load_lines = match (load_line.is_some(), stacked) {
+            (false, _) => 0.,
+            (true, false) => 1.,
+            (true, true) => 2.,
+        };
+        let lines = 1. + load_lines;
         div()
             .id(SharedString::from(format!("{prefix}host-{endpoint_id}")))
             .debug_selector(|| format!("{prefix}host-{endpoint_id}"))
@@ -281,17 +290,27 @@ impl HerdrWindow {
                         .id(SharedString::from(format!(
                             "{prefix}host-load-{endpoint_id}"
                         )))
-                        .h(px(line_height(font)))
+                        .h(px(load_lines * line_height(font)))
                         .flex()
                         .items_center()
                         .pl(px(HOST_ARROW_WIDTH + host_gap + icon_room))
                         .overflow_hidden()
-                        .child(crate::system_load::line(
-                            reading,
-                            theme,
-                            Some(super::metrics::glyph_width(font)),
-                            crate::config::status_bar::Detail::Detailed,
-                        ))
+                        .child(if stacked {
+                            crate::system_load::stacked_line(
+                                reading,
+                                theme,
+                                Some(super::metrics::glyph_width(font)),
+                                crate::config::status_bar::Detail::Detailed,
+                                line_height(font),
+                            )
+                        } else {
+                            crate::system_load::line(
+                                reading,
+                                theme,
+                                Some(super::metrics::glyph_width(font)),
+                                crate::config::status_bar::Detail::Detailed,
+                            )
+                        })
                         .tooltip(crate::system_load::tooltip(reading, &host, theme)),
                 )
             })

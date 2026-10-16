@@ -16,7 +16,8 @@ use crate::{
     usage::{Host, Shell},
 };
 pub(crate) use render::{
-    CPU_WARN, DISK_WARN, MEMORY_WARN, gauges, line, severity, storage, tooltip, uptime,
+    CPU_WARN, DISK_WARN, MEMORY_WARN, gauges, line, line_fits, severity, stacked_line, storage,
+    tooltip, uptime,
 };
 // The control socket, Unix only, reads samples too.
 #[cfg(unix)]

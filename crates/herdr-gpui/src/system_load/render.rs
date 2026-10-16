@@ -81,6 +81,20 @@ pub(crate) fn tooltip(
     }
 }
 
+/// Room between the CPU and memory parts of a line.
+const PART_GAP: f32 = 10.;
+
+/// Whether the detailed line's CPU and memory parts fit side by side in
+/// `width`; when they do not, the sidebar puts one under the other.
+pub(crate) fn line_fits(width: f32, glyph: f32) -> bool {
+    let label = 3. * glyph;
+    let share = SHARE_GLYPHS * glyph;
+    let sparkline = HISTORY as f32 * BAR_WIDTH + HISTORY.saturating_sub(1) as f32 * BAR_GAP;
+    let cpu = label + ITEM_GAP + sparkline + ITEM_GAP + share;
+    let memory = label + ITEM_GAP + METER_WIDTH + ITEM_GAP + share;
+    cpu + PART_GAP + memory <= width
+}
+
 /// `CPU ▁▃▂▅ 12%  MEM ━━─ 61%`, or `CPU 12%  MEM 61%` when compact. `glyph`
 /// fixes each share's width so a row's columns do not shift as numbers
 /// change; None lets them size.
@@ -117,10 +131,27 @@ pub(crate) fn line(reading: &Reading, theme: &Theme, glyph: Option<f32>, detail:
     div()
         .flex()
         .items_center()
-        .gap(px(10.))
+        .gap(px(PART_GAP))
         .overflow_hidden()
         .child(cpu)
         .children(memory)
+}
+
+/// The same parts, memory under CPU, for a column too narrow for both.
+pub(crate) fn stacked_line(
+    reading: &Reading,
+    theme: &Theme,
+    glyph: Option<f32>,
+    detail: Detail,
+    line_height: f32,
+) -> Div {
+    let row = line(reading, theme, glyph, detail);
+    // One line each, at the row's own line height.
+    row.flex_col()
+        .items_start()
+        .gap_0()
+        .h(px(2. * line_height))
+        .justify_center()
 }
 
 /// Two vertical gauges with their shares, for a host row with no room for a

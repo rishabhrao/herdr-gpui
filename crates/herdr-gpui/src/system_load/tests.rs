@@ -12,6 +12,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod line_fits;
+
 const LINUX: &str = "cores 8
 loadavg 0.52 0.48 0.40 2/913 123456
 cpu  1000 0 500 8000 500 0 0 0 0 0
