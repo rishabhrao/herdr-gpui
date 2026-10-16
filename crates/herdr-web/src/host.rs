@@ -17,6 +17,7 @@ mod input;
 mod peers;
 mod platform;
 mod routes;
+mod served;
 mod server;
 mod window;
 mod ws;
@@ -24,6 +25,7 @@ mod ws;
 pub use access::AccessOptions;
 pub use devices::{Device, PairingRequest, forget as forget_device, list as list_devices};
 pub use hub::{PageFiles, PageHandle, Pages};
+pub use served::{Connection, Served};
 
 use crate::{Error, Result};
 use gpui::Platform;

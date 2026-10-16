@@ -199,6 +199,8 @@ herdr-gpui serve --port 8080 --session work
   `--access-aud` name it up front; `--no-access-check` turns the check off).
   A new device through the tunnel also asks to pair: approve it in the app's
   dialog, or type `allow CODE` or `deny CODE` in the `serve` terminal.
+  Settings > Web access shows the addresses, the pages open now, and the
+  paired devices, each with a Forget button. From a terminal,
   `herdr-gpui serve devices` lists paired devices and
   `herdr-gpui serve forget NAME` removes one.
 - Any number of pages show the app at once, up to eight, on any devices.

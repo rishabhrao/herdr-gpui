@@ -156,6 +156,7 @@ impl Hub {
             next_page: AtomicU64::new(1),
         });
         let _ = PAGES.set(Pages(hub.clone()));
+        super::served::install(&hub);
         (hub, receiver, requests)
     }
 
@@ -203,6 +204,15 @@ impl Hub {
     /// Drops the pages of a device that was forgotten.
     pub(super) fn drop_device(&self, device: &str) {
         self.links().retain(|link| link.visitor.device != device);
+    }
+
+    /// Who each connected page is, oldest first.
+    pub(super) fn visitors(&self) -> Vec<Visitor> {
+        self.links()
+            .iter()
+            .filter(|link| link.ready)
+            .map(|link| link.visitor.clone())
+            .collect()
     }
 
     /// Whether any caught-up page is connected.

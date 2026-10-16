@@ -208,6 +208,9 @@ struct SettingsWindow {
     #[cfg(test)]
     layout_io: Option<layouts::LayoutIo>,
     remote_history: remote_history::RemoteHistory,
+    /// What Web access shows, and the task that rereads it while it shows.
+    web_access: pages::WebAccess,
+    web_access_watch: Option<Task<()>>,
     /// The provider whose tab Cloud devices shows.
     #[cfg(feature = "cloud")]
     cloud_tab: crate::cloud::CloudProvider,
@@ -330,6 +333,8 @@ impl SettingsWindow {
             #[cfg(test)]
             layout_io: None,
             remote_history: Default::default(),
+            web_access: Default::default(),
+            web_access_watch: None,
             #[cfg(feature = "cloud")]
             cloud_tab: cloud_devices::first_tab(),
             #[cfg(feature = "cloud")]
@@ -635,6 +640,9 @@ impl SettingsWindow {
         self.navigation_scroll.scroll_to_item(section.nav_item());
         if section == Section::Code {
             self.open_code_page(window, cx);
+        }
+        if section == Section::WebAccess {
+            self.watch_web_access(cx);
         }
         self.body_scroll.set_offset(Point::default());
         window.focus(&self.focus, cx);

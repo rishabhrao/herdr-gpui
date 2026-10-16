@@ -8,12 +8,16 @@ mod sidebar;
 mod status_bar;
 mod tabs;
 mod theme;
+mod web_access;
 mod window;
 
 use super::{SettingsWindow, inputs::DropdownField, ui};
 pub(super) use fonts::size_control;
 use gpui::{prelude::*, *};
 pub(super) use sidebar::Spacing;
+pub(super) use web_access::WebAccess;
+#[cfg(test)]
+pub(super) use web_access::seen;
 pub(super) use window::padding_ids;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

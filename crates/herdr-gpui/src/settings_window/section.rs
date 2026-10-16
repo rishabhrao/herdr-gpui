@@ -14,6 +14,7 @@ pub(super) enum Section {
     Notifications,
     Integrations,
     Plugins,
+    WebAccess,
     #[cfg(feature = "cloud")]
     CloudDevices,
     Configuration,
@@ -59,6 +60,7 @@ impl Section {
         Self::Notifications,
         Self::Integrations,
         Self::Plugins,
+        Self::WebAccess,
         #[cfg(feature = "cloud")]
         Self::CloudDevices,
         Self::Configuration,
@@ -76,6 +78,7 @@ impl Section {
             Self::Notifications => "Notifications",
             Self::Integrations => "Integrations",
             Self::Plugins => "Plugins",
+            Self::WebAccess => "Web access",
             #[cfg(feature = "cloud")]
             Self::CloudDevices => "Cloud devices",
             Self::Configuration => "Configuration",
@@ -93,6 +96,7 @@ impl Section {
             ),
             Self::Integrations => Some("Agents Herdr can launch and track."),
             Self::Plugins => Some("Show what your plugins report in the sidebar."),
+            Self::WebAccess => Some("Use this app in a browser, on this Mac or another device."),
             #[cfg(feature = "cloud")]
             Self::CloudDevices => {
                 Some("Create machines from your cloud accounts and use them as devices.")
@@ -108,7 +112,7 @@ impl Section {
         match self {
             Self::Theme | Self::Sidebar | Self::Fonts | Self::StatusBar => Group::Appearance,
             Self::General | Self::Tabs | Self::Code | Self::Notifications => Group::Behaviour,
-            Self::Integrations | Self::Plugins => Group::Connect,
+            Self::Integrations | Self::Plugins | Self::WebAccess => Group::Connect,
             #[cfg(feature = "cloud")]
             Self::CloudDevices => Group::Connect,
             Self::Configuration => Group::Advanced,
@@ -127,6 +131,7 @@ impl Section {
             Self::Notifications => "icons/bell.svg",
             Self::Integrations => "icons/agent-generic.svg",
             Self::Plugins => "icons/plug.svg",
+            Self::WebAccess => "icons/globe.svg",
             #[cfg(feature = "cloud")]
             Self::CloudDevices => "icons/globe.svg",
             Self::Configuration => "icons/file.svg",
