@@ -159,11 +159,12 @@ validated `HERDR_RELEASE_VERSION` before packaging.
 The experimental Windows targets are `x86_64-pc-windows-msvc` and
 `aarch64-pc-windows-msvc`, built natively on `windows-2025` and
 `windows-11-arm` after clippy, the protocol/client suites and the CLI tests pass
-there. `scripts/release/package-windows.py VERSION TARGET BINARY OUTPUT_DIR
-THIRD_PARTY_NOTICES` (standard-library Python, since the runner has no zip tool)
-writes one `Herdr-VERSION-TARGET.zip` per target with a same-named root containing
-`herdr-gpui.exe` and `licenses/` holding the same license and notice files as
-the Linux tree. Entries carry a fixed timestamp. Both zips are mandatory in the
+there. `scripts/release/package-windows.py VERSION TARGET BINARY LAUNCHER
+OUTPUT_DIR THIRD_PARTY_NOTICES` (standard-library Python, since the runner has no
+zip tool) writes one `Herdr-VERSION-TARGET.zip` per target with a same-named root
+containing `herdr-gpui.exe`, the windowed `herdr-gpui-launcher.exe` that the
+installer's Start menu shortcut opens, and `licenses/` holding the same license
+and notice files as the Linux tree. Entries carry a fixed timestamp. Both zips are mandatory in the
 asset manifest and receive checksums, Sigstore sidecars and provenance like
 every other asset, but they are not Authenticode-signed and have no updater archive
 or update-manifest entry: Windows installs update by manual download.

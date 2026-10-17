@@ -52,6 +52,8 @@ pub(crate) enum Page {
     Menu,
     /// Where the pane menu's pane can move: new places, then other tabs.
     MovePane,
+    /// Where the tab menu's tab can move: a new workspace, then other workspaces.
+    MoveTab,
     /// Asks before opening a terminal hyperlink with an unlisted scheme.
     OpenLink,
     Palette,
@@ -135,6 +137,7 @@ impl Page {
             Self::Workspace
                 | Self::Tab
                 | Self::RenameTab
+                | Self::MoveTab
                 | Self::Group
                 | Self::Pane
                 | Self::RenamePane

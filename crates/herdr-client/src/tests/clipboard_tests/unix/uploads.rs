@@ -20,8 +20,11 @@ fn sustained_inbound_progress_survives_a_backpressured_outgoing_image() {
                 bytes: vec![value; 24 * 1024 * 1024],
             },
         );
+        // Wait as long as the deadline under test, not the generic 3 s event
+        // wait: a 24 MiB debug-build frame can take longer on a loaded runner.
+        let event = client.events.recv_timeout(TIMEOUT).unwrap();
         assert!(
-            matches!(event(&client), ClientEvent::Message(ServerMessage::Graphics { bytes })
+            matches!(event, ClientEvent::Message(ServerMessage::Graphics { bytes })
             if bytes.len() == 24 * 1024 * 1024 && bytes.iter().all(|byte| *byte == value))
         );
         assert!(started.elapsed() < TIMEOUT);

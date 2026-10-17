@@ -125,14 +125,19 @@ install:
 [extension(".cmd")]
 install:
     #!cmd.exe /c
-    cargo install --locked --force --path crates/herdr-gpui --bin herdr-gpui
+    cargo install --locked --force --path crates/herdr-gpui --bin herdr-gpui || exit /b 1
+    cargo install --locked --force --path crates/herdr-gpui-launcher
 
 # Regenerate circular Linux artwork on any platform (Python standard library).
 icons-linux:
     python3 scripts/generate-linux-icons.py
 
+# Regenerate the Windows executable icons (Python standard library and rsvg-convert).
+icons-windows:
+    python3 scripts/generate-windows-icons.py
+
 # Regenerate all checked-in artwork on macOS (requires brew install librsvg).
-icons: icons-linux
+icons: icons-linux icons-windows
     swift scripts/generate-icons.swift
 
 # Local, unsigned GUI-only bundle. Never installs or packages a daemon.

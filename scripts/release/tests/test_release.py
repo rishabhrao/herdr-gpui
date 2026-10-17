@@ -97,38 +97,46 @@ class ReleaseTests(unittest.TestCase):
     def test_windows_archive(self):
         binary = self.work / "input binary.exe"
         binary.write_bytes(build_identity())
+        launcher = self.work / "input launcher.exe"
+        launcher.write_bytes(b"windowed launcher")
         target = "x86_64-pc-windows-msvc"
-        output = Path(self.run_windows("20260920.3", target, binary, self.work, self.notices).stdout.strip())
+        output = Path(self.run_windows("20260920.3", target, binary, launcher, self.work, self.notices).stdout.strip())
         self.assertEqual(output, self.work.resolve() / f"Herdr-20260920.3-{target}.zip")
         base = f"Herdr-20260920.3-{target}/"
         with zipfile.ZipFile(output) as archive:
             self.assertIsNone(archive.testzip())
             self.assertEqual(set(archive.namelist()), {base + p for p in [
-                "herdr-gpui.exe", "licenses/LICENSE", "licenses/NOTICE", "licenses/LICENSE-octicons",
+                "herdr-gpui.exe", "herdr-gpui-launcher.exe", "licenses/LICENSE", "licenses/NOTICE", "licenses/LICENSE-octicons",
                 "licenses/LICENSE-APACHE", "licenses/NOTICE.md", "licenses/SOUND-NOTICE.md",
                 "licenses/THIRD-PARTY-NOTICES.txt",
             ]})
             self.assertEqual({info.date_time for info in archive.infolist()}, {(1980, 1, 1, 0, 0, 0)})
             self.assertEqual(archive.read(base + "herdr-gpui.exe"), binary.read_bytes())
+            self.assertEqual(archive.read(base + "herdr-gpui-launcher.exe"), launcher.read_bytes())
             self.assertEqual(archive.read(base + "licenses/THIRD-PARTY-NOTICES.txt"), self.notices.read_bytes())
             for source in ("LICENSE", "NOTICE", "assets/icons/LICENSE-octicons", "crates/herdr-protocol/LICENSE-APACHE",
                            "crates/herdr-protocol/NOTICE.md", "crates/herdr-gpui/SOUND-NOTICE.md"):
                 self.assertEqual(archive.read(base + "licenses/" + Path(source).name), (ROOT / source).read_bytes())
         before = output.read_bytes()
-        result = self.run_windows("20260920.3", target, binary, self.work, self.notices, success=False)
+        result = self.run_windows("20260920.3", target, binary, launcher, self.work, self.notices, success=False)
         self.assertIn("Output already exists", result.stderr)
         self.assertEqual(output.read_bytes(), before)
         output.unlink()
-        arm = Path(self.run_windows("20260920.3", "aarch64-pc-windows-msvc", binary, self.work, self.notices).stdout.strip())
+        arm = Path(self.run_windows("20260920.3", "aarch64-pc-windows-msvc", binary, launcher, self.work,
+                                    self.notices).stdout.strip())
         self.assertEqual(arm, self.work.resolve() / "Herdr-20260920.3-aarch64-pc-windows-msvc.zip")
         arm.unlink()
-        for args in [("20260920.03", target, binary, self.work, self.notices),
-                     ("v20260920.3", target, binary, self.work, self.notices),
-                     ("20260920.3", "x86_64-pc-windows-gnu", binary, self.work, self.notices),
-                     ("20260920.3", target, self.work / "missing.exe", self.work, self.notices),
-                     ("20260920.3", target, binary, self.work / "missing", self.notices),
-                     ("20260920.3", target, binary, self.work, self.work / "missing"),
-                     ("20260920.3", target, binary, self.work, self.work / "empty")]:
+        result = self.run_windows("20260920.3", target, binary, self.work / "missing-launcher.exe", self.work,
+                                  self.notices, success=False)
+        self.assertIn("Launcher file required", result.stderr)
+        for args in [("20260920.03", target, binary, launcher, self.work, self.notices),
+                     ("v20260920.3", target, binary, launcher, self.work, self.notices),
+                     ("20260920.3", "x86_64-pc-windows-gnu", binary, launcher, self.work, self.notices),
+                     ("20260920.3", target, self.work / "missing.exe", launcher, self.work, self.notices),
+                     ("20260920.3", target, binary, self.work, self.work, self.notices),
+                     ("20260920.3", target, binary, launcher, self.work / "missing", self.notices),
+                     ("20260920.3", target, binary, launcher, self.work, self.work / "missing"),
+                     ("20260920.3", target, binary, launcher, self.work, self.work / "empty")]:
             (self.work / "empty").touch()
             with self.subTest(args=args):
                 self.run_windows(*args, success=False)

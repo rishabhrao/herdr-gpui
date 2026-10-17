@@ -42,7 +42,7 @@ pub(crate) use {
     row::{compact, github_mark, label_text, styled as styled_token},
     search::SidebarSearch,
     view::SidebarView,
-    workspaces::workspace_label,
+    workspaces::{workspace_entries, workspace_label},
 };
 
 pub(crate) use layout::SidebarMetrics;

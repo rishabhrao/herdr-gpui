@@ -136,6 +136,7 @@ fn open_window_placed(
             ..Default::default()
         },
         |window, cx| {
+            crate::taskbar::mark(window, cx);
             cx.new(|cx| {
                 let mut view = HerdrWindow::new(
                     target,
@@ -374,6 +375,8 @@ pub(crate) fn run() -> std::process::ExitCode {
     } else {
         crate::dispatch::History::default()
     };
+    // Whether the launcher is installed is read once here, never while a window opens.
+    let taskbar = crate::taskbar::Taskbar::load();
     let (application, approvals) = match crate::served::application(serve.as_ref()) {
         Ok(application) => application,
         Err(error) => {
@@ -396,6 +399,7 @@ pub(crate) fn run() -> std::process::ExitCode {
         dispatch_history.install(cx);
         agent_skill.install_global(cx);
         keychain_grants.install(cx);
+        taskbar.install(cx);
         // Only the user's own app answers agents; native test modes stay private.
         if mode == LaunchMode::Normal {
             crate::control::install(cx);

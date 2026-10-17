@@ -94,7 +94,10 @@ fn open_deferred(cx: &mut App) {
             app_owns_titlebar_drag: cfg!(target_os = "macos"),
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| LogWindow::new(window, cx)),
+        |window, cx| {
+            crate::taskbar::mark(window, cx);
+            cx.new(|cx| LogWindow::new(window, cx))
+        },
     ) {
         Ok(handle) => cx.set_global(LogWindowHandle(Some(handle))),
         Err(_) => tracing::error!("Unable to open log window"),

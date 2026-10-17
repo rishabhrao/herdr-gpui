@@ -110,6 +110,7 @@ fn open_with(
             ..Default::default()
         },
         move |window, cx| {
+            crate::taskbar::mark(window, cx);
             let model = retained.unwrap_or_else(|| {
                 cx.new(|cx| {
                     let mut view = SettingsWindow::new(source.clone(), cx);

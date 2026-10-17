@@ -35,7 +35,7 @@ pub(super) fn grouped_keys(workspaces: &[ClientShellWorkspace]) -> HashSet<&str>
 
 /// Display order as `(index, child)`. A group shows where its earliest member
 /// sits: all its parents first, in daemon order, then its linked worktrees.
-pub(super) fn workspace_entries(workspaces: &[ClientShellWorkspace]) -> Vec<(usize, bool)> {
+pub(crate) fn workspace_entries(workspaces: &[ClientShellWorkspace]) -> Vec<(usize, bool)> {
     let grouped = grouped_keys(workspaces);
     let mut members = HashMap::<&str, (Vec<usize>, Vec<usize>)>::new();
     for (index, workspace) in workspaces.iter().enumerate() {

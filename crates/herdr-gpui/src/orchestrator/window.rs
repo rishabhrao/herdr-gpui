@@ -60,7 +60,10 @@ impl HerdrWindow {
                 app_owns_titlebar_drag: cfg!(target_os = "macos"),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| OrchestratorWindow { view: view.clone() }),
+            |window, cx| {
+                crate::taskbar::mark(window, cx);
+                cx.new(|_| OrchestratorWindow { view: view.clone() })
+            },
         );
         match opened {
             Ok(handle) => {

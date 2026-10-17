@@ -283,7 +283,7 @@ jobs:
           test "$(rustc -vV | sed -n 's/^host: //p')" = "$TARGET"
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --locked -p herdr-protocol -p herdr-client
-      - run: cargo build --locked --release -p herdr-gpui --target "$TARGET"
+      - run: cargo build --locked --release -p herdr-gpui -p herdr-gpui-launcher --target "$TARGET"
       - run: cargo test --locked --release -p herdr-gpui --test cli --target "$TARGET"
       # cargo-about gates its binary behind the non-default `cli` feature, and
       # `cargo install` only warns and exits 0 when it installs nothing. Verify
@@ -297,7 +297,7 @@ jobs:
       - name: Package experimental Windows executable
         run: |
           mkdir dist
-          python scripts/release/package-windows.py "$VERSION" "$TARGET" "target/$TARGET/release/herdr-gpui.exe" dist "target/$TARGET/release/THIRD-PARTY-NOTICES.txt"
+          python scripts/release/package-windows.py "$VERSION" "$TARGET" "target/$TARGET/release/herdr-gpui.exe" "target/$TARGET/release/herdr-gpui-launcher.exe" dist "target/$TARGET/release/THIRD-PARTY-NOTICES.txt"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-package-${{ matrix.target }}

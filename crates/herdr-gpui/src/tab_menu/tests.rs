@@ -4,6 +4,34 @@ use core::prelude::v1::test;
 use gpui::VisualTestContext;
 use std::sync::Arc;
 
+// Moves run POSIX host scripts and are never offered on other clients.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod moves;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[gpui::test]
+fn tab_moves_are_not_offered_on_unsupported_platforms(cx: &mut TestAppContext) {
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        crate::bind_keys(cx);
+        let mut view = crate::sidebar::layout_tests::fixture_window(window, cx);
+        let snapshot: ClientShellSnapshot = serde_json::from_str(include_str!(
+            "../../../herdr-protocol/tests/fixtures/endpoint-snapshot-v1.json"
+        ))
+        .unwrap();
+        view.live.snapshot = Some(Arc::new(snapshot));
+        view.endpoints[0].connection.target = herdr_client::ConnectTarget::Local;
+        view
+    });
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.open_tab_menu("w1:t1", None, Point::default(), window, cx);
+            let tab = v.menu.tab.as_ref().unwrap();
+            assert!(!tab.movable);
+            assert!(!tab.actions().contains(&Action::MoveToWorkspace));
+        })
+    });
+}
+
 #[test]
 fn tab_target_retains_membership_and_rejects_stale_snapshots() {
     let original: ClientShellSnapshot = serde_json::from_str(include_str!(
@@ -168,7 +196,7 @@ fn inactive_tab_menu_rename_composition_cancel_and_fences(cx: &mut TestAppContex
                     view.selection_epoch += 1;
                 }
                 assert!(!view.menu_target_current());
-                for (action, _) in ACTIONS {
+                for action in ACTIONS {
                     view.activate_tab_menu(action, window, cx);
                     assert!(view.menu.page == Some(Page::Tab));
                     assert!(view.menu.tab.as_ref().unwrap().error.is_some());

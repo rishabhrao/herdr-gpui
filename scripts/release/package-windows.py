@@ -3,6 +3,9 @@
 
 Pure standard library so the Windows runner needs no zip tool. The layout
 mirrors package-linux.sh: the executable plus the same license and notice files.
+Beside herdr-gpui.exe, which is a console program because it is also the CLI,
+the zip carries herdr-gpui-launcher.exe, the windowed launcher that starts it without a
+console window from Explorer or the Start menu.
 """
 import argparse
 from pathlib import Path
@@ -28,13 +31,15 @@ def add(archive, name, data):
     archive.writestr(info, data)
 
 
-def package(version, target, binary, output_dir, notices):
+def package(version, target, binary, launcher, output_dir, notices):
     if not re.fullmatch(r"[1-9][0-9]{7}\.[1-9][0-9]*", version):
         raise ValueError("Version must be YYYYMMDD.COUNTER (no v prefix, counter from 1, no leading zeros)")
     if target not in TARGETS:
         raise ValueError("Unsupported Windows target")
     if not binary.is_file() or not output_dir.is_dir():
         raise ValueError("Binary file and existing output directory required")
+    if not launcher.is_file():
+        raise ValueError("Launcher file required")
     if not notices.is_file() or not notices.stat().st_size:
         raise ValueError("Nonempty third-party notices file required")
     name = f"Herdr-{version}-{target}"
@@ -47,6 +52,7 @@ def package(version, target, binary, output_dir, notices):
     try:
         with zipfile.ZipFile(partial, "w") as archive:
             add(archive, f"{name}/herdr-gpui.exe", binary.read_bytes())
+            add(archive, f"{name}/herdr-gpui-launcher.exe", launcher.read_bytes())
             for source in LICENSES:
                 add(archive, f"{name}/licenses/{Path(source).name}", (ROOT / source).read_bytes())
             add(archive, f"{name}/licenses/THIRD-PARTY-NOTICES.txt", notices.read_bytes())
@@ -63,10 +69,11 @@ def main():
     parser.add_argument("version")
     parser.add_argument("target")
     parser.add_argument("binary", type=Path)
+    parser.add_argument("launcher", type=Path)
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("notices", type=Path)
     args = parser.parse_args()
-    print(package(args.version, args.target, args.binary, args.output_dir, args.notices))
+    print(package(args.version, args.target, args.binary, args.launcher, args.output_dir, args.notices))
 
 
 if __name__ == "__main__":

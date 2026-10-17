@@ -3,6 +3,8 @@
 use super::*;
 use herdr_client::ConnectTarget;
 
+mod tab_moves;
+
 fn snapshot() -> ClientShellSnapshot {
     let mut snapshot: ClientShellSnapshot = serde_json::from_str(include_str!(
         "../../../herdr-protocol/tests/fixtures/endpoint-snapshot-v1.json"

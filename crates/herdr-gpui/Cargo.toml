@@ -60,6 +60,9 @@ ureq.workspace                 = true
 uuid.workspace                 = true
 zeroize.workspace              = true
 
+[build-dependencies]
+winresource.workspace = true
+
 [dev-dependencies]
 gpui = { features = ["test-support"], workspace = true }
 test-case.workspace = true
@@ -99,6 +102,10 @@ rustix.workspace = true
 # open in the system browser instead.
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 wry.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+raw-window-handle.workspace = true
+windows.workspace           = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 fontdb.workspace       = true

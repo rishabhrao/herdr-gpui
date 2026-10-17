@@ -4,11 +4,13 @@
 #   irm https://herdrui.dev/install.ps1 | iex
 #
 # It downloads the zip for this machine from GitHub Releases, checks it against
-# the release's published SHA-256, installs herdr-gpui.exe under
-# %LOCALAPPDATA%\Programs\Herdr UI, adds that directory to the user PATH, and
-# creates a Start menu shortcut. It never installs, starts or upgrades the Herdr
-# daemon. Windows builds are experimental and never update themselves: run this
-# again to update.
+# the release's published SHA-256, installs herdr-gpui.exe and
+# herdr-gpui-launcher.exe under %LOCALAPPDATA%\Programs\Herdr UI, adds that
+# directory to the user PATH so herdr-gpui works as a command, and creates a
+# Start menu shortcut to herdr-gpui-launcher.exe, the windowed launcher that
+# starts herdr-gpui.exe without a console window. It never installs, starts or
+# upgrades the Herdr daemon. Windows builds are experimental and never update
+# themselves: run this again to update.
 & {
   $ErrorActionPreference = 'Stop'
   $ProgressPreference = 'SilentlyContinue'
@@ -29,6 +31,9 @@
 
   $dest = Join-Path $env:LOCALAPPDATA 'Programs\Herdr UI'
   $exe = Join-Path $dest 'herdr-gpui.exe'
+  # The launcher exits as soon as herdr-gpui.exe starts, so only that one can
+  # be running during an update.
+  $launcher = Join-Path $dest 'herdr-gpui-launcher.exe'
   # Windows will not overwrite a running executable, so an update needs the
   # installed app closed. Check before downloading and again before copying.
   $assertNotRunning = {
@@ -67,11 +72,11 @@
 
   $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Herdr UI.lnk'
   $link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
-  $link.TargetPath = $exe
+  $link.TargetPath = $launcher
   $link.WorkingDirectory = $dest
   $link.Save()
 
-  Write-Host "Installed Herdr UI $version to $exe. Start it from the Start menu (Herdr UI) or run: herdr-gpui"
+  Write-Host "Installed Herdr UI $version to $dest. Start it from the Start menu (Herdr UI) or by running herdr-gpui-launcher.exe; use herdr-gpui for the command line."
   if (-not (Get-Command herdr -ErrorAction SilentlyContinue)) {
     Write-Host 'Herdr UI needs the Herdr daemon, which is not on PATH. Install it from https://herdr.dev/'
   }

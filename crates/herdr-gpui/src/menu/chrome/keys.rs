@@ -128,7 +128,10 @@ impl HerdrWindow {
             self.host_menu_key(event, window, cx);
             return;
         }
-        if matches!(self.menu.page, Some(Page::Tab | Page::RenameTab)) {
+        if matches!(
+            self.menu.page,
+            Some(Page::Tab | Page::RenameTab | Page::MoveTab)
+        ) {
             self.tab_menu_key(event, window, cx);
             return;
         }

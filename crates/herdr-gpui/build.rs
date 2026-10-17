@@ -1,4 +1,6 @@
 mod build_identity;
+mod release_version;
+mod windows_resource;
 
 /// The build script's own failures, as a typed error rather than the `&str`
 /// Cargo accepts here. Hand-written rather than derived: `tests/build_identity`
@@ -11,6 +13,7 @@ enum BuildError {
     PrNumberEncoding(std::env::VarError),
     MockupFileEncoding,
     InvalidMockupFile,
+    WindowsResource(std::io::Error),
 }
 
 impl std::fmt::Display for BuildError {
@@ -25,6 +28,9 @@ impl std::fmt::Display for BuildError {
             Self::InvalidMockupFile => {
                 f.write_str("HERDR_MOCKUP_FILE must be an absolute path on one line")
             }
+            Self::WindowsResource(_) => {
+                f.write_str("could not embed the Windows executable resources")
+            }
         }
     }
 }
@@ -33,6 +39,7 @@ impl std::error::Error for BuildError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::PrNumberEncoding(error) => Some(error),
+            Self::WindowsResource(error) => Some(error),
             Self::MissingManifestDir
             | Self::InvalidPrNumber
             | Self::MockupFileEncoding
@@ -44,11 +51,14 @@ impl std::error::Error for BuildError {
 fn main() -> Result<(), BuildError> {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build_identity.rs");
+    println!("cargo:rerun-if-changed=release_version.rs");
+    println!("cargo:rerun-if-changed=windows_resource.rs");
     println!("cargo:rerun-if-env-changed=HERDR_BUILD_PR_NUMBER");
     let manifest = std::path::PathBuf::from(
         std::env::var_os("CARGO_MANIFEST_DIR").ok_or(BuildError::MissingManifestDir)?,
     );
     let identity = build_identity::detect(&manifest);
+    windows_resource::embed(&manifest, identity.worktree).map_err(BuildError::WindowsResource)?;
     for path in &identity.watched {
         println!("cargo:rerun-if-changed={}", path.display());
     }

@@ -221,9 +221,10 @@ irm https://herdrui.dev/install.ps1 | iex
 ```
 
 The script ([`site/install.ps1`](site/install.ps1)) downloads the zip for your
-architecture, checks its published SHA-256, installs `herdr-gpui.exe` under
-`%LOCALAPPDATA%\Programs\Herdr UI`, adds that directory to your user `PATH`, and
-creates a **Herdr UI** Start menu shortcut. Windows builds never update
+architecture, checks its published SHA-256, installs `herdr-gpui.exe` and
+`herdr-gpui-launcher.exe` under `%LOCALAPPDATA%\Programs\Herdr UI`, adds that
+directory to your user `PATH`, and creates a **Herdr UI** Start menu shortcut
+that opens the launcher. Windows builds never update
 themselves; run the command again to update. See [Windows](#windows) for what
 works on the platform.
 
@@ -252,9 +253,10 @@ To compile and install the optimized executable on macOS, Linux, or Windows:
 just install
 ```
 
-This installs `herdr-gpui` (`herdr-gpui.exe` on Windows) into Cargo's bin
-directory, normally `~/.cargo/bin` or `%USERPROFILE%\.cargo\bin`, and replaces
-an earlier installation. Keep that directory on `PATH`; set `CARGO_INSTALL_ROOT`
+This installs `herdr-gpui` (`herdr-gpui.exe` on Windows, with
+`herdr-gpui-launcher.exe` beside it to open the app without a console window)
+into Cargo's bin directory, normally `~/.cargo/bin` or
+`%USERPROFILE%\.cargo\bin`, and replaces an earlier installation. Keep that directory on `PATH`; set `CARGO_INSTALL_ROOT`
 to use a different installation root (the executable goes in its `bin` directory).
 The build uses the pinned lockfile and default features, without the QA menu.
 On macOS this installs the standalone executable; use Homebrew above for the
@@ -298,12 +300,14 @@ unavailable and report that plainly; see
 
 Each release publishes `Herdr-VERSION-x86_64-pc-windows-msvc.zip` and
 `Herdr-VERSION-aarch64-pc-windows-msvc.zip` (native ARM64), each containing
-`herdr-gpui.exe` and its license notices. They carry the same checksums,
-Sigstore signatures, and build provenance as the other assets, but they are not
-Authenticode-signed, so SmartScreen warns on first launch, and they never update
-themselves: rerun the [install script](#windows-experimental) or download each
-new release manually. The executable is
-console-subsystem, so launching it from Explorer also opens a console window.
+`herdr-gpui.exe`, `herdr-gpui-launcher.exe`, and their license notices. They
+carry the same checksums, Sigstore signatures, and build provenance as the other
+assets, but they are not Authenticode-signed, so SmartScreen warns on first
+launch, and they never update themselves: rerun the
+[install script](#windows-experimental) or download each new release manually.
+`herdr-gpui.exe` is a console program, because it is also the command line
+agents and scripts run. Open the app with `herdr-gpui-launcher.exe` (the Start
+menu shortcut's target), which starts `herdr-gpui.exe` without a console window.
 
 ## How it connects
 

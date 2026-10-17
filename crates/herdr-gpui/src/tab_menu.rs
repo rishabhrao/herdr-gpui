@@ -1,9 +1,19 @@
 use crate::{
-    HerdrWindow, browser::GroupId, controls::Command, menu::Page, search_input::SearchInput,
+    HerdrWindow,
+    browser::GroupId,
+    controls::Command,
+    menu::Page,
+    pane_move::{self, Choice, Destination},
+    search_input::SearchInput,
 };
 use gpui::{prelude::*, *};
 use herdr_client::{Method, protocol::ClientShellSnapshot};
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// Tells one tab move's result from another's, so a late answer never
+/// settles a menu reopened since.
+static NEXT_MOVE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 struct Target {
@@ -11,6 +21,10 @@ struct Target {
     workspace: String,
     tab: String,
     label: String,
+    /// The tab's panes in snapshot order, moved together to another workspace.
+    panes: Vec<String>,
+    /// Destinations the tab can move to: a new workspace, then other workspaces.
+    choices: Vec<Choice>,
 }
 
 #[cfg(test)]
@@ -19,11 +33,20 @@ mod tests;
 impl Target {
     fn capture(snapshot: &ClientShellSnapshot, id: &str) -> Option<Self> {
         let tab = snapshot.tabs.iter().find(|tab| tab.tab_id == id)?;
+        let panes = snapshot
+            .panes
+            .iter()
+            .filter(|pane| pane.tab_id == tab.tab_id && pane.workspace_id == tab.workspace_id)
+            .map(|pane| pane.pane_id.clone())
+            .collect();
+        let choices = pane_move::workspace_choices(snapshot, &tab.workspace_id);
         Some(Self {
             boot: snapshot.boot_id.clone(),
             workspace: tab.workspace_id.clone(),
             tab: tab.tab_id.clone(),
             label: tab.label.clone(),
+            panes,
+            choices,
         })
     }
 
@@ -43,6 +66,24 @@ impl Target {
         Ok(())
     }
 
+    fn validate_move(&self, snapshot: &ClientShellSnapshot) -> crate::Result<()> {
+        self.validate(snapshot)?;
+        let current = snapshot
+            .panes
+            .iter()
+            .filter(|p| p.tab_id == self.tab && p.workspace_id == self.workspace);
+        if self.panes.is_empty()
+            || current.clone().count() != self.panes.len()
+            || !self
+                .panes
+                .iter()
+                .all(|id| current.clone().any(|p| p.pane_id == *id))
+        {
+            return Err(crate::Error::StaleTab);
+        }
+        Ok(())
+    }
+
     fn rename_params(&self, label: &str) -> crate::Result<Value> {
         let label = label.trim();
         if label.is_empty() {
@@ -52,19 +93,55 @@ impl Target {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     NewTab,
     Rename,
+    MoveToWorkspace,
     Close,
 }
 
+impl Action {
+    fn label(self) -> &'static str {
+        match self {
+            Self::NewTab => "New Tab",
+            Self::Rename => "Rename",
+            Self::MoveToWorkspace => "Move to Workspace\u{2026}",
+            Self::Close => "Close Tab",
+        }
+    }
+}
+
 /// Herdr's own tab menu, in its order.
-const ACTIONS: [(Action, &str); 3] = [
-    (Action::NewTab, "New Tab"),
-    (Action::Rename, "Rename"),
-    (Action::Close, "Close Tab"),
+const ACTIONS: [Action; 4] = [
+    Action::NewTab,
+    Action::Rename,
+    Action::MoveToWorkspace,
+    Action::Close,
 ];
+
+impl TabMenu {
+    /// The rows this menu offers: moving to a workspace needs a host the
+    /// `herdr` CLI can run on and at least one pane in the tab.
+    fn actions(&self) -> Vec<Action> {
+        ACTIONS
+            .into_iter()
+            .filter(|action| match action {
+                Action::MoveToWorkspace => self.movable && !self.target.panes.is_empty(),
+                _ => true,
+            })
+            .collect()
+    }
+
+    /// How many rows the current page lists.
+    fn rows(&self, page: Option<Page>) -> usize {
+        if page == Some(Page::MoveTab) {
+            self.target.choices.len()
+        } else {
+            self.actions().len()
+        }
+    }
+}
 
 pub(super) struct TabMenu {
     target: Target,
@@ -75,6 +152,13 @@ pub(super) struct TabMenu {
     input: Option<Entity<SearchInput>>,
     pending: Option<String>,
     error: Option<String>,
+    /// Whether this endpoint's host can run `herdr pane move`.
+    movable: bool,
+    /// The move in flight, which keeps the menu from starting another.
+    moving: Option<u64>,
+    /// The move picker's panel scroll, so a row the keyboard selects in a
+    /// long list of workspaces scrolls into view.
+    scroll: ScrollHandle,
 }
 
 impl HerdrWindow {
@@ -97,6 +181,8 @@ impl HerdrWindow {
         if !self.open_menu(window, cx) {
             return;
         }
+        let connect = &self.endpoints[self.selected_endpoint].connection.target;
+        let movable = pane_move::refusal(connect).is_none();
         self.menu.anchor = anchor;
         self.menu.page = Some(Page::Tab);
         self.menu.tab = Some(TabMenu {
@@ -106,6 +192,9 @@ impl HerdrWindow {
             input: None,
             pending: None,
             error: None,
+            movable,
+            moving: None,
+            scroll: ScrollHandle::new(),
         });
     }
 
@@ -148,6 +237,14 @@ impl HerdrWindow {
     }
 
     fn activate_tab_menu(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .menu
+            .tab
+            .as_ref()
+            .is_some_and(|tab| tab.moving.is_some())
+        {
+            return;
+        }
         let target = match self.validate_tab_target() {
             Ok(target) => target.clone(),
             Err(error) => {
@@ -166,6 +263,14 @@ impl HerdrWindow {
             }
             // As the tab's own close button: the close confirmation decides.
             Action::Close => self.open_tab_close(&target.tab, window, cx),
+            Action::MoveToWorkspace => {
+                if let Some(tab) = &mut self.menu.tab {
+                    tab.selected = None;
+                    tab.error = None;
+                }
+                self.menu.page = Some(Page::MoveTab);
+                cx.notify();
+            }
             Action::Rename => {
                 let input = cx.new(SearchInput::new);
                 input.update(cx, |input, cx| {
@@ -182,6 +287,124 @@ impl HerdrWindow {
                 cx.notify();
             }
         }
+    }
+
+    /// Moves every pane in the menu's tab to `destination` through the `herdr`
+    /// CLI on a background thread. The menu stays open until Herdr answers.
+    pub(super) fn move_tab(
+        &mut self,
+        destination: Destination,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .menu
+            .tab
+            .as_ref()
+            .is_none_or(|tab| tab.moving.is_some())
+        {
+            return;
+        }
+        let started = (|| {
+            let target = self.validate_tab_target()?;
+            let snapshot = self
+                .live
+                .snapshot
+                .as_ref()
+                .ok_or(crate::Error::NotConnected)?;
+            target.validate_move(snapshot)?;
+            if !destination.exists(snapshot) {
+                return Err(match destination {
+                    Destination::NewTab { .. } => crate::Error::StaleWorkspace,
+                    Destination::Tab { .. } | Destination::NewWorkspace => crate::Error::StaleTab,
+                });
+            }
+            let label = snapshot
+                .tabs
+                .iter()
+                .find(|t| t.tab_id == target.tab && t.workspace_id == target.workspace)
+                .map(|t| t.label.as_str())
+                .unwrap_or(target.label.as_str());
+            let label = (!label.trim().is_empty()).then(|| label.to_owned());
+            let request = pane_move::TabRequest::new(target.panes.clone(), destination, label)?;
+            let host =
+                pane_move::host_for(&self.endpoints[self.selected_endpoint].connection.target)?;
+            Ok::<_, crate::Error>((request, host))
+        })();
+        let (request, host) = match started {
+            Ok(started) => started,
+            Err(error) => {
+                self.tab_error(error, cx);
+                return;
+            }
+        };
+        let id = NEXT_MOVE.fetch_add(1, Ordering::Relaxed);
+        if let Some(tab) = &mut self.menu.tab {
+            tab.moving = Some(id);
+            tab.error = None;
+        }
+        // The CLI is a child process, possibly over SSH: never on this thread.
+        let job = cx
+            .background_executor()
+            .spawn(async move { request.run(&host, &AtomicBool::new(false)) });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = job.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.finish_tab_move(id, result, window, cx)
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(super) fn finish_tab_move(
+        &mut self,
+        id: u64,
+        result: pane_move::Result<pane_move::TabMoved>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open = self
+            .menu
+            .tab
+            .as_ref()
+            .is_some_and(|tab| tab.moving == Some(id));
+        match result {
+            Ok(moved) => {
+                if open {
+                    self.dismiss_menu(window, cx);
+                }
+                // The panes all moved, so the menu closes either way; a lost
+                // name is reported on the window rather than in a closed menu.
+                if let Some(warning) = moved.warning {
+                    self.local_error = Some(warning.to_string());
+                    cx.notify();
+                }
+            }
+            Err(error) if open => {
+                if let Some(tab) = &mut self.menu.tab {
+                    tab.moving = None;
+                }
+                self.tab_error(error, cx);
+            }
+            Err(error) => {
+                self.local_error = Some(error.to_string());
+                cx.notify();
+            }
+        }
+    }
+
+    fn submit_tab_move_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(destination) = self
+            .menu
+            .tab
+            .as_ref()
+            .and_then(|tab| tab.selected.and_then(|index| tab.target.choices.get(index)))
+            .map(|choice| choice.destination.clone())
+        else {
+            return;
+        };
+        self.move_tab(destination, window, cx);
     }
 
     fn submit_tab_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -283,22 +506,118 @@ impl HerdrWindow {
             "enter" if self.menu.page == Some(Page::RenameTab) => {
                 self.submit_tab_rename(window, cx)
             }
-            "up" | "down" if self.menu.page == Some(Page::Tab) => {
+            "up" | "down" if matches!(self.menu.page, Some(Page::Tab | Page::MoveTab)) => {
+                let count = tab.rows(self.menu.page);
+                if count == 0 {
+                    return;
+                }
                 tab.selected = Some(match (tab.selected, key) {
-                    (None, "up") => ACTIONS.len() - 1,
+                    (None, "up") => count - 1,
                     (None, _) => 0,
-                    (Some(i), "up") => (i + ACTIONS.len() - 1) % ACTIONS.len(),
-                    (Some(i), _) => (i + 1) % ACTIONS.len(),
+                    (Some(i), "up") => (i + count - 1) % count,
+                    (Some(i), _) => (i + 1) % count,
                 });
+                // The picker's heading is the panel's first child.
+                if self.menu.page == Some(Page::MoveTab)
+                    && let Some(selected) = tab.selected
+                {
+                    tab.scroll.scroll_to_item(selected + 1);
+                }
                 cx.notify();
             }
+            "enter" if self.menu.page == Some(Page::MoveTab) => {
+                self.submit_tab_move_picker(window, cx)
+            }
             "enter" => {
-                if let Some(index) = tab.selected {
-                    self.activate_tab_menu(ACTIONS[index].0, window, cx);
+                if let Some(action) = tab
+                    .selected
+                    .and_then(|index| tab.actions().get(index).copied())
+                {
+                    self.activate_tab_menu(action, window, cx);
                 }
             }
             _ => {}
         }
+    }
+
+    fn render_tab_move_pending(&self) -> Div {
+        div().flex().flex_col().child(
+            div()
+                .debug_selector(|| "tab-move-pending".into())
+                .p(px(8.))
+                .text_color(rgb(self.theme.muted))
+                .child("Moving tab\u{2026}"),
+        )
+    }
+
+    /// Fills the menu's `panel` with the workspace picker. The heading and
+    /// rows are the panel's own children, which its scroll handle addresses by
+    /// index, so a row the keyboard selects in a long list scrolls into view.
+    pub(crate) fn render_tab_move_picker(
+        &self,
+        panel: Stateful<Div>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let Some(tab) = &self.menu.tab else {
+            return panel;
+        };
+        if tab.moving.is_some() {
+            return panel.child(self.render_tab_move_pending());
+        }
+        let mut body = panel.track_scroll(&tab.scroll).flex().flex_col().child(
+            div()
+                .flex_none()
+                .px(px(8.))
+                .py(px(4.))
+                .text_color(rgb(self.theme.muted))
+                .child("Move to workspace"),
+        );
+        for (index, choice) in tab.target.choices.iter().enumerate() {
+            let destination = choice.destination.clone();
+            let place = choice.place.clone();
+            body = body.child(
+                div()
+                    .id(("tab-move-destination", index))
+                    .flex_none()
+                    .debug_selector(move || format!("tab-move-{index}"))
+                    .min_h(px(self.config.ui.line_height() + 12.))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .overflow_hidden()
+                    .cursor_pointer()
+                    .when(tab.selected == Some(index), |row| {
+                        row.bg(rgb(self.theme.active))
+                    })
+                    .hover(|row| row.bg(rgb(self.theme.active)))
+                    .on_hover(cx.listener(move |this, hovered, _, cx| {
+                        if *hovered && let Some(tab) = &mut this.menu.tab {
+                            tab.selected = Some(index);
+                            cx.notify();
+                        }
+                    }))
+                    .child(
+                        div()
+                            .debug_selector(move || format!("tab-move-place-{index}"))
+                            .min_w(px(0.))
+                            .truncate()
+                            .child(place),
+                    )
+                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                        // The picker replaces the menu under the pointer, and
+                        // snapping it into the window can shift its rows, so
+                        // a double-click's second click would otherwise pick
+                        // whatever row it lands on.
+                        if event.click_count() > 1 {
+                            return;
+                        }
+                        this.move_tab(destination.clone(), window, cx)
+                    })),
+            );
+        }
+        body.when_some(tab.error.clone(), |body, error| {
+            body.child(div().flex_none().p(px(8.)).child(error))
+        })
     }
 
     pub(super) fn render_tab_menu(&self, cx: &mut Context<Self>) -> Div {
@@ -307,8 +626,10 @@ impl HerdrWindow {
         };
         let theme = &self.theme;
         let mut body = div().flex().flex_col();
-        if self.menu.page == Some(Page::Tab) {
-            for (index, (action, label)) in ACTIONS.into_iter().enumerate() {
+        if tab.moving.is_some() {
+            body = self.render_tab_move_pending();
+        } else if self.menu.page == Some(Page::Tab) {
+            for (index, action) in tab.actions().into_iter().enumerate() {
                 body = body.child(
                     div()
                         .id(("tab-menu-action", index))
@@ -320,7 +641,13 @@ impl HerdrWindow {
                         .cursor_pointer()
                         .when(tab.selected == Some(index), |row| row.bg(rgb(theme.active)))
                         .hover(|row| row.bg(rgb(theme.active)))
-                        .child(div().min_w_0().truncate().child(label))
+                        .child(
+                            div()
+                                .debug_selector(move || format!("tab-menu-label-{index}"))
+                                .min_w_0()
+                                .truncate()
+                                .child(action.label()),
+                        )
                         .on_hover(cx.listener(move |this, hovered, _, cx| {
                             if *hovered && let Some(tab) = &mut this.menu.tab {
                                 tab.selected = Some(index);

@@ -65,6 +65,20 @@ gtk-update-icon-cache --force --ignore-theme-index ~/.local/share/icons/hicolor
 This user-local icon overrides the packaged icon. Remove that SVG when you want
 future artwork changes to come from package upgrades again, then refresh the cache.
 
+### Windows
+
+`Herdr.ico` holds the rounded tile at 16, 20, 24, 32, 40, 48, 64, and 256 px, each
+a PNG rendered from `herdr-ui-icon-clean.svg`. Linked-worktree builds use the red
+`Herdr-worktree.ico`, with the palette of the Linux worktree SVG. The build script
+(`crates/herdr-gpui/windows_resource.rs`) embeds it in the executable as icon
+resource 1, the one GPUI loads for its windows, so Explorer, the window, and the
+taskbar all show it. Building for Windows therefore needs a resource compiler:
+`rc.exe` from the Windows SDK for MSVC, or mingw's `windres` for the GNU target.
+
+Run `just icons-windows` to regenerate both files. It needs Python's standard
+library and `rsvg-convert` (`apt-get install librsvg2-bin` or
+`brew install librsvg`), so on Windows run it under WSL. `just icons` runs it too.
+
 ### macOS sizing
 
 The flattened `.icns` icons follow Apple's
