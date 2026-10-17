@@ -54,12 +54,13 @@ impl HerdrWindow {
                 ),
             );
         }
-        Some(segment.child(line(
-            reading,
-            theme,
-            None,
-            self.config.status_bar.system_load,
-        )))
+        // A phone's narrow bar keeps the numbers and drops the meters.
+        let detail = if self.compact() {
+            Detail::Compact
+        } else {
+            self.config.status_bar.system_load
+        };
+        Some(segment.child(line(reading, theme, None, detail)))
     }
 }
 

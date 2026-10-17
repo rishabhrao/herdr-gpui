@@ -200,7 +200,14 @@ impl HerdrWindow {
             .overflow_hidden()
             .whitespace_nowrap()
             .gap(px(4.));
-        match self.config.status_bar.usage {
+        // A phone's narrow bar shows one number per service, so every
+        // service fits beside the system load.
+        let detail = if self.compact() {
+            Detail::Compact
+        } else {
+            self.config.status_bar.usage
+        };
+        match detail {
             Detail::Compact => {
                 if let Some(tightest) = report.tightest() {
                     labels = labels.child(
