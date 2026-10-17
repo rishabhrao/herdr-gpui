@@ -177,16 +177,18 @@ body {
   -webkit-touch-callout: none;
 }
 
-/* The keys a phone keyboard lacks, above the keyboard: the keys scroll,
-   the keyboard and menu buttons stay at the end. */
+/* The keys a phone keyboard lacks, above the keyboard: two rows that fit
+   any phone, ten keys each. */
 #herdr-bar {
   flex: none;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 4px;
   padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
   background: var(--herdr-panel);
   border-top: 1px solid var(--herdr-border);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 #herdr-bar[hidden] {
@@ -194,40 +196,39 @@ body {
 }
 
 .herdr-keys {
-  flex: 1;
-  min-width: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
   gap: 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
-}
-
-.herdr-keys::-webkit-scrollbar {
-  display: none;
-}
-
-.herdr-pinned {
-  flex: none;
-  display: flex;
-  gap: 4px;
-  padding-left: 4px;
-  border-left: 1px solid var(--herdr-border);
 }
 
 #herdr-bar button {
-  flex: none;
-  min-width: var(--herdr-touch);
-  height: var(--herdr-touch);
-  padding: 0 10px;
+  position: relative;
+  min-width: 0;
+  height: 40px;
+  padding: 0;
   border: 1px solid var(--herdr-border);
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--herdr-bg);
   color: var(--herdr-fg);
-  font: 15px ui-monospace, SFMono-Regular, Menlo, monospace;
-  touch-action: manipulation;
+  font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+  touch-action: none;
   -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+#herdr-bar button[hidden] {
+  visibility: hidden;
+}
+
+/* A key's second key, on a swipe up. */
+#herdr-bar button[data-alt]::after {
+  content: attr(data-alt);
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  font-size: 9px;
+  color: var(--herdr-muted);
 }
 
 #herdr-bar button:active {
@@ -237,7 +238,6 @@ body {
 #herdr-bar button.herdr-icon {
   display: grid;
   place-items: center;
-  padding: 0;
 }
 
 #herdr-bar button[aria-pressed="true"] {

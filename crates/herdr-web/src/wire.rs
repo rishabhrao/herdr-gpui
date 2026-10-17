@@ -8,7 +8,7 @@ pub use scene::{WireScene, WireTile};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bumped whenever a message changes shape.
-pub const PROTOCOL: u32 = 7;
+pub const PROTOCOL: u32 = 8;
 /// No message the page sends is larger; the host refuses bigger frames.
 pub const MAX_TO_HOST_BYTES: usize = 16 * 1024 * 1024;
 /// A frame of a very dense window, with room to spare; larger ones are refused.
@@ -50,6 +50,10 @@ pub enum ToBrowser {
     /// A short note about something this page cannot do.
     Toast {
         text: String,
+    },
+    /// The app's keys a touch keys bar offers: Herdr's prefix, as configured.
+    Keys {
+        prefix: Option<Chord>,
     },
     /// Something to do in the browser that asked from Settings, such as
     /// sizing its text: only it, not every device showing the app.
@@ -269,6 +273,13 @@ pub enum PageEvent {
         page: PageId,
         input: StreamInput,
     },
+}
+
+/// A key with its modifiers, named as GPUI names keys.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Chord {
+    pub key: String,
+    pub mods: Mods,
 }
 
 /// What Settings > Web access asks of the browser it is used in.

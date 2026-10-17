@@ -23,6 +23,42 @@ pub(crate) fn active() -> bool {
     SERVED.load(Ordering::Relaxed)
 }
 
+/// Offers the keymap's prefix on the page's touch keys bar. Cheap to call on
+/// every render: only a changed prefix reaches the server.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+pub(crate) fn share_prefix(keymap: &crate::keymap::Keymap) {
+    thread_local! {
+        static SHARED: std::cell::RefCell<Option<Option<String>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let Some(served) = herdr_web::host::Served::get() else {
+        return;
+    };
+    let prefix = keymap.prefix();
+    let label = prefix.map(gpui::Keystroke::unparse);
+    let changed = SHARED.with(|shared| {
+        let mut shared = shared.borrow_mut();
+        let changed = shared.as_ref() != Some(&label);
+        *shared = Some(label);
+        changed
+    });
+    if !changed {
+        return;
+    }
+    served.set_prefix(prefix.map(|keystroke| herdr_web::wire::Chord {
+        key: keystroke.key.clone(),
+        mods: herdr_web::wire::Mods {
+            control: keystroke.modifiers.control,
+            alt: keystroke.modifiers.alt,
+            shift: keystroke.modifiers.shift,
+            platform: keystroke.modifiers.platform,
+        },
+    }));
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
+pub(crate) fn share_prefix(_: &crate::keymap::Keymap) {}
+
 /// Why `serve` would not start, in words for the terminal.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ServeError {

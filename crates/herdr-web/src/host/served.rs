@@ -1,7 +1,7 @@
 //! What the served app shows about its own serving: its addresses, the
 //! pages connected now, and the paired devices, which it can forget.
 use super::{devices::Device, hub::Hub};
-use crate::wire::{DeviceAction, ToBrowser};
+use crate::wire::{Chord, DeviceAction, ToBrowser};
 use std::sync::{Arc, OnceLock};
 
 static SERVED: OnceLock<Served> = OnceLock::new();
@@ -52,6 +52,11 @@ impl Served {
     /// it off the UI thread.
     pub fn devices(&self) -> Vec<Device> {
         self.0.devices.list()
+    }
+
+    /// Offers Herdr's prefix on touch keys bars; pages hear only changes.
+    pub fn set_prefix(&self, prefix: Option<Chord>) {
+        self.0.set_keys(ToBrowser::Keys { prefix });
     }
 
     /// Does `action` in the browser whose input the app is handling: the

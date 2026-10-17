@@ -221,10 +221,16 @@ herdr-gpui serve --port 8080 --session work
   sites that refuse to be framed stay blank. Local pages always show in a
   sandboxed `<iframe>`. Settings, logs, and other windows open as panels
   inside the page, full screen on a phone.
-- On a phone, the keys bar holds the keys a phone keyboard lacks, and the
-  keyboard's suggestions and autocorrect edit what you type as they would
-  anywhere. An image pasted or inserted from the keyboard reaches the app as
-  an image copied on the Mac does. Settings > Web access > This device sizes
+- On a phone, two rows of keys hold what a phone keyboard lacks: Herdr's
+  prefix as configured, Escape, Tab, Control, Option, Shift, Command (held
+  for the next key), the arrows (repeating while held), Home, End, Page Up
+  and Down, `/`, `-`, and `|`. Swipe up on a key with a small mark for its
+  second key, such as Control-C on Escape. The keyboard's suggestions and
+  autocorrect edit what you type as they would anywhere. The paste key
+  pastes an image or text from the clipboard, and swiping it up picks an
+  image from the phone; an image pasted or inserted into the page reaches
+  the app as an image copied on the Mac does. The status bar shows each
+  service's quota and the system load as plain numbers. Settings > Web access > This device sizes
   the text, turns on notifications, and signs the device out.
 - Chrome keeps some shortcuts, such as Cmd-T, Cmd-W, and Cmd-N, for itself;
   use the app's other bindings for those commands (for example `ctrl-b c` for

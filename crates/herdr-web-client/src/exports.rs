@@ -153,12 +153,12 @@ pub fn paste_image(mime: String, bytes: Vec<u8>) {
 
 /// Modifiers for the next key typed on the phone keyboard.
 #[wasm_bindgen]
-pub fn set_sticky(control: bool, alt: bool, platform: bool) {
+pub fn set_sticky(control: bool, alt: bool, shift: bool, platform: bool) {
     app::with_app(|_, app| {
         app.input.set_sticky(Mods {
             control,
             alt,
-            shift: false,
+            shift,
             platform,
         });
     });

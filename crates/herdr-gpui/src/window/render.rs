@@ -65,6 +65,9 @@ impl Render for HerdrWindow {
         let fill = self.fill();
         let ground = self.ground();
         self.viewport_width = f32::from(window.viewport_size().width);
+        if crate::served::active() {
+            crate::served::share_prefix(self.keymap());
+        }
         let font = self.config.terminal.font();
         // Parked groups paint with the same face as the window's terminal.
         let parked_font = font.clone();

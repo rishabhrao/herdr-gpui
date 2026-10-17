@@ -324,6 +324,22 @@ fn receive(shared: &Shared, message: ToBrowser) {
             );
         }
         ToBrowser::PromptClosed { id } => dom::emit("prompt-closed", &[("id", &id.to_string())]),
+        ToBrowser::Keys { prefix } => {
+            let flag = |on: bool| if on { "1" } else { "0" };
+            match prefix {
+                Some(chord) => dom::emit(
+                    "keys",
+                    &[
+                        ("key", &chord.key),
+                        ("control", flag(chord.mods.control)),
+                        ("alt", flag(chord.mods.alt)),
+                        ("shift", flag(chord.mods.shift)),
+                        ("platform", flag(chord.mods.platform)),
+                    ],
+                ),
+                None => dom::emit("keys", &[]),
+            }
+        }
         ToBrowser::Device(action) => {
             let action = match action {
                 wire::DeviceAction::TextSmaller => "text-smaller",

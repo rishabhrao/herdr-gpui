@@ -129,6 +129,8 @@ pub(super) struct Hub {
     pub(super) access: Option<Arc<Access>>,
     links: Mutex<Vec<Link>>,
     next_link: AtomicU64,
+    /// The app's keys for touch keys bars, sent to each page as it connects.
+    keys: Mutex<Option<ToBrowser>>,
     /// The page whose input the app is handling now, so an action it takes
     /// for "this device" reaches that page.
     acting: Mutex<Option<u64>>,
@@ -196,6 +198,7 @@ impl Hub {
             access: setup.access,
             links: Mutex::default(),
             acting: Mutex::new(None),
+            keys: Mutex::new(None),
             next_link: AtomicU64::new(1),
             inbound,
             approvals,
@@ -251,6 +254,30 @@ impl Hub {
     /// Drops the pages of a device that was forgotten.
     pub(super) fn drop_device(&self, device: &str) {
         self.links().retain(|link| link.visitor.device != device);
+    }
+
+    /// Tells every page the app's keys, when they changed.
+    pub(super) fn set_keys(&self, keys: ToBrowser) {
+        {
+            let mut current = self.keys.lock().unwrap_or_else(PoisonError::into_inner);
+            if current.as_ref() == Some(&keys) {
+                return;
+            }
+            *current = Some(keys.clone());
+        }
+        self.send(&keys);
+    }
+
+    /// The app's keys, for a page that just connected.
+    pub(super) fn send_keys_to(&self, link: u64) {
+        let keys = self
+            .keys
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(keys) = keys {
+            self.send_to(link, &keys);
+        }
     }
 
     pub(super) fn set_acting(&self, link: Option<u64>) {

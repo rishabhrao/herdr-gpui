@@ -324,6 +324,12 @@ impl Keymap {
             })
     }
 
+    /// The prefix chords start with, as typed, for a served page's keys.
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+    pub(crate) fn prefix(&self) -> Option<&Keystroke> {
+        self.prefixes.first()
+    }
+
     /// The first prefix as shown to the user, while chords can use one.
     pub(crate) fn prefix_label(&self) -> Option<String> {
         self.prefixes.first().map(Keystroke::unparse)

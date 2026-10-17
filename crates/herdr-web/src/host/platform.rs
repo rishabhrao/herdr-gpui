@@ -207,6 +207,7 @@ impl Shared {
                     self.hub.send_to(link, &prompt.message);
                 }
                 self.hub.replay_pages(link);
+                self.hub.send_keys_to(link);
                 self.hub.ready(link);
             }
             Inbound::Disconnected(link) => {

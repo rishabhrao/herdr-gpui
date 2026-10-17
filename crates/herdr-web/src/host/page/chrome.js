@@ -228,6 +228,11 @@ export function listen() {
       case "signed-out":
         location.reload();
         break;
+      case "keys":
+        prefix = note.key
+          ? { key: note.key, control: note.control === "1", alt: note.alt === "1", shift: note.shift === "1", platform: note.platform === "1" }
+          : null;
+        break;
       case "device":
         // The app is still handling the message that asked: act after it.
         setTimeout(() => deviceAction(note.action), 0);
@@ -259,27 +264,78 @@ export function listen() {
 }
 
 // --- Touch screens: the keys bar -------------------------------------------
+//
+// Two rows that fit any phone, as Termux and Termius lay theirs out: the
+// keys a phone keyboard lacks, and the symbols a shell needs most. Swipe up
+// on a key with a small mark for its second key. Arrows repeat while held.
+// Ctrl, Alt, Shift, and Command hold for the next key, from here or the
+// phone keyboard.
 
-const sticky = { control: false, alt: false, platform: false };
+const sticky = { control: false, alt: false, shift: false, platform: false };
+// Herdr's prefix as the app has it configured, from the app.
+let prefix = null;
+const SWIPE = 18;
+const REPEAT_DELAY_MS = 380;
+const REPEAT_MS = 55;
 
 function stickyChanged(bar) {
   for (const button of bar.querySelectorAll("[data-sticky]")) {
     button.setAttribute("aria-pressed", String(sticky[button.dataset.sticky]));
   }
-  app.set_sticky(sticky.control, sticky.alt, sticky.platform);
+  app.set_sticky(sticky.control, sticky.alt, sticky.shift, sticky.platform);
+}
+
+function anySticky() {
+  return sticky.control || sticky.alt || sticky.shift || sticky.platform;
 }
 
 function key(name) {
-  app.send_key(name, sticky.control, sticky.alt, false, sticky.platform);
+  app.send_key(name, sticky.control, sticky.alt, sticky.shift, sticky.platform);
+}
+
+// A key that also holds Control, as `ctrl` then the key would.
+function chord(name) {
+  app.send_key(name, true, false, false, false);
+}
+
+// A symbol types as text, unless a held modifier makes it a shortcut.
+function symbol(text) {
+  if (anySticky()) key(text);
+  else app.send_text(text);
+}
+
+function sendPrefix() {
+  if (prefix) app.send_key(prefix.key, prefix.control, prefix.alt, prefix.shift, prefix.platform);
 }
 
 async function paste() {
   try {
+    // An image on the clipboard pastes as one, as on the Mac.
+    if (navigator.clipboard.read) {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find((kind) => kind.startsWith("image/"));
+        if (type) {
+          const blob = await item.getType(type);
+          await pasteImage(new File([blob], "image", { type }));
+          return;
+        }
+      }
+    }
     const text = await navigator.clipboard.readText();
-    app.paste(text);
+    if (text) app.paste(text);
   } catch {
     toast("This browser did not allow reading the clipboard.");
   }
+}
+
+// Chooses an image from the phone's photos or files and pastes it.
+function pickImage() {
+  const input = element("input", { type: "file", accept: "image/*" });
+  input.addEventListener("change", () => {
+    const [file] = input.files || [];
+    if (file) pasteImage(file);
+  });
+  input.click();
 }
 
 // Whether the phone keyboard is up: it shrinks the visual viewport.
@@ -289,55 +345,107 @@ function keyboardUp() {
   return Boolean(focused && viewport && viewport.height < window.innerHeight * 0.8);
 }
 
-// A key that also holds Control, as `ctrl` then the key would.
-function chord(name) {
-  app.send_key(name, true, false, false, false);
-}
-
 // Line-art icons for keys whose symbol many phone fonts lack. Static markup.
 const ICONS = {
   keyboard:
-    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg>',
+    '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></svg>',
+  paste:
+    '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4h6v3H9z"/></svg>',
 };
+
+// One key: `run` on a tap, `swipe` on a swipe up, and repeating while held
+// when `repeat` is set.
+function barKey({ label, title, run, swipe, swipeLabel, repeat, icon, stickyName, wide }) {
+  const node = element("button", { title, "aria-label": title });
+  if (icon) {
+    node.innerHTML = ICONS[icon];
+    node.classList.add("herdr-icon");
+  } else {
+    node.textContent = label;
+  }
+  if (swipeLabel) node.dataset.alt = swipeLabel;
+  if (stickyName) node.dataset.sticky = stickyName;
+  if (wide) node.classList.add("herdr-wide");
+  let start = null;
+  let timer = null;
+  const stop = () => {
+    clearTimeout(timer);
+    clearInterval(timer);
+    timer = null;
+  };
+  node.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    start = event.clientY;
+    if (navigator.vibrate) navigator.vibrate(6);
+    if (repeat) {
+      run();
+      timer = setTimeout(() => {
+        timer = setInterval(run, REPEAT_MS);
+      }, REPEAT_DELAY_MS);
+    }
+  });
+  node.addEventListener("pointerup", (event) => {
+    stop();
+    if (start === null) return;
+    const swiped = start - event.clientY > SWIPE;
+    start = null;
+    if (repeat) return;
+    if (swiped && swipe) swipe();
+    else run();
+  });
+  for (const name of ["pointercancel", "pointerleave"]) {
+    node.addEventListener(name, () => {
+      stop();
+      start = null;
+    });
+  }
+  return node;
+}
 
 function keysBar() {
   const bar = $("herdr-bar");
-  const button = (label, title, run, extra = {}) =>
-    element("button", { text: label, title, "aria-label": title, onclick: run, ...extra });
-  const icon = (name, title, run) => {
-    const node = button("", title, run);
-    node.innerHTML = ICONS[name];
-    node.classList.add("herdr-icon");
-    return node;
+  const toggle = (name) => () => {
+    sticky[name] = !sticky[name];
+    stickyChanged(bar);
   };
-  const keys = element("div", { class: "herdr-keys" }, [
-    button("esc", "Escape", () => key("escape")),
-    button("tab", "Tab", () => key("tab")),
-    button("ctrl", "Control (next key)", () => { sticky.control = !sticky.control; stickyChanged(bar); }, { "data-sticky": "control" }),
-    button("^C", "Interrupt (Control-C)", () => chord("c")),
-    button("←", "Left", () => key("left")),
-    button("↑", "Up", () => key("up")),
-    button("↓", "Down", () => key("down")),
-    button("→", "Right", () => key("right")),
-    button("⏎", "Return", () => key("enter")),
-    button("alt", "Option (next key)", () => { sticky.alt = !sticky.alt; stickyChanged(bar); }, { "data-sticky": "alt" }),
-    button("⌘", "Command (next key)", () => { sticky.platform = !sticky.platform; stickyChanged(bar); }, { "data-sticky": "platform" }),
-    button("^D", "End of input (Control-D)", () => chord("d")),
-    button("paste", "Paste", paste),
-  ]);
-  // The keyboard button asks the page whether the keyboard is up: Android
-  // can close it on its own, and a remembered state would then be wrong.
-  const pinned = element("div", { class: "herdr-pinned" }, [
-    icon("keyboard", "Keyboard", () => app.keyboard(!keyboardUp())),
-  ]);
-  bar.replaceChildren(keys, pinned);
+  const prefixKey = barKey({ label: "pfx", title: "Herdr prefix", run: sendPrefix });
+  prefixKey.hidden = !prefix;
+  const rows = [
+    [
+      prefixKey,
+      barKey({ label: "esc", title: "Escape (swipe up: Control-C)", run: () => key("escape"), swipe: () => chord("c"), swipeLabel: "^C" }),
+      barKey({ label: "/", title: "Slash (swipe up: backslash)", run: () => symbol("/"), swipe: () => symbol("\\"), swipeLabel: "\\" }),
+      barKey({ label: "-", title: "Dash (swipe up: underscore)", run: () => symbol("-"), swipe: () => symbol("_"), swipeLabel: "_" }),
+      barKey({ label: "|", title: "Pipe (swipe up: ampersand)", run: () => symbol("|"), swipe: () => symbol("&"), swipeLabel: "&" }),
+      barKey({ label: "home", title: "Home (swipe up: tilde)", run: () => key("home"), swipe: () => symbol("~"), swipeLabel: "~" }),
+      barKey({ label: "↑", title: "Up", run: () => key("up"), repeat: true }),
+      barKey({ label: "end", title: "End (swipe up: dollar)", run: () => key("end"), swipe: () => symbol("$"), swipeLabel: "$" }),
+      barKey({ label: "pgup", title: "Page up", run: () => key("pageup"), repeat: true }),
+      barKey({ icon: "keyboard", title: "Keyboard", run: () => app.keyboard(!keyboardUp()) }),
+    ],
+    [
+      barKey({ label: "tab", title: "Tab (swipe up: Control-D)", run: () => key("tab"), swipe: () => chord("d"), swipeLabel: "^D" }),
+      barKey({ label: "ctrl", title: "Control (next key)", run: toggle("control"), stickyName: "control" }),
+      barKey({ label: "alt", title: "Option (next key)", run: toggle("alt"), stickyName: "alt" }),
+      barKey({ label: "⇧", title: "Shift (next key)", run: toggle("shift"), stickyName: "shift" }),
+      barKey({ label: "⌘", title: "Command (next key)", run: toggle("platform"), stickyName: "platform" }),
+      barKey({ label: "←", title: "Left", run: () => key("left"), repeat: true }),
+      barKey({ label: "↓", title: "Down", run: () => key("down"), repeat: true }),
+      barKey({ label: "→", title: "Right", run: () => key("right"), repeat: true }),
+      barKey({ label: "pgdn", title: "Page down", run: () => key("pagedown"), repeat: true }),
+      barKey({ icon: "paste", title: "Paste (swipe up: choose an image)", run: paste, swipe: pickImage, swipeLabel: "img" }),
+    ],
+  ];
+  bar.replaceChildren(...rows.map((keys) => element("div", { class: "herdr-keys" }, keys)));
   // A tap on the bar must not take the keyboard away from the app.
   bar.addEventListener("pointerdown", (event) => event.preventDefault());
   window.addEventListener("herdr", (event) => {
-    if (event.detail && event.detail.type === "sticky-used") {
-      sticky.control = sticky.alt = sticky.platform = false;
+    const note = event.detail || {};
+    if (note.type === "sticky-used") {
+      sticky.control = sticky.alt = sticky.shift = sticky.platform = false;
       stickyChanged(bar);
     }
+    if (note.type === "keys") prefixKey.hidden = !prefix;
   });
   stickyChanged(bar);
   bar.hidden = false;
