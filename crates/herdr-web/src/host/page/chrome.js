@@ -427,7 +427,7 @@ function keysBar() {
       barKey({ label: "tab", title: "Tab (swipe up: Control-D)", run: () => key("tab"), swipe: () => chord("d"), swipeLabel: "^D" }),
       barKey({ label: "ctrl", title: "Control (next key)", run: toggle("control"), stickyName: "control" }),
       barKey({ label: "alt", title: "Option (next key)", run: toggle("alt"), stickyName: "alt" }),
-      barKey({ label: "⇧", title: "Shift (next key)", run: toggle("shift"), stickyName: "shift" }),
+      barKey({ label: "shift", title: "Shift (next key)", run: toggle("shift"), stickyName: "shift" }),
       barKey({ label: "⌘", title: "Command (next key)", run: toggle("platform"), stickyName: "platform" }),
       barKey({ label: "←", title: "Left", run: () => key("left"), repeat: true }),
       barKey({ label: "↓", title: "Down", run: () => key("down"), repeat: true }),

@@ -210,7 +210,8 @@ body {
   border-radius: 7px;
   background: var(--herdr-bg);
   color: var(--herdr-fg);
-  font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: -0.3px;
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   overflow: hidden;
