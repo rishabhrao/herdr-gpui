@@ -65,7 +65,7 @@ impl HerdrWindow {
         match opened {
             Ok(handle) => {
                 view.update(cx, |view, cx| view.set_detached(true, cx));
-                Store::update(cx, |store| store.close(id));
+                Store::update(cx, |store| store.detach(id));
                 self.detached_orchestrators.insert(
                     id,
                     Detached {

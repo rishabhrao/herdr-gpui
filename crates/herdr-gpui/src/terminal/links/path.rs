@@ -26,13 +26,15 @@ pub(super) struct PlainPath<'a> {
 
 /// The file path in one row's `text` covering the byte at `hit`. A separator
 /// after a backslash belongs to the path, as in the `/tmp/a\ b` a file drop
-/// or a shell's completion prints.
+/// or a shell's completion prints, except in a word that starts with a
+/// drive, such as `C:\Users\me`, where every backslash is part of the path.
 pub(super) fn plain_path(text: &str, hit: usize) -> Option<PlainPath<'_>> {
     let mut start = 0;
     let mut end = text.len();
+    let mut drive = drive_path(text);
     let mut chars = text.char_indices();
     while let Some((index, c)) = chars.next() {
-        if c == '\\' {
+        if c == '\\' && !drive {
             chars.next();
         } else if separates(c) {
             if index >= hit {
@@ -40,25 +42,34 @@ pub(super) fn plain_path(text: &str, hit: usize) -> Option<PlainPath<'_>> {
                 break;
             }
             start = index + c.len_utf8();
+            drive = drive_path(&text[start..]);
         }
     }
     // Punctuation closing a sentence, or the colon after a location, is not
     // part of the path before it, unless it is escaped.
     let mut token = &text[start..end];
     while let Some(rest) = token.strip_suffix(['.', ':', '!', '?'])
-        && !rest.ends_with('\\')
+        && (drive || !rest.ends_with('\\'))
     {
         token = rest;
     }
     if hit < start || hit >= start + token.len() {
         return None;
     }
-    let (escaped, line) = without_location(token);
-    if has_unescaped_colon(escaped) {
-        return None;
-    }
-    let path = unescape(escaped);
-    looks_like_path(&path).then_some(PlainPath {
+    let (located, line) = without_location(token);
+    let (path, separators): (_, &[char]) = if drive {
+        // A Windows name holds no colon but the drive's.
+        if located.matches(':').count() > 1 {
+            return None;
+        }
+        (Cow::Borrowed(located), &['/', '\\'])
+    } else {
+        if has_unescaped_colon(located) {
+            return None;
+        }
+        (unescape(located), &['/'])
+    };
+    looks_like_path(&path, separators).then_some(PlainPath {
         range: start..start + token.len(),
         path,
         line,
@@ -66,8 +77,14 @@ pub(super) fn plain_path(text: &str, hit: usize) -> Option<PlainPath<'_>> {
     })
 }
 
+/// Whether `word` starts with a drive and the separator after it, as in
+/// `C:\` or `C:/`: a Windows path, whose backslashes separate folders.
+fn drive_path(word: &str) -> bool {
+    matches!(word.as_bytes(), [letter, b':', b'\\' | b'/', ..] if letter.is_ascii_alphabetic())
+}
+
 /// Whether `text` holds a colon no backslash escapes, which names a scheme,
-/// an `scp` host, or a drive rather than a local file.
+/// an `scp` host, or a drive without a path rather than a local file.
 fn has_unescaped_colon(text: &str) -> bool {
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
@@ -165,7 +182,9 @@ fn without_location(token: &str) -> (&str, Option<u32>) {
     (path, line)
 }
 
-fn looks_like_path(path: &str) -> bool {
+/// Whether `path`, whose folders end at any of `separators`, names a file
+/// rather than only `.`, `..`, or a home.
+fn looks_like_path(path: &str, separators: &[char]) -> bool {
     if path.is_empty() || path.len() > MAX_PATH_BYTES {
         return false;
     }
@@ -174,8 +193,8 @@ fn looks_like_path(path: &str) -> bool {
         return false;
     }
     let name = path
-        .trim_end_matches('/')
-        .rsplit('/')
+        .trim_end_matches(separators)
+        .rsplit(separators)
         .next()
         .unwrap_or_default();
     !matches!(name, "" | "." | ".." | "~")

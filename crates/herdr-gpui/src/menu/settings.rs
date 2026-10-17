@@ -322,6 +322,7 @@ impl HerdrWindow {
                 | Command::EditScrollback
                 | Command::ClosePane
                 | Command::CloseTab
+                | Command::ReopenClosedTab
                 | Command::NewBrowserTab
                 | Command::OpenOrchestrator
                 | Command::SplitEditor

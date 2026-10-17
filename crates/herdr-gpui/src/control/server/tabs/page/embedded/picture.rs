@@ -87,12 +87,8 @@ pub(in crate::control::server::tabs) fn screenshot(
                 let landed = Rc::new(RefCell::new(None));
                 let slot = landed.clone();
                 let asked = handle
-                    .read_with(cx, |view, cx| {
-                        view.page_screenshot(
-                            tab_id,
-                            move |tiff| *slot.borrow_mut() = Some(tiff),
-                            cx,
-                        )
+                    .read_with(cx, |view, _| {
+                        view.page_screenshot(tab_id, move |tiff| *slot.borrow_mut() = Some(tiff))
                     })
                     .unwrap_or(false);
                 if asked {

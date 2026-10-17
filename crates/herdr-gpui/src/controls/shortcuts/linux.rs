@@ -33,6 +33,8 @@ pub(super) fn defaults(command: Command) -> &'static [&'static str] {
         AnnotateSelection => &["ctrl-alt-shift-a"],
         ClosePane => &["ctrl-shift-w"],
         CloseTab => &["ctrl-alt-shift-w"],
+        // Ctrl-Shift-T is New Tab here, so its partner gains Alt.
+        ReopenClosedTab => &["ctrl-alt-shift-t"],
         TabNumber(1) => &["ctrl-shift-1"],
         TabNumber(2) => &["ctrl-shift-2"],
         TabNumber(3) => &["ctrl-shift-3"],

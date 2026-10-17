@@ -11,6 +11,7 @@ use herdr_client::protocol::{
 };
 use std::sync::Arc;
 
+mod idle_reassert;
 mod padding;
 mod titlebar_navigation;
 
@@ -105,7 +106,7 @@ fn a_parked_connection_stays_unfocused_and_asks_for_its_tab_once() {
         snapshot,
     );
     let now = Instant::now();
-    parked.steer("w1:t2", now);
+    parked.steer("w1:t2", now, None);
     assert_eq!(
         peer.receive(),
         ClientMessage::ClientShellFocus { focused: false }
@@ -118,11 +119,15 @@ fn a_parked_connection_stays_unfocused_and_asks_for_its_tab_once() {
     assert_eq!(request["params"]["tab_id"], "w1:t2");
     // Neither is repeated while the request is fresh; a later tick asks
     // again only once it has had its time.
-    parked.steer("w1:t2", now + Duration::from_millis(10));
+    parked.steer("w1:t2", now + Duration::from_millis(10), None);
     assert!(parked.unfocused);
     let asked = parked.asked.clone().unwrap();
     assert_eq!((asked.0.as_str(), asked.1), ("w1:t2", now));
-    parked.steer("w1:t2", now + REFOCUS_AFTER + Duration::from_millis(10));
+    parked.steer(
+        "w1:t2",
+        now + REFOCUS_AFTER + Duration::from_millis(10),
+        None,
+    );
     assert!(parked.asked.unwrap().1 > now);
 }
 
@@ -143,15 +148,15 @@ fn a_parked_connection_settles_a_new_size_before_sending_it() {
     let now = Instant::now();
     parked.options.surface_size.cols = 100;
     // Already on its tab, it asks for nothing but a size.
-    parked.steer(&tab, now);
+    parked.steer(&tab, now, None);
     assert_eq!(
         peer.receive(),
         ClientMessage::ClientShellFocus { focused: false }
     );
     assert!(parked.pending_resize.is_some() && parked.asked.is_none());
-    parked.steer(&tab, now + Duration::from_millis(100));
+    parked.steer(&tab, now + Duration::from_millis(100), None);
     assert!(parked.last_queued_options != Some(parked.options));
-    parked.steer(&tab, now + RESIZE_SETTLE + Duration::from_millis(10));
+    parked.steer(&tab, now + RESIZE_SETTLE + Duration::from_millis(10), None);
     let ClientMessage::ClientShellResize { surface_size, .. } = peer.receive() else {
         panic!("expected a resize");
     };
@@ -180,18 +185,26 @@ fn a_parked_connection_reasks_a_size_another_client_overrode() {
     parked.options.surface_size.cols = 100;
     parked.last_queued_options = Some(parked.options);
     let now = Instant::now();
-    parked.steer(&tab, now);
+    parked.steer(&tab, now, Some(now));
     assert_eq!(
         peer.receive(),
         ClientMessage::ClientShellFocus { focused: false }
     );
     assert!(parked.pending_resize.is_some());
-    parked.steer(&tab, now + RESIZE_SETTLE + Duration::from_millis(10));
+    parked.steer(
+        &tab,
+        now + RESIZE_SETTLE + Duration::from_millis(10),
+        Some(now),
+    );
     assert!(
         parked.pending_resize.is_some(),
         "a frame of another size is not re-claimed before it has been answered"
     );
-    parked.steer(&tab, now + RESIZE_REASSERT + Duration::from_millis(10));
+    parked.steer(
+        &tab,
+        now + RESIZE_REASSERT + Duration::from_millis(10),
+        Some(now),
+    );
     let ClientMessage::ClientShellResize { surface_size, .. } = peer.receive() else {
         panic!("expected a resize");
     };

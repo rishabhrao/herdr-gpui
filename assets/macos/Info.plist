@@ -11,6 +11,7 @@
     <key>CFBundleIconName</key><string>Herdr</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>
+    <key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key><true/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>Programs running in Herdr terminals are allowed to request access to the microphone.</string>
     <key>NSPhotoLibraryUsageDescription</key><string>Programs running in Herdr terminals are allowed to request access to your photo library.</string>

@@ -9,7 +9,7 @@ use crate::{
 use gpui::{prelude::*, *};
 
 #[cfg(target_os = "macos")]
-mod macos_blur;
+mod macos;
 
 /// What one window has done about its backdrop so far.
 #[derive(Default)]
@@ -18,7 +18,12 @@ pub(crate) struct State {
     /// The running decode; replacing it cancels the one before.
     load: Option<Task<()>>,
     /// Set only when it changes: the platform call is not free.
+    #[cfg(not(target_os = "macos"))]
     appearance: WindowBackgroundAppearance,
+    /// The same on macOS, with the color an opaque window fills with; none
+    /// before the first frame sets it.
+    #[cfg(target_os = "macos")]
+    surface: Option<macos::Surface>,
 }
 
 impl HerdrWindow {
@@ -59,10 +64,19 @@ impl HerdrWindow {
             let _ = window.drop_image(texture);
         }
         let appearance = backdrop::appearance(config, state.picture.covers());
+        #[cfg(target_os = "macos")]
+        {
+            let surface = macos::Surface {
+                appearance,
+                ground: self.theme.background,
+            };
+            if state.surface != Some(surface) {
+                macos::apply(window, state.surface, surface);
+                state.surface = Some(surface);
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
         if appearance != state.appearance {
-            #[cfg(target_os = "macos")]
-            macos_blur::apply(window, state.appearance, appearance);
-            #[cfg(not(target_os = "macos"))]
             window.set_background_appearance(appearance);
             state.appearance = appearance;
         }
@@ -72,9 +86,19 @@ impl HerdrWindow {
     /// the theme's background there. A translucent one leaves the root clear,
     /// or shows the picture, and each region paints its own translucent
     /// color instead: a panel over a translucent ground would cover twice and
-    /// read as more solid than the opacity chosen.
+    /// read as more solid than the opacity chosen. On macOS neither paints
+    /// where a page shows from beneath the window's drawing.
     pub(super) fn with_backdrop(&self, root: Div) -> Div {
+        #[cfg(target_os = "macos")]
+        let pages = self.browser.drawn_pages();
         if !self.fill().translucent() {
+            // First, so everything else paints over it.
+            #[cfg(target_os = "macos")]
+            return root.child(crate::browser::ground_around_pages(
+                rgb(self.theme.background).into(),
+                pages,
+            ));
+            #[cfg(not(target_os = "macos"))]
             return root.bg(rgb(self.theme.background));
         }
         let Some(texture) = self.backdrop.picture.texture() else {
@@ -82,6 +106,9 @@ impl HerdrWindow {
         };
         // Absolute, so it takes no part in the column's layout, and first, so
         // everything else paints over it.
+        #[cfg(target_os = "macos")]
+        return root.child(crate::browser::picture_around_pages(texture, pages));
+        #[cfg(not(target_os = "macos"))]
         root.child(
             img(texture)
                 .absolute()
@@ -90,5 +117,20 @@ impl HerdrWindow {
                 .size_full()
                 .object_fit(ObjectFit::Cover),
         )
+    }
+
+    /// `content` with `color` painted under it, as `.bg(color)` on it would
+    /// paint, except on macOS where a page shows from beneath the window's
+    /// drawing: every background under a page leaves it unpainted.
+    pub(crate) fn with_ground(
+        &self,
+        content: impl IntoElement + Styled,
+        color: impl Into<Hsla>,
+    ) -> AnyElement {
+        #[cfg(target_os = "macos")]
+        return crate::browser::AroundPages::new(content, color.into(), self.browser.drawn_pages())
+            .into_any_element();
+        #[cfg(not(target_os = "macos"))]
+        content.bg(color.into()).into_any_element()
     }
 }

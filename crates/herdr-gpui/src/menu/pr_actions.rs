@@ -390,7 +390,7 @@ impl HerdrWindow {
             if comments.is_empty() {
                 body = body.child(div().text_color(rgb(theme.muted)).child("No comments yet"));
             }
-            for comment in comments {
+            for comment in comments.iter() {
                 body = body.child(
                     div()
                         .debug_selector(|| "pr-review-comment".into())

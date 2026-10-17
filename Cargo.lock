@@ -3357,17 +3357,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1bb25850ad31b88bbdef454afb93ec4cdb81f5e200ba5b3f1a0368111780d2c"
 
 [[package]]
-name = "gpui-wry"
-version = "0.6.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "529390779b0b86f97444b0512e4d5605e755f16210a53617eaa7c54bee21a4d0"
-dependencies = [
- "anyhow",
- "gpui-pre",
- "lb-wry",
-]
-
-[[package]]
 name = "gtk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3559,7 +3548,6 @@ dependencies = [
  "getrandom 0.4.3",
  "gpui-pre",
  "gpui-pre-platform",
- "gpui-wry",
  "herdr-client",
  "herdr-web",
  "if-addrs",

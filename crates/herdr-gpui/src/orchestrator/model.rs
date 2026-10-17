@@ -7,8 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
-/// Where an item comes from. GitLab has no source yet; its rows written by
-/// agent-launcher still decode.
+/// Where an item comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Provider {
     Github,

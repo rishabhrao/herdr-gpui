@@ -214,8 +214,9 @@ impl Render for HerdrWindow {
             .iter()
             .map(|slot| self.group_shown(slot.id, cx))
             .collect();
-        // A divider's grip keeps off a native page, which would cover it. A
-        // folding group stands between two groups without a divider.
+        // On Windows a divider's grip keeps off a native page, which would
+        // cover it. A folding group stands between two groups without a
+        // divider.
         let pages: Vec<bool> = if self.folding_groups().is_empty() {
             shown.iter().map(|shown| native_page(shown, cx)).collect()
         } else {
@@ -245,21 +246,7 @@ impl Render for HerdrWindow {
                 terminal.cursor(cursor)
             })
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
-                let split_cursor = this.split_cursor_at(event.position);
-                if split_cursor != this.split_cursor {
-                    this.split_cursor = split_cursor;
-                    cx.notify();
-                }
-                // A border is not the application's to hover.
-                if split_cursor.is_none() {
-                    this.terminal_mouse_hover(event, cx);
-                    this.focus_hovered_pane(event, window, cx);
-                }
-                let hovered = this.terminal_link_hovered(event.position, event.modifiers);
-                if hovered != this.hovered_terminal_link {
-                    this.hovered_terminal_link = hovered;
-                    cx.notify();
-                }
+                this.pane_pointer_moved(event, window, cx);
             }))
             // Holding the link modifier over a link in a mouse-reporting
             // application changes what a click does, so the pointer follows.
@@ -342,6 +329,7 @@ impl Render for HerdrWindow {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    this.note_input();
                     if this.scrollbar_mouse_down(event, cx)
                         || this.split_mouse_down(event, cx)
                         || this.terminal_mouse_down(event, window, cx)
@@ -719,7 +707,8 @@ impl Render for HerdrWindow {
         {
             window.request_animation_frame();
         }
-        // A menu just opened, or a covered page's picture is on its way.
+        // On Windows a menu that just opened hides the pages it covers once
+        // it is laid out, a frame later.
         if self.present_browser(cx) {
             window.request_animation_frame();
         }

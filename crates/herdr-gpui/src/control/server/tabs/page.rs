@@ -91,8 +91,8 @@ pub(super) fn navigate(caller: &Caller, id: u64, url: &str, cx: &mut App) -> Res
 #[cfg(any(target_os = "macos", windows))]
 fn load_everywhere(tab: &Tab, location: &Location, cx: &mut App) {
     for handle in crate::control::main_windows(cx) {
-        let _ = handle.update(cx, |view, _, cx| {
-            view.load_requested_page(tab.id, location, cx);
+        let _ = handle.update(cx, |view, _, _| {
+            view.load_requested_page(tab.id, location);
         });
     }
 }

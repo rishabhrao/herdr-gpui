@@ -48,6 +48,8 @@ impl HerdrWindow {
                 self.show_flash(Flash::warning("Not connected: input not sent"), cx);
                 return;
             }
+            // Typing across a projection gap is use of the window too.
+            self.note_input();
             self.hold_input(event, cx);
             return;
         }
@@ -57,6 +59,8 @@ impl HerdrWindow {
         let Some(target) = &self.pending_input.target else {
             return;
         };
+        // `target` borrows the window, so the field is set directly.
+        self.last_input = Some(std::time::Instant::now());
         let handle = &self.endpoints[self.selected_endpoint].connection.handle;
         if let Some(handle) = handle
             && let Err(error) =

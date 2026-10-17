@@ -49,10 +49,9 @@ futures-lite         = "2"
 getrandom            = "0.4.3"
 gpui                 = { package = "gpui-pre", version = "=0.3.6" }
 gpui_platform        = { package = "gpui-pre-platform", version = "=0.3.6" }
-gpui-wry             = "=0.6.6"
 # Draws the served app's frames in the browser; the version GPUI's web platform uses.
 gpui_wgpu            = { package = "gpui-pre-wgpu", version = "=0.3.6" }
-# The same wry gpui-wry builds on; it does not re-export the builder.
+# The web views behind browser tabs; `browser::page` lays them out in the window.
 wry                  = { package = "lb-wry", version = "=0.53.3" }
 herdr-client         = { path = "crates/herdr-client" }
 herdr-protocol       = { path = "crates/herdr-protocol" }
@@ -77,7 +76,7 @@ objc                 = "0.2"
 # The Secret Service client GPUI's Linux platform links, with its async-io backend.
 oo7                  = { default-features = false, features = ["async-std", "native_crypto"], version = "0.6" }
 objc2                = "0.6.4"
-objc2-app-kit        = { default-features = false, features = ["NSApplication", "NSDockTile", "NSEvent", "NSGraphicsContext", "NSImage", "NSImageRep", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSTextInputContext", "NSView", "NSWindow", "block2", "std"], version = "0.3.2" }
+objc2-app-kit        = { default-features = false, features = ["NSApplication", "NSColor", "NSDockTile", "NSDragging", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSTextInputContext", "NSTrackingArea", "NSView", "NSWindow", "block2", "objc2-core-foundation", "std"], version = "0.3.2" }
 objc2-foundation     = { default-features = false, features = ["NSArray", "NSBundle", "NSData", "NSError", "NSProcessInfo", "NSString", "NSURL", "std"], version = "0.3.2" }
 # The WebKit snapshot behind page annotation screenshots and the popups pages
 # open, at the versions wry uses.

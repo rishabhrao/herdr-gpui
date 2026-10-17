@@ -4,7 +4,7 @@ use super::{
     Location, Tab, TabId,
     native::{Event, Source},
 };
-use gpui::{AnyView, App, Window};
+use gpui::{AnyElement, Window};
 use herdr_web::wire::PageOp;
 use std::sync::mpsc::SyncSender;
 
@@ -20,7 +20,7 @@ impl Remote {
         std::iter::empty()
     }
 
-    pub(crate) fn view(&self, _: TabId) -> Option<AnyView> {
+    pub(crate) fn view(&self, _: TabId) -> Option<AnyElement> {
         None
     }
 
@@ -32,7 +32,6 @@ impl Remote {
         _: &Location,
         _: &SyncSender<Event<Source>>,
         _: &Window,
-        _: &mut App,
     ) -> crate::Result<()> {
         Ok(())
     }

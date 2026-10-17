@@ -24,6 +24,7 @@ mod image_source;
 mod images;
 mod input;
 mod lifecycle;
+pub(crate) use lifecycle::reasserts;
 mod links;
 mod monitors;
 pub(crate) use links::PressedLink;
@@ -55,6 +56,8 @@ pub(crate) use transfers::tests::Peer as MockPeer;
 mod agent_model_tests;
 #[cfg(test)]
 mod font_size_tests;
+#[cfg(all(test, feature = "integration-test"))]
+mod idle_reassert_tests;
 #[cfg(test)]
 mod key_action_tests;
 #[cfg(all(test, feature = "integration-test"))]
@@ -196,6 +199,10 @@ pub(crate) struct HerdrWindow {
     pub(crate) key_layout: fn(u16) -> Option<prefix::KeyChars>,
     /// The key code and Shift of the key being handled, from AppKit's event.
     pub(crate) key_press: fn() -> Option<(u16, bool)>,
+    /// When this window last forwarded user input; gates re-claiming a frame another client sized.
+    pub(crate) last_input: Option<std::time::Instant>,
+    /// The last pointer position over the panes, so a move event that did not move is not use.
+    pub(crate) last_pointer: Option<Point<Pixels>>,
     pub(crate) last_queued_options: Option<ConnectOptions>,
     pub(crate) links: links::DaemonLinks,
     pub(crate) listening_ports: crate::listening_ports::ListeningPorts,

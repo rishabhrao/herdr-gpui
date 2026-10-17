@@ -175,12 +175,10 @@ pub(crate) struct OrchestratorView {
     /// The open pull request's conversation, comment, and merge.
     pr: crate::pr_actions::Actions,
     comment: Entity<SearchInput>,
-    /// Conversation bodies, parsed once per text.
-    bodies: conversation::Bodies,
+    /// Conversation rows, the list drawing them, and the threads unfolded.
+    conversation: conversation::Rows,
     /// Conversation authors' avatars by URL.
     avatars: conversation::Avatars,
-    /// Resolved threads unfolded, by author, path, and time.
-    shown_threads: HashSet<String>,
     merge_open: bool,
     /// Hosts a dispatch could go to, while the dialog is open.
     hosts: Arc<Vec<crate::dispatch::Candidate>>,
@@ -259,9 +257,8 @@ impl OrchestratorView {
             message,
             pr: crate::pr_actions::Actions::default(),
             comment,
-            bodies: conversation::Bodies::default(),
+            conversation: conversation::Rows::default(),
             avatars: conversation::Avatars::default(),
-            shown_threads: HashSet::new(),
             merge_open: false,
             hosts: Arc::default(),
             detached: false,
@@ -392,6 +389,7 @@ impl OrchestratorView {
             });
         }
         self.look = look;
+        self.conversation.remeasure();
         cx.notify();
     }
 

@@ -4,7 +4,7 @@
 
 use super::HerdrWindow;
 use crate::{WINDOW_TITLE, sidebar, state::LiveState};
-use gpui::{Context, Window};
+use gpui::{Context, Pixels, Point, Window};
 use herdr_client::Method;
 use serde_json::json;
 use std::time::{Duration, Instant};
@@ -18,9 +18,39 @@ pub(crate) const RESIZE_SETTLE: Duration = Duration::from_millis(150);
 /// window resize, so the request is not resent while the daemon answers it.
 pub(crate) const RESIZE_REASSERT: Duration = Duration::from_secs(1);
 
+/// How long after its last user input a window still re-claims a frame
+/// another client sized. Two windows of different sizes on one tab would
+/// otherwise take it from each other every `RESIZE_REASSERT`; the one in use
+/// keeps it, and an idle one leaves it alone.
+pub(crate) const REASSERT_AFTER_INPUT: Duration = Duration::from_secs(5);
+
 const BELL_PREVIEW_DELAY: Duration = Duration::from_secs(3);
 
+/// Whether a window whose last user input was at `last_input` may re-claim,
+/// at `now`, a frame another client sized.
+pub(crate) fn reasserts(last_input: Option<Instant>, now: Instant) -> bool {
+    last_input.is_some_and(|last| now.saturating_duration_since(last) < REASSERT_AFTER_INPUT)
+}
+
 impl HerdrWindow {
+    /// Records that the window just forwarded user input.
+    pub(crate) fn note_input(&mut self) {
+        self.last_input = Some(Instant::now());
+    }
+
+    /// Records the pointer at `position` over the panes as use only when it
+    /// moved, and returns whether it did: platforms such as Windows report
+    /// move events for a cursor that did not move, and a resting cursor must
+    /// not keep an idle window in use.
+    pub(crate) fn note_pointer(&mut self, position: Point<Pixels>) -> bool {
+        if self.last_pointer == Some(position) {
+            return false;
+        }
+        self.last_pointer = Some(position);
+        self.note_input();
+        true
+    }
+
     pub(crate) fn resize(&mut self) {
         self.resize_at(Instant::now());
     }
@@ -28,9 +58,12 @@ impl HerdrWindow {
     pub(crate) fn resize_at(&mut self, now: Instant) {
         // Another client (a CLI, or another window) can resize the tab the
         // window shows. The window's own options still hold, so the early
-        // return below would leave a frame that no longer matches them: ask
-        // for the size again whenever the daemon's frame disagrees.
-        let stale = self.live.surface.is_some() && !self.surface_matches_options();
+        // return below would leave a frame that no longer matches them. An
+        // idle window leaves a frame another client sized alone; only one
+        // used within `REASSERT_AFTER_INPUT` asks for its size again.
+        let stale = self.live.surface.is_some()
+            && !self.surface_matches_options()
+            && reasserts(self.last_input, now);
         let changed = self.last_queued_options != Some(self.options);
         if self.last_queued_options == Some(self.options) && !stale {
             self.pending_resize = None;

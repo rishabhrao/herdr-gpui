@@ -29,6 +29,7 @@ pub(super) fn defaults(command: Command) -> &'static [&'static str] {
         AnnotateSelection => &["cmd-shift-a"],
         ClosePane => &["cmd-w"],
         CloseTab => &["cmd-shift-w"],
+        ReopenClosedTab => &["cmd-shift-t"],
         TabNumber(1) => &["cmd-1"],
         TabNumber(2) => &["cmd-2"],
         TabNumber(3) => &["cmd-3"],

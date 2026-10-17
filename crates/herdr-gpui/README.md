@@ -1841,12 +1841,12 @@ or macOS client and the local session or a saved SSH host on both ends.
 
 The Orchestrator row of a group's "…" menu, the Open Orchestrator command, or
 the Orchestrator row of a workspace's popover opens a tab listing that
-workspace's repository: its GitHub issues and pull requests, its
+workspace's repository: its GitHub issues and pull requests or GitLab issues, its
 [Beads](https://github.com/steveyegge/beads) issues when the main checkout has
 a `.beads` folder, and the agent runs dispatched for them. It works for the
 local session and saved SSH hosts.
 
-- **Issues** lists open GitHub issues and beads together. A bead's children sit
+- **Issues** lists open GitHub or GitLab issues and beads together. A bead's children sit
   under it; filters narrow to Beads, items with a run, or blocked ones; five
   sorts are offered. Search matches every word you type across title, id,
   author, labels, state, and body, case-insensitively unless a word has a
@@ -1894,8 +1894,13 @@ updates only its own, and uses agent-launcher's prompt profiles from
 `~/.config/agent-launcher/agents/<name>/prompt.md` (the built-in prompt when
 none is chosen). Issues and runs are kept in agent-launcher's per-repository
 database under the platform data directory. GitHub is read as the account used
-for pull requests on that host; GitLab remotes and GitHub Enterprise are listed
-as not supported yet. The window button in the tab's header moves the view into
+for pull requests on that host. A GitLab remote, on gitlab.com or a
+self-managed host, lists its open issues (not yet its merge requests), read
+with `GITLAB_TOKEN` or `GITLAB_ACCESS_TOKEN` when `GITLAB_HOST` names that host
+(gitlab.com by default), else with the GitLab CLI's sign-in (`glab auth
+login`), and sent only over HTTPS; public projects need neither, and an
+`http://` remote is read without one. GitHub Enterprise is listed as not
+supported yet. The window button in the tab's header moves the view into
 a window of its own.
 
 ## Images
@@ -2323,15 +2328,20 @@ come back after a restart; closing a workspace in Herdr removes its tabs.
   only its own scripts in pages. On
   Windows, a frame inside a page that links to an application's URL scheme
   gets WebView2's own confirmation prompt rather than being refused outright.
-- Pages are native web views (WebKit on macOS, WebView2 on Windows) layered
-  above the window, so a page steps aside for a menu or popover that would
-  fall over it, and for a dialog, which dims the whole window. A page the menu
-  does not reach keeps showing. On macOS a page that steps aside leaves a
-  picture of itself, taken as the menu opens; on Windows its place is empty
-  until the menu closes. A page also steps aside while a toast or the
-  file-transfer card falls over it, as when a page or VS Code fills the
-  right-hand group or the whole editor area, so they stay visible and
-  clickable; a page they do not reach keeps showing.
+- Pages are native web views (WebKit on macOS, WebView2 on Windows). On
+  macOS a page lies beneath the window's own drawing. Menus, popovers,
+  dialogs, tooltips, toasts, and the file-transfer card show over it, and
+  the page stays live around them. The grip between two groups keeps its
+  full width over a page. While a menu or dialog is open, a file dropped on
+  the window never reaches a page. A file dropped on a toast or the
+  file-transfer card still reaches the page beneath.
+- On Windows a page is layered above the window, so it steps aside for a
+  menu, popover, or status bar tooltip that would fall over it, and for a
+  dialog, which dims the whole window. Its place is empty until the menu
+  closes. A page also steps aside while a toast or the file-transfer card
+  falls over it, as when a page or VS Code fills the right-hand group or the
+  whole editor area, so they stay visible and clickable. A page that none of
+  these reach keeps showing.
 - Linux has no embedded pages yet: browser tab requests open the system
   browser, and local files and annotations are unavailable.
 
@@ -2756,8 +2766,7 @@ the page's storage, which belongs to one address.
 - VS Code fills its tab, without a browser tab's address bar, back,
   forward, reload, or **Annotate**: it is an editor, not a page to browse.
   Its page is otherwise a [browser tab](#browser-tabs)'s, so the same rules
-  apply: `http` and `https` only, native web views drawn above the window,
-  and no pages on Linux.
+  apply: `http` and `https` only, native web views, and no pages on Linux.
 - The keyboard goes to whatever has focus. While a page has it, this one or a
   browser tab's, the page's own shortcuts win, as a terminal program's do
   while its pane has focus. On macOS, Cut, Copy, and Paste act on the page,

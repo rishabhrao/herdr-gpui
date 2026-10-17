@@ -1,11 +1,9 @@
 //! The dividers between groups. A divider draws a line one pixel wide, so
 //! the groups beside it touch the line. The strip to drag it by is wider than
-//! the line: the rest of it lies over the groups, inside their frames.
+//! the line: the rest of it lies over the groups, inside their frames, and
+//! over the pages they show on macOS.
 
-use crate::{
-    HerdrWindow,
-    browser::{Shown, Store},
-};
+use crate::{HerdrWindow, browser::Shown};
 use gpui::{prelude::*, *};
 
 /// How wide a divider's line draws.
@@ -19,15 +17,23 @@ const GRIP: f32 = 5.;
 #[derive(Clone, Copy)]
 struct DividerDrag(usize);
 
-/// Whether a native page shows `shown`. A native page draws over everything
-/// the app draws, so a grip laid over it could not be pressed.
+/// Whether `shown` is a native page that draws over everything the app
+/// draws, so a grip laid over it could not be pressed.
+#[cfg(windows)]
 pub(in crate::window) fn native_page(shown: &Shown, cx: &App) -> bool {
     let Shown::Page(id) = shown else {
         return false;
     };
-    cx.try_global::<Store>()
+    cx.try_global::<crate::browser::Store>()
         .and_then(|store| store.get(*id))
         .is_some_and(|tab| tab.location.as_ref().is_none_or(|at| at.is_page()))
+}
+
+/// Only Windows pages draw over the app. On macOS a page lies beneath the
+/// app's drawing, and a grip over it takes the press; Linux shows no pages.
+#[cfg(not(windows))]
+pub(in crate::window) fn native_page(_: &Shown, _: &App) -> bool {
+    false
 }
 
 /// How far the grips of a group's two dividers lie over the group, from its
@@ -84,7 +90,10 @@ fn grip(divider: usize, side: &'static str, width: f32) -> Stateful<Div> {
         .h_full()
         .w(px(width))
         .cursor(CursorStyle::ResizeLeftRight)
-        // A press on the grip is not a press on what the group shows under it.
+        // A press on the grip is not a press on what the group shows under
+        // it. Blocking what lies beneath also keeps a page under the grip
+        // from taking the press.
+        .occlude()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_drag(DividerDrag(divider), |_, _, _, cx| cx.new(|_| EmptyView))
 }

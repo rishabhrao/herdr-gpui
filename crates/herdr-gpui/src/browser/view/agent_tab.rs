@@ -31,7 +31,7 @@ impl HerdrWindow {
         let id = match before {
             Some(id) => {
                 #[cfg(any(target_os = "macos", windows))]
-                self.browser.pages.reload(id, cx);
+                self.browser.pages.reload(id);
                 id
             }
             None => {
@@ -70,13 +70,13 @@ impl HerdrWindow {
 
     /// Reloads this window's pages for `tabs`, as an agent asks after
     /// editing a page it showed.
-    pub(crate) fn reload_browser_tabs(&mut self, tabs: &[TabId], cx: &mut Context<Self>) {
+    pub(crate) fn reload_browser_tabs(&mut self, tabs: &[TabId]) {
         #[cfg(any(target_os = "macos", windows))]
         for id in tabs {
-            self.browser.pages.reload(*id, cx);
+            self.browser.pages.reload(*id);
         }
         #[cfg(not(any(target_os = "macos", windows)))]
-        let _ = (tabs, cx);
+        let _ = tabs;
     }
 
     /// Whether the window shows `workspace` of endpoint `index` now.

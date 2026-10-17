@@ -1,6 +1,6 @@
-//! Native pages draw above everything the window paints, so a page that a
-//! toast or the file-transfer card reaches steps aside while it shows, as
-//! for a menu; a page it does not reach keeps showing.
+//! On Windows native pages draw above everything the window paints, so a
+//! page that a toast or the file-transfer card reaches hides while it shows,
+//! as for a menu; a page it does not reach keeps showing.
 use super::*;
 use crate::{browser::view::present::covered, menu::Cover};
 use gpui::{Bounds, point, px, size};

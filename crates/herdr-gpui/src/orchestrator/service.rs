@@ -6,7 +6,7 @@
 use super::{
     Access, Error, HerdrSession, Item, Provider, Result, Run, SourceKey, Store,
     actions::{Action, Site},
-    beads, database_path, github,
+    beads, database_path, github, gitlab,
     location::database_path_in,
     naming,
     prompt::{self, Profile},
@@ -16,6 +16,7 @@ use crate::github::Tokens;
 use crate::teleport::{AgentKind, Host};
 use chrono::{DateTime, Utc};
 use herdr_client::ConnectTarget;
+use secrecy::SecretString;
 use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
@@ -55,16 +56,18 @@ const HIDDEN_BACKOFF: Duration = Duration::from_secs(1800);
 const COMMANDS: usize = 8;
 
 /// How long a failed source waits. A rate limit or refused token pauses as
-/// long as GitHub asked; a repository the sign-in cannot see waits for a user
-/// action. GitHub's `cooldown` applies only to GitHub's own failures, so a
-/// Beads failure never inherits a pause a GitHub request left behind.
+/// long as the provider asked; a repository the sign-in cannot see waits for
+/// a user action. The `cooldown` applies only to a provider's own failures,
+/// so a Beads failure never inherits a pause a GitHub request left behind.
 pub(super) fn retry_wait(error: &Error, cooldown: Option<Duration>) -> Duration {
-    let Error::Github(source) = error else {
-        return BACKOFF;
-    };
-    let floor = match **source {
-        crate::Error::GitHubRepositoryHidden { .. } => HIDDEN_BACKOFF,
-        _ => BACKOFF,
+    let floor = match error {
+        Error::Github(source) => match **source {
+            crate::Error::GitHubRepositoryHidden { .. } => HIDDEN_BACKOFF,
+            _ => BACKOFF,
+        },
+        Error::Gitlab(source) if source.needs_user() => HIDDEN_BACKOFF,
+        Error::Gitlab(_) => BACKOFF,
+        _ => return BACKOFF,
     };
     cooldown.map_or(floor, |wait| wait.max(floor))
 }
@@ -133,7 +136,7 @@ pub(crate) enum SyncState {
     },
     /// GitHub needs a signed-in account.
     SignIn,
-    /// A provider or host this build cannot read yet, such as GitLab.
+    /// A provider or host this build cannot read yet, such as GitHub Enterprise.
     Unsupported,
     Failed(Arc<Error>),
 }
@@ -200,6 +203,7 @@ impl Service {
             retry: Vec::new(),
             uncached: HashMap::new(),
             resume: HashMap::new(),
+            gitlab_token: None,
             cooldown: None,
         };
         std::thread::Builder::new()
@@ -274,6 +278,9 @@ struct Worker {
     uncached: HashMap<SourceKey, Vec<Item>>,
     /// Where each GitHub source's next incremental sync continues.
     resume: HashMap<SourceKey, github::Resume>,
+    /// The GitLab token, once looked up; Refresh looks again, so a new
+    /// `glab auth login` is picked up without reopening the view.
+    gitlab_token: Option<Option<SecretString>>,
     cooldown: Option<Duration>,
 }
 
@@ -293,6 +300,7 @@ impl Worker {
             match commands.recv_timeout(wait) {
                 Ok(Command::Refresh(token)) => {
                     self.request.token = token;
+                    self.gitlab_token = None;
                     self.retry.clear();
                     let token = self.request.token.clone();
                     self.sync(token.as_ref());
@@ -628,7 +636,47 @@ impl Worker {
                     count,
                 })
             }
-            Provider::Gitlab => Ok(SyncState::Unsupported),
+            Provider::Gitlab => {
+                let token = self
+                    .gitlab_token
+                    .get_or_insert_with(|| gitlab::token(&key.host));
+                let scheme = self
+                    .snapshot
+                    .repo
+                    .as_ref()
+                    .and_then(|info| info.remote.as_ref())
+                    .filter(|remote| remote.source == *key)
+                    .map_or(gitlab::Scheme::Https, |remote| {
+                        gitlab::Scheme::of_remote(&remote.url)
+                    });
+                let previous = store.checkpoint(key)?;
+                let cancelled = &self.cancelled;
+                let listing = gitlab::sync(
+                    (key, scheme),
+                    token.as_ref(),
+                    previous.as_ref(),
+                    &|| cancelled.load(Ordering::Relaxed),
+                    &mut self.cooldown,
+                )?;
+                let count = listing.items.len();
+                if !listing.complete || !writable {
+                    self.uncached.insert(key.clone(), listing.items);
+                    return Ok(if listing.complete {
+                        SyncState::Synced {
+                            at: Utc::now(),
+                            count,
+                        }
+                    } else {
+                        SyncState::Capped { count }
+                    });
+                }
+                store.replace_items(key, &listing.items, &listing.checkpoint)?;
+                self.uncached.remove(key);
+                Ok(SyncState::Synced {
+                    at: Utc::now(),
+                    count,
+                })
+            }
         }
     }
 
@@ -677,8 +725,11 @@ fn installed(host: Option<&Host>, cancelled: &AtomicBool) -> Result<Vec<AgentKin
 /// The sources a repository has, and whether this build can read each.
 pub(super) fn sources(info: &RepoInfo) -> Vec<(SourceKey, bool)> {
     let remote = info.remote.as_ref().map(|remote| {
-        let supported =
-            remote.source.provider == Provider::Github && remote.source.host == "github.com";
+        let supported = match remote.source.provider {
+            Provider::Github => remote.source.host == "github.com",
+            Provider::Gitlab => true,
+            Provider::Beads => false,
+        };
         (remote.source.clone(), supported)
     });
     remote

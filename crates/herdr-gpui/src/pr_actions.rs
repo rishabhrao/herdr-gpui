@@ -257,7 +257,8 @@ pub(crate) struct Actions {
     busy: bool,
     waiting: Option<(Target, Job, Arc<SecretString>)>,
     target: Option<Target>,
-    comments: Option<Vec<Comment>>,
+    /// Shared, so a view can tell the same read apart from a new one at once.
+    comments: Option<Arc<[Comment]>>,
     loading: bool,
     comments_error: Option<String>,
     running: Option<Action>,
@@ -278,8 +279,14 @@ impl Actions {
         self.target.as_ref()
     }
 
-    pub fn comments(&self) -> Option<&[Comment]> {
-        self.comments.as_deref()
+    pub fn comments(&self) -> Option<&Arc<[Comment]>> {
+        self.comments.as_ref()
+    }
+
+    /// A conversation as if it had been read, for views' tests.
+    #[cfg(test)]
+    pub(crate) fn set_comments(&mut self, comments: Vec<Comment>) {
+        self.comments = Some(comments.into());
     }
 
     pub fn loading(&self) -> bool {
@@ -410,7 +417,7 @@ impl Actions {
                             {
                                 self.loading = false;
                                 match result {
-                                    Ok(comments) => self.comments = Some(comments),
+                                    Ok(comments) => self.comments = Some(comments.into()),
                                     Err(error) => self.comments_error = Some(error.to_string()),
                                 }
                             }

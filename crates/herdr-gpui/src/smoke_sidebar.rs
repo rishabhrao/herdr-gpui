@@ -91,6 +91,11 @@ pub fn start_sidebar(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
         start_notifications(handle, cx);
         return;
     }
+    #[cfg(target_os = "macos")]
+    if std::env::var_os("HERDR_TEST_PAGES_ONLY").is_some() {
+        start_pages(handle, cx);
+        return;
+    }
     EXIT_CODE.store(1, Ordering::SeqCst);
     // AppKit may exit(0) inside cx.quit(), bypassing main's ExitCode. These
     // daemon-free fixtures exit explicitly, like the performance driver.

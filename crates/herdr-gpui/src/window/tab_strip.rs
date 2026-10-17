@@ -807,14 +807,16 @@ impl HerdrWindow {
         let opened = self.group_opened(slot.id).filter(|_| !zen);
         // The body's ground, beside the strip rather than under it, so the
         // strip's own color is no more solid than the rest of the window.
-        let body = div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
-            .bg(self.fill().ground())
-            .child(body);
+        let body = self.with_ground(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .child(body),
+            self.fill().ground(),
+        );
         let column = div()
             .id(SharedString::from(slot.selector("group")))
             .debug_selector(move || slot.selector("group"))

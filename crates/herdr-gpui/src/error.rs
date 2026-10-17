@@ -547,6 +547,9 @@ pub enum Error {
     NotInCheckout,
     #[error("Could not read the orchestrator's database: {0}")]
     OrchestratorItems(#[source] crate::orchestrator::Error),
+    #[cfg(target_os = "macos")]
+    #[error("The window has no view to place a page beneath")]
+    PageStack,
     #[error("This command changed or was removed. Reopen the palette.")]
     PaletteCommandChanged,
     #[error("The selected connection is not ready.")]

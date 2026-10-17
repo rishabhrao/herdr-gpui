@@ -39,6 +39,8 @@ pub enum Command {
     EditScrollback,
     ClosePane,
     CloseTab,
+    /// Reopens the focused workspace's most recently closed tab.
+    ReopenClosedTab,
     TabNumber(u8),
     ToggleSidebar,
     ToggleStatusBar,
@@ -412,6 +414,11 @@ pub const COMMANDS: &[CommandInfo] = &[
         command: Command::CloseTab,
         name: "close_tab",
         label: "Close Tab",
+    },
+    CommandInfo {
+        command: Command::ReopenClosedTab,
+        name: "reopen_closed_tab",
+        label: "Reopen Closed Tab",
     },
     CommandInfo {
         command: Command::TabNumber(1),
@@ -838,6 +845,7 @@ pub fn request(command: Command, snapshot: &ClientShellSnapshot) -> Option<(Meth
         // These need state beyond the snapshot, such as the sidebar's order
         // or a dialog, so the window runs them.
         | Command::RenameTab
+        | Command::ReopenClosedTab
         | Command::LastPane
         | Command::Back
         | Command::Forward

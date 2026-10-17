@@ -52,7 +52,7 @@ pub(in crate::control::server::tabs) fn history(
         return not_loaded(id);
     };
     let moved = handle
-        .read_with(cx, |view, cx| view.page_history(tab.id, forward, cx))
+        .read_with(cx, |view, _| view.page_history(tab.id, forward))
         .unwrap_or(false);
     if !moved {
         return not_loaded(id);
@@ -115,7 +115,7 @@ pub(in crate::control::server::tabs) fn text(
             let done = move |raw: String| {
                 *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(raw);
             };
-            match handle.read_with(cx, |view, cx| view.page_text(tab_id, done, cx)) {
+            match handle.read_with(cx, |view, _| view.page_text(tab_id, done)) {
                 Ok(Ok(true)) => {
                     asked = true;
                     None

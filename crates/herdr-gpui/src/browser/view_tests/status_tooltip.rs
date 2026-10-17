@@ -1,5 +1,6 @@
-//! Pages draw above the status bar's tooltips, so while the pointer is over
-//! the bar, the pages in the band above it step aside, as for a menu.
+//! On Windows pages draw above the status bar's tooltips, so while the
+//! pointer is over the bar, the pages in the band above it hide, as for a
+//! menu.
 use super::*;
 use crate::menu::Cover;
 use gpui::{Bounds, Modifiers, point, px, size};

@@ -262,7 +262,7 @@ fn a_comment_is_trimmed_and_a_queued_read_yields_to_it() {
 #[test]
 fn another_pull_request_drops_the_conversation_but_a_new_head_does_not() {
     let mut actions = tracked();
-    actions.comments = Some(Vec::new());
+    actions.comments = Some(Arc::from([]));
     actions.outcome = Some(Outcome {
         message: "Commented on pull request #8".into(),
         url: None,

@@ -41,6 +41,12 @@ mod notifications;
 use notifications::start_notifications;
 
 #[cfg(target_os = "macos")]
+#[path = "smoke_pages.rs"]
+mod pages;
+#[cfg(target_os = "macos")]
+use pages::start_pages;
+
+#[cfg(target_os = "macos")]
 #[path = "smoke_preferences.rs"]
 mod preferences;
 #[cfg(target_os = "macos")]

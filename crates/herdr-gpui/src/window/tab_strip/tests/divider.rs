@@ -95,8 +95,8 @@ fn each_part_of_the_grip_drags_the_divider(cx: &mut TestAppContext) {
     }
 }
 
-/// Needs a build that shows pages: elsewhere a new tab opens nothing.
-#[cfg(any(target_os = "macos", windows))]
+/// On Windows a page draws above the grip, so the grip moves off it.
+#[cfg(windows)]
 #[gpui::test]
 fn the_grip_keeps_off_a_page_and_keeps_its_width(cx: &mut TestAppContext) {
     let (view, cx) = split(cx);
@@ -112,4 +112,25 @@ fn the_grip_keeps_off_a_page_and_keeps_its_width(cx: &mut TestAppContext) {
     drag_left(cx, grip.center());
     let after = cx.debug_bounds("group").unwrap();
     assert!(after.size.width < before.size.width - px(50.));
+}
+
+/// On macOS a page lies beneath the window's drawing, so the grip stays
+/// centered on its line over the page, and the part over the page drags.
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn the_grip_lies_over_a_page_centered_on_its_line(cx: &mut TestAppContext) {
+    let (view, cx) = split(cx);
+    let right = view.read_with(cx, |view, _| view.group_slots()[1].id);
+    cx.update(|window, cx| view.update(cx, |view, cx| view.open_browser_tab_in(right, window, cx)));
+    draw(cx);
+    let line = cx.debug_bounds("group-divider-0").unwrap();
+    let before = cx.debug_bounds("group-divider-0-left").unwrap();
+    let after = cx.debug_bounds("group-divider-0-right").unwrap();
+    assert!(close(before.right(), line.left()), "{before:?} {line:?}");
+    assert!(close(after.left(), line.right()), "{after:?} {line:?}");
+    assert!(close(after.right() - before.left(), px(5.)));
+    let group = cx.debug_bounds("group").unwrap();
+    drag_left(cx, after.center());
+    let dragged = cx.debug_bounds("group").unwrap();
+    assert!(dragged.size.width < group.size.width - px(50.));
 }

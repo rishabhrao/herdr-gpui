@@ -9,8 +9,10 @@ use crate::dialog_input::DialogInput;
 use gpui::{App, Entity, FocusHandle, Pixels, Point, ScrollHandle, Subscription};
 use herdr_client::protocol::ClientShellSnapshot;
 
-/// What an open menu covers, as its last frame laid it out: the window's
-/// native pages above GPUI would hide it, so the ones it covers step aside.
+/// What an open menu covers, as its last frame laid it out. Windows pages
+/// draw above GPUI and would hide it, so the ones it covers hide instead.
+/// Tests and native checks read it too, to find the menu in the window.
+#[cfg(any(windows, test, feature = "integration-test"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) enum Cover {
     /// Not laid out yet.
@@ -22,7 +24,7 @@ pub(crate) enum Cover {
     Panel(gpui::Bounds<Pixels>),
 }
 
-#[cfg(any(target_os = "macos", windows, test))]
+#[cfg(any(windows, test))]
 impl Cover {
     /// Whether a page drawn at `page` would hide this menu. Before the menu
     /// is laid out nothing is, so pages keep showing for that one frame.
@@ -36,7 +38,7 @@ impl Cover {
 
     /// This cover if it was measured for `open`, the page open now; one
     /// measured for another page is stale until this one is laid out.
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(windows)]
     pub(crate) fn settled(self, measured_for: Option<Page>, open: Option<Page>) -> Self {
         if measured_for == open {
             self
@@ -50,7 +52,8 @@ pub(crate) struct MenuState {
     pub page: Option<Page>,
     pub(crate) application: Option<crate::menus::in_window::OpenMenu>,
     pub(crate) application_bar: crate::menus::in_window::Geometry,
-    /// Written by the menu's layout, read when presenting pages.
+    /// Written by the menu's layout, read when presenting Windows pages.
+    #[cfg(any(windows, test, feature = "integration-test"))]
     pub(crate) cover: std::rc::Rc<std::cell::Cell<Cover>>,
     pub(super) device_setup: Option<super::devices::Setup>,
     /// The provider whose Settings tab Add Device last asked for. Unit tests
@@ -300,6 +303,7 @@ impl MenuState {
             page: None,
             application: None,
             application_bar: Default::default(),
+            #[cfg(any(windows, test, feature = "integration-test"))]
             cover: Default::default(),
             device_setup: None,
             #[cfg(all(test, feature = "cloud"))]
@@ -371,6 +375,7 @@ impl MenuState {
 
     pub fn reset(&mut self) {
         self.application = None;
+        #[cfg(any(windows, test, feature = "integration-test"))]
         self.cover.set(Cover::Unknown);
         self.device_setup = None;
         self.wsl_setup = None;

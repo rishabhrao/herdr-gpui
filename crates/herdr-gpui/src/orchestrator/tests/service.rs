@@ -6,7 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// A repository whose only remote is GitLab, so no source reaches the network.
+/// A repository whose only remote is GitHub Enterprise, which this build
+/// does not read, so no source reaches the network.
 fn repository(dir: &std::path::Path) -> String {
     let checkout = dir.join("app");
     std::fs::create_dir_all(&checkout).unwrap();
@@ -20,7 +21,12 @@ fn repository(dir: &std::path::Path) -> String {
         assert!(status.success(), "git {args:?}");
     };
     git(&["init", "-q"]);
-    git(&["remote", "add", "origin", "git@gitlab.com:group/app.git"]);
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "git@github.acme.com:group/app.git",
+    ]);
     checkout.to_string_lossy().into_owned()
 }
 
@@ -65,7 +71,7 @@ fn the_worker_shows_runs_another_application_writes() {
         snapshot.sources.as_slice(),
         [SourceStatus {
             key: SourceKey {
-                provider: Provider::Gitlab,
+                provider: Provider::Github,
                 ..
             },
             state: SyncState::Unsupported

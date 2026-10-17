@@ -15,6 +15,8 @@ fn successful_resize_reassert_waits_for_the_next_retry_interval(cx: &mut gpui::T
         view.options.surface_size.cols += 1;
         view.last_queued_options = Some(view.options);
         view.pending_resize = None;
+        // The window is in use, so it keeps the tab at its own size.
+        view.last_input = Some(start);
         view.resize_at(start);
         let sent = start + Duration::from_secs(1);
         view.resize_at(sent);

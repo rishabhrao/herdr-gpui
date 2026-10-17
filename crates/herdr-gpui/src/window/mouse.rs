@@ -148,6 +148,11 @@ impl HerdrWindow {
         ) else {
             return false;
         };
+        // `handle` borrows the window, so the field is set directly. Hover
+        // motion is not counted here: `note_pointer` counts it only when the pointer moved.
+        if kind != ClientMouseKind::Moved {
+            self.last_input = Some(std::time::Instant::now());
+        }
         match ConnectionBridge::send_input(
             handle,
             &snapshot.boot_id,
@@ -205,6 +210,9 @@ impl HerdrWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        // A press over the panes is use even when the frame is not ready or
+        // the pane ignores the mouse.
+        self.note_input();
         self.cancel_terminal_mouse(cx);
         let Some((hit, strip)) = self
             .terminal_mouse_at(event.position)
@@ -347,6 +355,34 @@ impl HerdrWindow {
                 .filter(|hit| hit.mouse_reporting)
         {
             self.send_mouse(&hit, ClientMouseKind::Moved, event.modifiers, cx);
+        }
+    }
+
+    /// The pointer moved over the panes: updates the split and link cursors,
+    /// reports hover to the pane's program and lets focus follow the mouse.
+    pub(crate) fn pane_pointer_moved(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Pointing at a pane is use even when its program ignores the mouse.
+        let moved = self.note_pointer(event.position);
+        let split_cursor = self.split_cursor_at(event.position);
+        if split_cursor != self.split_cursor {
+            self.split_cursor = split_cursor;
+            cx.notify();
+        }
+        // A border is not the application's to hover. A move event for a pointer that did not
+        // move (Windows sends them) is not motion: no report, and focus does not follow it.
+        if split_cursor.is_none() && moved {
+            self.terminal_mouse_hover(event, cx);
+            self.focus_hovered_pane(event, window, cx);
+        }
+        let hovered = self.terminal_link_hovered(event.position, event.modifiers);
+        if hovered != self.hovered_terminal_link {
+            self.hovered_terminal_link = hovered;
+            cx.notify();
         }
     }
 

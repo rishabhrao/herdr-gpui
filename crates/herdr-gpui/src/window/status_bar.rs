@@ -32,13 +32,13 @@ impl HerdrWindow {
         div()
             .id("connection-status")
             .debug_selector(|| "connection-status".into())
-            // Pages draw above the bar's tooltips, so those under where a
-            // tooltip shows step aside while the pointer is over the bar.
+            // Windows pages draw above the bar's tooltips, so those under
+            // where a tooltip shows hide while the pointer is over the bar.
             .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                 this.hover_status_bar(*hovered, cx);
             }))
             .relative()
-            .child(self.status_bar_probe())
+            .children(self.status_bar_probe())
             .flex()
             .flex_none()
             .h(height)

@@ -118,7 +118,7 @@ pub(super) fn reload(caller: &Caller, cx: &mut App) -> Response {
         .map(|store| store.opened_by(pane).map(|tab| tab.id).collect())
         .unwrap_or_default();
     for handle in main_windows(cx) {
-        let _ = handle.update(cx, |view, _, cx| view.reload_browser_tabs(&tabs, cx));
+        let _ = handle.update(cx, |view, _, _| view.reload_browser_tabs(&tabs));
     }
     Response::Reloaded { tabs: tabs.len() }
 }

@@ -1,8 +1,14 @@
 //! A pull request's conversation, drawn the way GitHub reads: each comment a
 //! card under its author's avatar, each review holding the inline threads
 //! its author left, resolved threads folded to a line, and a summary of the
-//! verdicts on top. Bodies are Markdown, parsed once per text; avatars are
-//! read off the UI thread and only ever from GitHub's avatar host.
+//! verdicts on top. Bodies are Markdown, parsed once per text, and drawn as
+//! list rows so a long conversation scrolls at the cost of what is in view;
+//! avatars are read off the UI thread and only ever from GitHub's avatar host.
+
+mod rows;
+mod scrollbar;
+
+pub(super) use rows::Rows;
 
 use super::{
     OrchestratorView,
@@ -12,13 +18,12 @@ use crate::{
     config::{corners, mix},
     pr_actions::{self, Comment, CommentKind, Review},
     pull_request::State,
-    release_notes::{self, Line},
+    release_notes,
 };
 use gpui::{prelude::*, *};
+use rows::{Card, Chrome, Gutter, Piece};
 use std::{
-    cell::RefCell,
     collections::{HashMap, HashSet},
-    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -26,10 +31,6 @@ use std::{
 const AVATAR: f32 = 32.;
 /// Avatars kept per view; a conversation holds at most a few dozen authors.
 const AVATAR_LIMIT: usize = 128;
-/// Parsed bodies kept per view before the cache starts over.
-const BODY_LIMIT: usize = 128;
-/// Resolved threads unfolded per view before they all fold again.
-const SHOWN_LIMIT: usize = 256;
 /// How long a background read waits for a fresh avatar to download.
 const AVATAR_WAIT: Duration = Duration::from_secs(6);
 
@@ -109,7 +110,7 @@ pub(super) fn entries(comments: &[Comment]) -> Vec<Entry<'_>> {
 }
 
 /// The counts the summary bar shows.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Summary {
     pub(super) approved: usize,
     pub(super) changes_requested: usize,
@@ -168,25 +169,6 @@ fn plural(count: usize, one: &str, many: &str) -> String {
     format!("{count} {}", if count == 1 { one } else { many })
 }
 
-/// Parsed comment bodies, so a repaint reuses them.
-#[derive(Default)]
-pub(super) struct Bodies(RefCell<HashMap<String, Rc<[Line]>>>);
-
-impl Bodies {
-    fn lines(&self, body: &str) -> Rc<[Line]> {
-        let mut cached = self.0.borrow_mut();
-        if let Some(lines) = cached.get(body) {
-            return lines.clone();
-        }
-        if cached.len() >= BODY_LIMIT {
-            cached.clear();
-        }
-        let lines: Rc<[Line]> = release_notes::parse(&super::markdown::without_html(body)).into();
-        cached.insert(body.to_owned(), lines.clone());
-        lines
-    }
-}
-
 /// Avatars by URL: `None` while being read or when none could be.
 pub(super) type Avatars = HashMap<String, Option<Arc<Image>>>;
 
@@ -231,66 +213,153 @@ impl OrchestratorView {
         }
     }
 
-    pub(super) fn render_conversation(&self, cx: &mut Context<Self>) -> AnyElement {
-        let look = &self.look;
-        let mut column = div()
-            .id("orchestrator-conversation")
-            .flex_1()
-            .min_w_0()
-            .overflow_y_scroll()
-            .p_4()
-            .flex()
-            .flex_col()
-            .gap_3();
-        if self.request.token.is_none() {
-            column = column.child(look.muted("Sign in to GitHub to read the conversation."));
+    pub(super) fn render_conversation(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let (notice, comments) = if self.request.token.is_none() {
+            (
+                Some("Sign in to GitHub to read the conversation.".to_owned()),
+                None,
+            )
         } else if let Some(error) = self.pr.comments_error() {
-            column = column.child(look.muted(error.to_owned()));
+            (Some(error.to_owned()), None)
         } else if let Some(comments) = self.pr.comments() {
-            if comments.is_empty() {
-                column = column.child(look.muted("No comments yet."));
-            } else {
-                column = column.child(self.render_summary(&summary(comments)));
-            }
-            let now = chrono::Utc::now();
-            for (index, entry) in entries(comments).into_iter().enumerate() {
-                column = column.child(match entry {
-                    Entry::Comment(comment) => self.render_comment(index, comment, now),
-                    Entry::Review {
-                        author,
-                        review,
-                        threads,
-                    } => self.render_review(index, author, review, &threads, now, cx),
-                });
-            }
-        } else if let Some(problem) = self
-            .detail
-            .as_ref()
-            .and_then(|detail| self.item(&detail.key))
-            .and_then(|item| self.lookup_problem(item))
-        {
-            column = column.child(look.muted(problem));
+            (None, Some(comments))
         } else {
-            column = column.child(look.muted("Reading the conversation\u{2026}"));
-        }
-        if let Some(outcome) = self.pr.outcome() {
-            column = column.child(look.muted(outcome.message.clone()));
-        }
-        if let Some(error) = self.pr.error() {
-            column = column.child(
-                div()
-                    .text_size(look.small())
-                    .text_color(rgb(look.hue(RED)))
-                    .child(error.to_owned()),
-            );
-        }
+            let problem = self
+                .detail
+                .as_ref()
+                .and_then(|detail| self.item(&detail.key))
+                .and_then(|item| self.lookup_problem(item));
+            (
+                Some(problem.unwrap_or_else(|| "Reading the conversation\u{2026}".to_owned())),
+                None,
+            )
+        };
         let open = self
             .open_pull_request()
             .is_some_and(|pr| pr.state == State::Open);
-        if open && self.pr.target().is_some() {
-            column = column.child(self.render_composer(cx));
-        }
-        column.into_any_element()
+        let chrome = Chrome {
+            notice,
+            outcome: self.pr.outcome().map(|outcome| outcome.message.clone()),
+            failure: self.pr.error().map(str::to_owned),
+            composer: (open && self.pr.target().is_some())
+                .then(|| self.comment.read(cx).focus.clone()),
+        };
+        self.conversation.update(comments, chrome);
+        self.conversation.hint();
+        let list = list(
+            self.conversation.list(),
+            cx.processor(|this, index: usize, _, cx| this.render_conversation_row(index, cx)),
+        )
+        .flex_1()
+        .min_w_0()
+        // A list pads only its top and bottom; each row pads its own sides.
+        .py_4();
+        self.conversation_scroll_area(list, cx).into_any_element()
+    }
+
+    fn render_conversation_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let Some(row) = self.conversation.get(index) else {
+            return div().into_any_element();
+        };
+        let look = &self.look;
+        let content = match &row.piece {
+            Piece::Summary(summary) => self.render_summary(summary),
+            Piece::Notice(text) => look.muted(text.clone()),
+            Piece::Failure(text) => div()
+                .text_size(look.small())
+                .text_color(rgb(look.hue(RED)))
+                .child(text.clone()),
+            Piece::Commented(comment) => div()
+                .px_3()
+                .py(px(6.))
+                .bg(rgb(look.theme.surface))
+                .child(self.header(comment, "commented", None)),
+            Piece::Reviewed {
+                lead,
+                verdict,
+                threads,
+            } => {
+                let action = if *threads == 0 {
+                    "reviewed".to_owned()
+                } else {
+                    format!(
+                        "reviewed \u{00b7} {}",
+                        plural(*threads, "comment", "comments")
+                    )
+                };
+                div().pt(px(6.)).child(self.header(lead, &action, *verdict))
+            }
+            Piece::Folded { thread, key } => self.render_folded(thread, key.clone(), cx),
+            Piece::Thread(thread) => self.render_thread_bar(thread),
+            Piece::Body { lines, line } => div()
+                .px_3()
+                .pt(px(if *line == 0 { 12. } else { 2. }))
+                .when(*line + 1 == lines.len(), |el| el.pb_3())
+                .min_w_0()
+                .child(release_notes::line(
+                    "orchestrator-comment-body",
+                    *line,
+                    &lines[*line],
+                    &look.theme,
+                    &look.mono,
+                )),
+            Piece::Empty => div().p_3().child(look.muted("No description provided.")),
+            Piece::Composer => self.render_composer(cx),
+        };
+        let content = self
+            .frame(content.flex_1().min_w_0(), row.card)
+            .debug_selector(move || format!("orchestrator-conversation-card-{index}"));
+        let author = match &row.piece {
+            Piece::Commented(comment) | Piece::Reviewed { lead: comment, .. } => Some(comment),
+            _ => None,
+        };
+        let gutter = match (row.gutter, author) {
+            (Gutter::Wide, _) => None,
+            // The avatar hangs below a row shorter than it, over the blank
+            // gutter of the rows under it, so the card's bar keeps its height.
+            (Gutter::Avatar, Some(comment)) => Some(
+                div().flex_none().w(px(AVATAR)).relative().child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .child(self.avatar(&comment.author, comment.avatar.as_deref())),
+                ),
+            ),
+            _ => Some(div().flex_none().w(px(AVATAR))),
+        };
+        div()
+            .id(("orchestrator-conversation-row", index))
+            .debug_selector(move || format!("orchestrator-conversation-row-{index}"))
+            .flex()
+            .w_full()
+            .px_4()
+            .gap_3()
+            .pt(px(row.gap))
+            .children(gutter)
+            .child(content)
+            .into_any_element()
+    }
+
+    /// The share of its card's border a row draws.
+    fn frame(&self, content: Div, card: Option<Card>) -> Div {
+        let Some(card) = card else {
+            return content;
+        };
+        let theme = &self.look.theme;
+        let border = card.tint.map_or(theme.active, |hue| {
+            mix(theme.active, self.look.hue(hue), 45)
+        });
+        content
+            .border_l_1()
+            .border_r_1()
+            .border_color(rgb(border))
+            .when(card.top, |el| {
+                el.border_t_1().rounded_t(px(corners::CONTROL))
+            })
+            .when(card.bottom, |el| {
+                el.border_b_1().rounded_b(px(corners::CONTROL))
+            })
     }
 
     fn render_summary(&self, summary: &Summary) -> Div {
@@ -330,138 +399,27 @@ impl OrchestratorView {
             )))
     }
 
-    fn render_comment(
-        &self,
-        index: usize,
-        comment: &Comment,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> AnyElement {
+    fn render_folded(&self, thread: &Comment, key: String, cx: &mut Context<Self>) -> Div {
         let look = &self.look;
         let theme = &look.theme;
-        div()
-            .id(("orchestrator-comment", index))
-            .flex()
-            .gap_3()
-            .child(self.avatar(&comment.author, comment.avatar.as_deref()))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .rounded(px(corners::CONTROL))
-                    .border_1()
-                    .border_color(rgb(theme.active))
-                    .overflow_hidden()
-                    .child(
-                        div()
-                            .px_3()
-                            .py(px(6.))
-                            .bg(rgb(theme.surface))
-                            .child(self.header(comment, "commented", None, now)),
-                    )
-                    .child(self.body(comment)),
-            )
-            .into_any_element()
-    }
-
-    fn render_review(
-        &self,
-        index: usize,
-        author: &str,
-        review: Option<&Comment>,
-        threads: &[&Comment],
-        now: chrono::DateTime<chrono::Utc>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let look = &self.look;
-        let theme = &look.theme;
-        let lead = review.or(threads.first().copied());
-        let verdict = review.and_then(|review| match review.kind {
-            CommentKind::Review(Review::Approved) => Some(("approved", GREEN)),
-            CommentKind::Review(Review::ChangesRequested) => Some(("changes requested", RED)),
-            CommentKind::Review(Review::Dismissed) => Some(("dismissed", MAGENTA)),
-            _ => None,
-        });
-        let action = if threads.is_empty() {
-            "reviewed".to_owned()
-        } else {
-            format!(
-                "reviewed \u{00b7} {}",
-                plural(threads.len(), "comment", "comments")
-            )
+        let CommentKind::Thread { path, replies, .. } = &thread.kind else {
+            return div();
         };
-        let header = match lead {
-            Some(lead) => self.header(lead, &action, verdict, now),
-            None => div().child(author.to_owned()),
-        };
-        let body = review.filter(|review| !review.source.trim().is_empty());
-        let tint = verdict.map_or(theme.active, |(_, hue)| {
-            mix(theme.active, look.hue(hue), 45)
-        });
-        div()
-            .id(("orchestrator-review", index))
-            .flex()
-            .gap_3()
-            .child(self.avatar(author, lead.and_then(|lead| lead.avatar.as_deref())))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(div().pt(px(6.)).child(header))
-                    .when_some(body, |el, review| {
-                        el.child(
-                            div()
-                                .rounded(px(corners::CONTROL))
-                                .border_1()
-                                .border_color(rgb(tint))
-                                .child(self.body(review)),
-                        )
-                    })
-                    .children(
-                        threads.iter().enumerate().map(|(thread, comment)| {
-                            self.render_thread(index, thread, comment, cx)
-                        }),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn render_thread(
-        &self,
-        review: usize,
-        index: usize,
-        comment: &Comment,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let look = &self.look;
-        let theme = &look.theme;
-        let CommentKind::Thread {
-            path,
-            resolved,
-            replies,
-        } = &comment.kind
-        else {
-            return div().into_any_element();
-        };
-        let key = thread_key(comment);
-        let id = SharedString::from(format!("orchestrator-thread-{review}-{index}"));
-        if *resolved && !self.shown_threads.contains(&key) {
-            let mut detail = String::new();
-            if *replies > 0 {
-                detail = format!(
-                    "{} \u{00b7} ",
-                    plural(
-                        usize::try_from(*replies).unwrap_or(usize::MAX),
-                        "reply",
-                        "replies"
-                    )
-                );
-            }
-            detail.push_str("Show");
-            return div()
-                .id(id)
+        let mut detail = String::new();
+        if *replies > 0 {
+            detail = format!(
+                "{} \u{00b7} ",
+                plural(
+                    usize::try_from(*replies).unwrap_or(usize::MAX),
+                    "reply",
+                    "replies"
+                )
+            );
+        }
+        detail.push_str("Show");
+        div().child(
+            div()
+                .id("orchestrator-thread-folded")
                 .flex()
                 .items_center()
                 .gap_2()
@@ -477,46 +435,44 @@ impl OrchestratorView {
                 .child(div().flex_1())
                 .child(look.muted(detail))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.shown_threads.len() >= SHOWN_LIMIT {
-                        this.shown_threads.clear();
-                    }
-                    this.shown_threads.insert(key.clone());
+                    this.conversation.show(key.clone());
                     cx.notify();
-                }))
-                .into_any_element();
-        }
+                })),
+        )
+    }
+
+    fn render_thread_bar(&self, thread: &Comment) -> Div {
+        let look = &self.look;
+        let CommentKind::Thread {
+            path,
+            resolved,
+            replies,
+        } = &thread.kind
+        else {
+            return div();
+        };
         let (state, hue) = if *resolved {
             ("resolved", GREEN)
         } else {
             ("open", YELLOW)
         };
         div()
-            .id(id)
-            .rounded(px(corners::CONTROL))
-            .border_1()
-            .border_color(rgb(theme.active))
-            .overflow_hidden()
-            .child(
-                div()
-                    .px_3()
-                    .py_1()
-                    .bg(rgb(theme.surface))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(self.path(path))
-                    .child(div().flex_1())
-                    .when(*replies > 0, |el| {
-                        el.child(look.muted(plural(
-                            usize::try_from(*replies).unwrap_or(usize::MAX),
-                            "reply",
-                            "replies",
-                        )))
-                    })
-                    .child(look.badge(state, hue)),
-            )
-            .child(self.body(comment))
-            .into_any_element()
+            .px_3()
+            .py_1()
+            .bg(rgb(look.theme.surface))
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(self.path(path))
+            .child(div().flex_1())
+            .when(*replies > 0, |el| {
+                el.child(look.muted(plural(
+                    usize::try_from(*replies).unwrap_or(usize::MAX),
+                    "reply",
+                    "replies",
+                )))
+            })
+            .child(look.badge(state, hue))
     }
 
     fn render_composer(&self, cx: &mut Context<Self>) -> Div {
@@ -553,7 +509,6 @@ impl OrchestratorView {
         comment: &Comment,
         action: &str,
         verdict: Option<(&'static str, usize)>,
-        now: chrono::DateTime<chrono::Utc>,
     ) -> Div {
         let look = &self.look;
         div()
@@ -584,24 +539,10 @@ impl OrchestratorView {
             .when_some(verdict, |el, (text, hue)| el.child(look.badge(text, hue)))
             .child(div().flex_1())
             .child(
-                look.muted(ago(&comment.created_at, now))
+                look.muted(ago(&comment.created_at, chrono::Utc::now()))
                     .flex_none()
                     .text_size(look.small()),
             )
-    }
-
-    fn body(&self, comment: &Comment) -> Div {
-        let look = &self.look;
-        if comment.source.trim().is_empty() {
-            return div().p_3().child(look.muted("No description provided."));
-        }
-        let lines = self.bodies.lines(&comment.source);
-        div().p_3().min_w_0().child(release_notes::render(
-            "orchestrator-comment-body",
-            &lines,
-            &look.theme,
-            &look.mono,
-        ))
     }
 
     fn path(&self, path: &str) -> Div {

@@ -157,6 +157,12 @@ pub(crate) fn menus(layout: Layout) -> Vec<Menu> {
                         command: Command::CloseTab,
                     },
                 ),
+                MenuItem::action(
+                    "Reopen Closed Tab",
+                    RunCommand {
+                        command: Command::ReopenClosedTab,
+                    },
+                ),
             ],
         },
         // OS actions also route these items to native text fields, such as

@@ -17,35 +17,10 @@ use gpui::{prelude::*, *};
 const GLOBE: &str = "icons/globe.svg";
 
 impl HerdrWindow {
-    /// A page, filling the space it is given. It also records where the
-    /// page draws, so a menu hides only the pages it covers; and, while one
-    /// does, it shows the page's picture in its place.
-    pub(in crate::browser) fn page_area(&self, id: TabId, page: impl IntoElement) -> Div {
-        let area = div().flex_1().min_h_0().relative().child(page);
-        #[cfg(any(target_os = "macos", windows))]
-        let area = {
-            let (picture, bounds) = (self.frozen_picture(id), self.browser.page_bounds.clone());
-            area.child(
-                canvas(
-                    move |area, _, _| {
-                        bounds.borrow_mut().insert(id, area);
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .inset_0(),
-            )
-            .children(picture.map(|picture| {
-                img(picture)
-                    .debug_selector(|| "page-picture".into())
-                    .absolute()
-                    .inset_0()
-                    .size_full()
-            }))
-        };
-        #[cfg(not(any(target_os = "macos", windows)))]
-        let _ = id;
-        area
+    /// A page, filling the space it is given. The page records where it
+    /// draws as it lays out.
+    pub(in crate::browser) fn page_area(&self, page: impl IntoElement) -> Div {
+        div().flex_1().min_h_0().child(page)
     }
 
     /// The workspace's browser tabs, after its Herdr tabs in a group's strip.
@@ -257,9 +232,9 @@ impl HerdrWindow {
         #[cfg(not(any(target_os = "macos", windows)))]
         let (annotate_button, panel): (Option<Stateful<Div>>, Option<AnyElement>) = (None, None);
         #[cfg(any(target_os = "macos", windows))]
-        let page = self.browser.pages.view(id);
+        let page = self.browser.pages.element(id);
         #[cfg(not(any(target_os = "macos", windows)))]
-        let page: Option<AnyView> = None;
+        let page: Option<AnyElement> = None;
         let failure = self.browser.failed.get(&id).cloned();
         let placeholder: SharedString = match (&failure, loaded) {
             (Some(message), _) => format!("Could not show this page: {message}").into(),
@@ -286,11 +261,11 @@ impl HerdrWindow {
                 "icons/arrow-left.svg",
                 loaded,
                 cx,
-                move |this, _, cx| {
+                move |this, _, _| {
                     #[cfg(any(target_os = "macos", windows))]
-                    this.browser.pages.back(id, cx);
+                    this.browser.pages.back(id);
                     #[cfg(not(any(target_os = "macos", windows)))]
-                    let _ = (this, cx);
+                    let _ = this;
                 },
             ))
             .child(self.toolbar_button(
@@ -299,11 +274,11 @@ impl HerdrWindow {
                 "icons/arrow-right.svg",
                 loaded,
                 cx,
-                move |this, _, cx| {
+                move |this, _, _| {
                     #[cfg(any(target_os = "macos", windows))]
-                    this.browser.pages.forward(id, cx);
+                    this.browser.pages.forward(id);
                     #[cfg(not(any(target_os = "macos", windows)))]
-                    let _ = (this, cx);
+                    let _ = this;
                 },
             ))
             .child(self.toolbar_button(
@@ -312,11 +287,11 @@ impl HerdrWindow {
                 "icons/refresh.svg",
                 loaded,
                 cx,
-                move |this, _, cx| {
+                move |this, _, _| {
                     #[cfg(any(target_os = "macos", windows))]
-                    this.browser.pages.reload(id, cx);
+                    this.browser.pages.reload(id);
                     #[cfg(not(any(target_os = "macos", windows)))]
-                    let _ = (this, cx);
+                    let _ = this;
                 },
             ))
             .child(
@@ -367,7 +342,7 @@ impl HerdrWindow {
                 },
             ));
         let content = match (page, &failure) {
-            (Some(page), None) => self.page_area(id, page).into_any_element(),
+            (Some(page), None) => self.page_area(page).into_any_element(),
             // The VS Code tab says why its page is not there yet.
             _ if tab.place.is_code() => self.render_code_status(failure.clone(), cx),
             _ => div()
@@ -392,7 +367,7 @@ impl HerdrWindow {
                 )
                 .into_any_element(),
         };
-        div()
+        let browser = div()
             .id(SharedString::from(slot.selector("browser")))
             .debug_selector(move || slot.selector("browser"))
             .flex()
@@ -400,7 +375,6 @@ impl HerdrWindow {
             .flex_1()
             .min_h_0()
             .min_w_0()
-            .bg(rgb(self.theme.background))
             // Keeps window shortcuts reachable while the page does not hold
             // the keyboard; nothing here types into a terminal. A focus
             // handle belongs to one element, so a drawn terminal keeps it.
@@ -415,8 +389,8 @@ impl HerdrWindow {
                     .min_h_0()
                     .child(div().flex().flex_col().flex_1().min_w_0().child(content))
                     .children(panel.filter(|_| !code)),
-            )
-            .into_any_element()
+            );
+        self.with_ground(browser, rgb(self.theme.background))
     }
 
     /// The workspace's listening ports under a blank tab's prompt, each
@@ -518,8 +492,8 @@ impl HerdrWindow {
         Store::update(cx, |store| store.visited(id, Some(location.clone()), None));
         #[cfg(any(target_os = "macos", windows))]
         if self.browser.pages.contains(id) {
-            self.browser.pages.load(id, &location, cx);
-            self.browser.pages.focus(id, cx);
+            self.browser.pages.load(id, &location);
+            self.browser.pages.focus(id);
         }
         self.show_browser_tab_in(Some(group), id, window, cx);
     }

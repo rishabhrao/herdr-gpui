@@ -261,43 +261,52 @@ fn valid_url(url: &str) -> Option<&str> {
 
 /// Draws prepared lines. Each link opens in the browser only when clicked.
 pub(crate) fn render(id: &'static str, lines: &[Line], theme: &Theme, mono: &FontConfig) -> Div {
+    div().flex().flex_col().gap(px(2.)).min_w_0().children(
+        lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| self::line(id, index, line, theme, mono)),
+    )
+}
+
+/// Draws one prepared line, for views that place each line themselves.
+pub(crate) fn line(
+    id: &'static str,
+    index: usize,
+    line: &Line,
+    theme: &Theme,
+    mono: &FontConfig,
+) -> Div {
     let accent = theme.ink(theme.palette[4]);
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(2.))
-        .min_w_0()
-        .children(lines.iter().enumerate().map(|(index, line)| {
-            let row = div()
-                .debug_selector(move || format!("{id}-line-{index}"))
-                .min_w_0();
-            match line.kind {
-                Kind::Blank => row.h(px(6.)),
-                Kind::Heading => row
-                    .pt(px(4.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(theme.primary()))
-                    .child(line.text.clone()),
-                Kind::Code => row
-                    .px(px(8.))
-                    .bg(rgb(theme.active))
-                    .text_font(mono)
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .child(line.text.clone()),
-                Kind::Bullet => row
-                    .flex()
-                    .gap(px(6.))
-                    .child(div().flex_none().text_color(rgb(accent)).child("•"))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(rich(id, index, line, theme, accent)),
-                    ),
-                Kind::Paragraph => row.child(rich(id, index, line, theme, accent)),
-            }
-        }))
+    let row = div()
+        .debug_selector(move || format!("{id}-line-{index}"))
+        .min_w_0();
+    match line.kind {
+        Kind::Blank => row.h(px(6.)),
+        Kind::Heading => row
+            .pt(px(4.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(theme.primary()))
+            .child(line.text.clone()),
+        Kind::Code => row
+            .px(px(8.))
+            .bg(rgb(theme.active))
+            .text_font(mono)
+            .whitespace_nowrap()
+            .overflow_hidden()
+            .child(line.text.clone()),
+        Kind::Bullet => row
+            .flex()
+            .gap(px(6.))
+            .child(div().flex_none().text_color(rgb(accent)).child("•"))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(rich(id, index, line, theme, accent)),
+            ),
+        Kind::Paragraph => row.child(rich(id, index, line, theme, accent)),
+    }
 }
 
 fn rich(id: &'static str, index: usize, line: &Line, theme: &Theme, accent: u32) -> AnyElement {

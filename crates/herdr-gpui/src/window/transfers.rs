@@ -343,7 +343,7 @@ impl HerdrWindow {
                             this.poll_file_transfer(cx);
                         })),
                 )
-                .child(self.overlay_probe())
+                .children(self.overlay_probe())
                 .into_any_element(),
         )
     }

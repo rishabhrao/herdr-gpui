@@ -1,6 +1,6 @@
-//! The file-transfer card shows over the groups, so the native pages it
-//! reaches step aside while it shows, keeping its progress and its Cancel
-//! visible and clickable.
+//! The file-transfer card shows over the groups. On Windows native pages
+//! draw above it, so the pages it reaches hide while it shows, keeping its
+//! progress and its Cancel visible and clickable.
 use super::*;
 
 #[gpui::test]

@@ -103,6 +103,8 @@ fn resize_reasks_when_the_daemon_frame_is_a_different_size(cx: &mut gpui::TestAp
             graphics: Default::default(),
         }));
         let start = std::time::Instant::now();
+        // The window is in use, so it keeps the tab at its own size.
+        view.last_input = Some(start);
         view.resize_at(start + super::lifecycle::RESIZE_SETTLE);
         assert!(
             view.local_error.is_none(),

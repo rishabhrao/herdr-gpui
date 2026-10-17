@@ -248,9 +248,24 @@ impl HerdrWindow {
             Ok((method, params)) => {
                 let stop_asking = close.do_not_ask_again;
                 let tab = close.pane.is_none().then(|| close.tab.clone());
-                self.request_focus_change(method.as_str(), None, |handle, boot| {
+                // Closing a tab, or the last pane of one, closes the tab.
+                let closing_tab = self.live.snapshot.as_ref().and_then(|snapshot| {
+                    let last_pane = snapshot
+                        .panes
+                        .iter()
+                        .filter(|p| p.tab_id == close.tab && p.workspace_id == close.workspace)
+                        .count()
+                        <= 1;
+                    (close.pane.is_none() || last_pane)
+                        .then(|| crate::browser::ClosedHerdrTab::capture(snapshot, &close.tab))
+                        .flatten()
+                });
+                let sent = self.request_focus_change(method.as_str(), None, |handle, boot| {
                     handle.request(boot, method, params)
                 });
+                if sent && let Some(closed) = closing_tab {
+                    self.record_closed_herdr_tab(closed, cx);
+                }
                 if let Some(tab) = tab {
                     self.close_sent(&tab);
                 }

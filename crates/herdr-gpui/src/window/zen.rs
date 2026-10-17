@@ -318,15 +318,16 @@ impl HerdrWindow {
             }
             ZenWidth::Percent(share) => column.w(relative(f32::from(share) / 100.)),
         };
-        div()
-            .flex()
-            .flex_1()
-            .min_h_0()
-            .min_w_0()
-            .justify_center()
-            .bg(self.fill().ground())
-            .child(column)
-            .into_any_element()
+        self.with_ground(
+            div()
+                .flex()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .justify_center()
+                .child(column),
+            self.fill().ground(),
+        )
     }
 }
 

@@ -101,7 +101,7 @@ impl HerdrWindow {
                             .collect()
                     })
                     .unwrap_or_default();
-                self.reload_browser_tabs(&tabs, cx);
+                self.reload_browser_tabs(&tabs);
                 return;
             }
             Action::Open { address, focus } => (address, focus),

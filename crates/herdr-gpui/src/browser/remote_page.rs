@@ -7,10 +7,7 @@ use super::{
     Location, Tab, TabId,
     native::{Event, Source},
 };
-use gpui::{
-    AnyView, App, AppContext as _, Bounds, Context, Entity, IntoElement, Pixels, Render,
-    Styled as _, Window, canvas,
-};
+use gpui::{AnyElement, Bounds, IntoElement, Pixels, Styled as _, Window, canvas};
 use herdr_web::{
     host::{PageFiles, PageHandle, Pages as ServedPages},
     wire::{PageEvent, PageOp},
@@ -74,17 +71,6 @@ impl Placement {
     }
 }
 
-pub(crate) struct RemotePage {
-    placement: Rc<Placement>,
-}
-
-impl Render for RemotePage {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let placement = self.placement.clone();
-        canvas(move |bounds, _, _| placement.place(bounds), |_, _, _, _| {}).size_full()
-    }
-}
-
 /// A served page's address: local files come from the server under the
 /// page's own secret path.
 fn served_url(location: &Location, handle: &PageHandle) -> String {
@@ -130,7 +116,7 @@ fn files(root: std::path::PathBuf, theme: Arc<Mutex<String>>) -> PageFiles {
 /// One window's served pages.
 #[derive(Default)]
 pub(crate) struct Remote {
-    pages: HashMap<TabId, (Entity<RemotePage>, Rc<Placement>)>,
+    pages: HashMap<TabId, Rc<Placement>>,
     theme: Arc<Mutex<String>>,
 }
 
@@ -143,8 +129,15 @@ impl Remote {
         self.pages.keys().copied()
     }
 
-    pub(crate) fn view(&self, id: TabId) -> Option<AnyView> {
-        self.pages.get(&id).map(|(page, _)| page.clone().into())
+    /// What lays tab `id`'s page out: an empty element that places the
+    /// page in the browser wherever it is drawn.
+    pub(crate) fn view(&self, id: TabId) -> Option<AnyElement> {
+        let placement = self.pages.get(&id)?.clone();
+        Some(
+            canvas(move |bounds, _, _| placement.place(bounds), |_, _, _, _| {})
+                .size_full()
+                .into_any_element(),
+        )
     }
 
     pub(crate) fn set_theme(&self, css: &str) {
@@ -158,7 +151,6 @@ impl Remote {
         location: &Location,
         sender: &SyncSender<Event<Source>>,
         window: &Window,
-        cx: &mut App,
     ) -> crate::Result<()> {
         let Some(served) = ServedPages::get() else {
             return Ok(());
@@ -199,15 +191,12 @@ impl Remote {
             shown: Cell::new(false),
             placed: Cell::new(None),
         });
-        let page = cx.new(|_| RemotePage {
-            placement: placement.clone(),
-        });
-        self.pages.insert(id, (page, placement));
+        self.pages.insert(id, placement);
         Ok(())
     }
 
     pub(crate) fn show(&self, id: TabId, shown: bool) {
-        if let Some((_, placement)) = self.pages.get(&id) {
+        if let Some(placement) = self.pages.get(&id) {
             placement.set_shown(shown);
         }
     }
@@ -218,7 +207,7 @@ impl Remote {
     }
 
     pub(crate) fn load(&self, id: TabId, location: &Location) {
-        if let Some((_, placement)) = self.pages.get(&id) {
+        if let Some(placement) = self.pages.get(&id) {
             let handle = &placement.handle;
             handle.send(PageOp::Load {
                 page: handle.id(),
@@ -229,7 +218,7 @@ impl Remote {
 
     /// Sends one of `op`'s operations to tab `id`'s page.
     pub(crate) fn send(&self, id: TabId, op: impl FnOnce(u64) -> PageOp) {
-        if let Some((_, placement)) = self.pages.get(&id) {
+        if let Some(placement) = self.pages.get(&id) {
             placement.handle.send(op(placement.handle.id()));
         }
     }

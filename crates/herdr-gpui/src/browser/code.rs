@@ -210,7 +210,7 @@ impl HerdrWindow {
                     url: with_token(page, &url),
                 });
             }
-            if let Err(error) = self.browser.pages.ensure(&tab, window, cx) {
+            if let Err(error) = self.browser.pages.ensure(&tab, window) {
                 tracing::warn!(%error, "Cannot create the VS Code page");
                 self.browser.failed.insert(id, error.to_string().into());
             }

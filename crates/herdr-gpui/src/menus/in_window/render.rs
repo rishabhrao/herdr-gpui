@@ -338,7 +338,6 @@ impl HerdrWindow {
                     })),
             );
         }
-        let cover = self.menu.cover.clone();
         let panel = div()
             .id("application-menu-panel")
             .debug_selector(|| "application-menu-panel".into())
@@ -377,8 +376,14 @@ impl HerdrWindow {
                         })),
                 )
             })
-            .child(rows)
-            .child(
+            .child(rows);
+        // On Windows pages sit above everything GPUI draws, so the menu says
+        // what its panel covers. Tests and native checks read it to find the
+        // menu.
+        #[cfg(any(windows, test, feature = "integration-test"))]
+        let panel = {
+            let cover = self.menu.cover.clone();
+            panel.child(
                 canvas(
                     move |bounds, _, _| {
                         cover.set(crate::menu::Cover::Panel(bounds.dilate(px(8.))));
@@ -387,7 +392,8 @@ impl HerdrWindow {
                 )
                 .absolute()
                 .inset_0(),
-            );
+            )
+        };
         // Repeat the bar above the occluding layer, so switching headings never
         // clicks through the dismissal layer into unrelated window controls.
         // The overlay fills the same content root as the underlying bar. Lay out

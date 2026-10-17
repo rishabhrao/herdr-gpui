@@ -1,12 +1,18 @@
-//! The desktop blur behind a translucent window on macOS, asked of the
-//! window server directly.
+//! The main window's surface on macOS.
+//!
+//! GPUI draws transparent wherever nothing paints, whatever the appearance,
+//! so that pages beneath its view show where the window leaves them
+//! unpainted (`browser::stacking`). GPUI does that only in its `Transparent`
+//! appearance, which also makes the native window transparent. So for an
+//! opaque appearance the window is made opaque again, filled with the
+//! theme's background wherever nothing covers it.
 //!
 //! GPUI's `Blurred` appearance puts an `NSVisualEffectView` behind its
 //! surface and strips that view's layers of their tint and saturation. On
 //! macOS 26 and later that leaves the desktop unblurred: the window looks
 //! the same as `Transparent`. The window server's own per-window blur, which
-//! WezTerm, Ghostty, and kitty use, still works, so the window asks GPUI for
-//! `Transparent` and sets the blur itself.
+//! WezTerm, Ghostty, and kitty use, still works, so the window sets the blur
+//! itself.
 //!
 //! The window server's call has no public or safe binding, and reaching the
 //! `NSWindow` behind GPUI's handle means dereferencing the raw view pointer,
@@ -14,6 +20,8 @@
 #![allow(unsafe_code)]
 
 use gpui::{Window, WindowBackgroundAppearance};
+use objc2::rc::Retained;
+use objc2_app_kit::{NSColor, NSWindow};
 use std::ffi::c_int;
 use wry::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -29,27 +37,43 @@ unsafe extern "C" {
     fn CGSSetWindowBackgroundBlurRadius(connection: c_int, window: isize, radius: c_int) -> c_int;
 }
 
-/// Moves `window` from the appearance `was` to `appearance`, blurring
-/// through the window server rather than GPUI.
-pub(super) fn apply(
-    window: &mut Window,
-    was: WindowBackgroundAppearance,
-    appearance: WindowBackgroundAppearance,
-) {
-    let blurred = appearance == WindowBackgroundAppearance::Blurred;
-    window.set_background_appearance(if blurred {
-        WindowBackgroundAppearance::Transparent
-    } else {
-        appearance
-    });
-    if blurred || was == WindowBackgroundAppearance::Blurred {
-        set(window, blurred);
+/// What the window was last given: an appearance, and the theme's
+/// background, which an opaque window fills with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Surface {
+    pub(super) appearance: WindowBackgroundAppearance,
+    pub(super) ground: u32,
+}
+
+/// Moves `window` from the surface `was`, if it had one yet, to `surface`.
+pub(super) fn apply(window: &mut Window, was: Option<Surface>, surface: Surface) {
+    use WindowBackgroundAppearance::{Blurred, Opaque, Transparent};
+    window.set_background_appearance(Transparent);
+    let blurred = surface.appearance == Blurred;
+    if blurred || was.is_some_and(|was| was.appearance == Blurred) {
+        blur(window, blurred);
+    }
+    if surface.appearance == Opaque {
+        fill(window, surface.ground);
     }
 }
 
+/// Makes `window` opaque to the window server, filled with `ground` where
+/// nothing covers it.
+fn fill(window: &Window, ground: u32) {
+    let Some(native) = native_window(window) else {
+        tracing::warn!("Could not find the native window to make opaque");
+        return;
+    };
+    let channel = |shift: u32| f64::from((ground >> shift) & 0xff) / 255.;
+    let color = NSColor::colorWithSRGBRed_green_blue_alpha(channel(16), channel(8), channel(0), 1.);
+    native.setOpaque(true);
+    native.setBackgroundColor(Some(&color));
+}
+
 /// Blurs the desktop behind `window`, or stops blurring it.
-fn set(window: &Window, blur: bool) {
-    let Some(number) = window_number(window) else {
+fn blur(window: &Window, blur: bool) {
+    let Some(number) = native_window(window).map(|native| native.windowNumber()) else {
         tracing::warn!("Could not find the native window to blur behind");
         return;
     };
@@ -68,8 +92,8 @@ fn set(window: &Window, blur: bool) {
     }
 }
 
-/// The window server's number for `window`.
-fn window_number(window: &Window) -> Option<isize> {
+/// The `NSWindow` behind `window`.
+fn native_window(window: &Window) -> Option<Retained<NSWindow>> {
     // Window has an inherent `window_handle` of its own.
     let handle = HasWindowHandle::window_handle(window).ok()?;
     let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
@@ -81,5 +105,5 @@ fn window_number(window: &Window) -> Option<isize> {
     // `NSView` for as long as that borrow, and the check above holds us to
     // the main thread.
     let view = unsafe { handle.ns_view.cast::<objc2_app_kit::NSView>().as_ref() };
-    Some(view.window()?.windowNumber())
+    view.window()
 }

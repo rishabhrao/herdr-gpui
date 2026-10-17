@@ -461,7 +461,7 @@ impl HerdrWindow {
                         |d| d.right(px(12.)),
                     )
                     .children(cards)
-                    .child(self.overlay_probe())
+                    .children(self.overlay_probe())
                     .into_any_element(),
             )
         })
@@ -472,8 +472,8 @@ impl HerdrWindow {
 impl HerdrWindow {
     /// Whether toasts or the file-transfer card show now, as their renders
     /// decide: nothing shows over an open menu or in a window too small.
-    /// Only builds that show pages step them aside for these.
-    #[cfg(any(target_os = "macos", windows))]
+    /// Only Windows hides pages under these.
+    #[cfg(windows)]
     pub(crate) fn overlays_shown(&self) -> bool {
         if self.menu.page.is_some() {
             return false;

@@ -232,24 +232,19 @@ impl HerdrWindow {
     }
 
     /// Loads `location` in tab `id`'s page, if this window has made it.
-    pub(crate) fn load_requested_page(
-        &self,
-        id: TabId,
-        location: &crate::browser::Location,
-        cx: &mut App,
-    ) {
-        self.browser.pages.load(id, location, cx);
+    pub(crate) fn load_requested_page(&self, id: TabId, location: &crate::browser::Location) {
+        self.browser.pages.load(id, location);
     }
 
     /// Goes back, or forward, in tab `id`'s page. Whether the window has it.
-    pub(crate) fn page_history(&self, id: TabId, forward: bool, cx: &App) -> bool {
+    pub(crate) fn page_history(&self, id: TabId, forward: bool) -> bool {
         if !self.has_page(id) {
             return false;
         }
         if forward {
-            self.browser.pages.forward(id, cx);
+            self.browser.pages.forward(id);
         } else {
-            self.browser.pages.back(id, cx);
+            self.browser.pages.back(id);
         }
         true
     }
@@ -260,13 +255,11 @@ impl HerdrWindow {
         &self,
         id: TabId,
         done: impl Fn(String) + Send + 'static,
-        cx: &App,
     ) -> crate::Result<bool> {
         let Some(page) = self.browser.pages.page(id) else {
             return Ok(false);
         };
-        page.read(cx)
-            .raw()
+        page.raw()
             .evaluate_script_with_callback(PAGE_TEXT_SCRIPT, done)?;
         Ok(true)
     }
@@ -281,7 +274,6 @@ impl HerdrWindow {
         &self,
         id: TabId,
         done: impl FnOnce(Option<Vec<u8>>) + 'static,
-        cx: &App,
     ) -> bool {
         let Some(page) = self.browser.pages.page(id) else {
             return false;
@@ -289,7 +281,7 @@ impl HerdrWindow {
         if !self.browser.pages.is_shown(id) {
             return false;
         }
-        let Some(bounds) = self.browser.page_bounds.borrow().get(&id).copied() else {
+        let Some(bounds) = self.browser.pages.drawn_at(id) else {
             return false;
         };
         let rect = crate::browser::annotate::Rect {
@@ -298,7 +290,7 @@ impl HerdrWindow {
             width: f64::from(f32::from(bounds.size.width)),
             height: f64::from(f32::from(bounds.size.height)),
         };
-        crate::browser::snapshot::capture(page.read(cx).raw(), rect, done);
+        crate::browser::snapshot::capture(page.raw(), rect, done);
         true
     }
 }
