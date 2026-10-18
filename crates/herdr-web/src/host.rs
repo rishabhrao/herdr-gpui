@@ -5,6 +5,14 @@
 //! never touch GPUI. Readers queue what the page sends on a bounded channel
 //! that a foreground task drains in order; the windows send frames through
 //! the [`hub::Hub`], whose bounded queue a writer drains to the socket.
+/// Writes one line of the server's log to standard error, after the time
+/// of day in UTC, so a run of disconnects can be told apart from one.
+macro_rules! note {
+    ($($arg:tt)*) => {
+        eprintln!("{} {}", crate::host::clock(), format_args!($($arg)*))
+    };
+}
+
 mod access;
 mod assets;
 mod atlas;
@@ -168,3 +176,17 @@ impl Approvals {
 
 #[cfg(test)]
 mod tests;
+
+/// The time of day in UTC, as `HH:MM:SSZ`.
+pub(crate) fn clock() -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
+        % 86_400;
+    format!(
+        "{:02}:{:02}:{:02}Z",
+        seconds / 3_600,
+        seconds / 60 % 60,
+        seconds % 60
+    )
+}

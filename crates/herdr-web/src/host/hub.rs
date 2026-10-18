@@ -324,7 +324,7 @@ impl Hub {
         match link.sender.try_send(outbound) {
             Ok(()) => true,
             Err(TrySendError::Full(_)) => {
-                eprintln!(
+                note!(
                     "{} did not read fast enough; dropped its connection.",
                     link.visitor.label
                 );

@@ -16,7 +16,10 @@ use web_sys::{BinaryType, HtmlCanvasElement, HtmlElement, MessageEvent, WebSocke
 pub(crate) type Shared = Rc<RefCell<App>>;
 
 /// How long the page waits before trying a lost connection again.
+/// The first wait before trying a lost connection again; each failure
+/// doubles it, up to `RETRY_MAX_MS`.
 const RETRY_MS: i32 = 1000;
+const RETRY_MAX_MS: i32 = 10_000;
 /// The page's UI scale, kept per browser.
 const ZOOM_KEY: &str = "herdr-zoom";
 pub(crate) const MIN_ZOOM: f64 = 0.5;
@@ -67,6 +70,10 @@ pub(crate) struct App {
     connected_once: bool,
     /// The app was updated and this page is too old; it no longer reconnects.
     replaced: bool,
+    /// Connections tried since the last one that opened.
+    attempts: u32,
+    /// A retry is waiting on its timer; coming back to the page runs it now.
+    retry_pending: bool,
     /// CSS pixels per app pixel: below 1 fits more of the app, above 1
     /// makes it larger to touch.
     pub(crate) zoom: f64,
@@ -95,6 +102,8 @@ pub(crate) async fn run() -> Result<(), String> {
         dragging: None,
         connected_once: false,
         replaced: false,
+        attempts: 0,
+        retry_pending: false,
         zoom: saved_zoom(),
         cursor: "default".into(),
         _listeners: Vec::new(),
@@ -157,6 +166,7 @@ fn connect(shared: &Shared) {
             return;
         }
         app.connected_once = true;
+        app.attempts = 0;
         trap_history();
         app.send(&ToHost::Hello { protocol: PROTOCOL });
         let dark = dom::window()
@@ -189,9 +199,10 @@ fn connect(shared: &Shared) {
             }
             if app.connected_once {
                 dom::show_status("Herdr UI stopped serving this page. Reconnecting\u{2026}");
-                // The page checks whether this device was removed, and if so
-                // shows the pairing screen rather than retrying forever.
-                dom::emit("disconnected", &[]);
+                // After a few failures the page checks why: a sign-in that
+                // ended or a device that was removed needs a reload, not
+                // retries forever.
+                dom::emit("disconnected", &[("attempts", &app.attempts.to_string())]);
             }
         }
         retry(&closed);
@@ -255,10 +266,38 @@ fn retry(shared: &Shared) {
     let Some(window) = dom::window() else {
         return;
     };
+    let delay = {
+        let Ok(mut app) = shared.try_borrow_mut() else {
+            return;
+        };
+        app.retry_pending = true;
+        app.attempts = app.attempts.saturating_add(1);
+        let doubled = RETRY_MS.saturating_mul(1 << app.attempts.min(4).saturating_sub(1));
+        doubled.min(RETRY_MAX_MS)
+    };
     let again = shared.clone();
-    let callback = Closure::once_into_js(move || connect(&again));
+    let callback = Closure::once_into_js(move || {
+        if take_retry(&again) {
+            connect(&again);
+        }
+    });
     let _ = window
-        .set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), RETRY_MS);
+        .set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(), delay);
+}
+
+/// Claims the waiting retry, so it runs once, from its timer or early.
+fn take_retry(shared: &Shared) -> bool {
+    shared
+        .try_borrow_mut()
+        .is_ok_and(|mut app| std::mem::take(&mut app.retry_pending))
+}
+
+/// Tries a lost connection now rather than at its timer: the page came back
+/// into view, or the device back online.
+pub(crate) fn reconnect_now(shared: &Shared) {
+    if take_retry(shared) {
+        connect(shared);
+    }
 }
 
 fn receive(shared: &Shared, message: ToBrowser) {

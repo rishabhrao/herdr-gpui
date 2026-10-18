@@ -238,12 +238,7 @@ export function listen() {
         setTimeout(() => deviceAction(note.action), 0);
         break;
       case "disconnected":
-        fetch("/auth/status", { cache: "no-store" })
-          .then((response) => (response.ok ? response.json() : null))
-          .then((status) => {
-            if (status && !status.paired) location.reload();
-          })
-          .catch(() => {});
+        checkReach(Number(note.attempts || 0));
         break;
       case "prompt":
         prompts.push(note);
@@ -461,6 +456,34 @@ function followViewport() {
   viewport.addEventListener("resize", apply);
   viewport.addEventListener("scroll", apply);
   apply();
+}
+
+// Why the connection keeps failing, asked after a few tries. A sign-in to
+// Cloudflare Access that ended sends every request to its login page, which
+// only a reload shows; a device that was removed shows the pairing screen.
+let checking = false;
+
+async function checkReach(attempts) {
+  if (checking || attempts < 2) return;
+  checking = true;
+  try {
+    const response = await fetch("/auth/status", { cache: "no-store", credentials: "same-origin", redirect: "manual" });
+    if (response.type === "opaqueredirect" || response.status === 401 || response.status === 403) {
+      location.reload();
+      return;
+    }
+    const kind = response.headers.get("content-type") || "";
+    if (response.ok && !kind.includes("json")) {
+      location.reload();
+      return;
+    }
+    const status = response.ok ? await response.json() : null;
+    if (status && !status.paired) location.reload();
+  } catch {
+    showStatus("Herdr UI is not reachable. Retrying\u2026");
+  } finally {
+    checking = false;
+  }
 }
 
 // What Settings > Web access asks of this browser.

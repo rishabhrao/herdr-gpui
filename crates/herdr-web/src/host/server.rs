@@ -178,7 +178,7 @@ fn websocket(
         return Ok(Response::text(403, "Forbidden").write(&mut stream)?);
     }
     let Some(device) = routes::device(hub, request, door) else {
-        eprintln!("A browser opened the app socket without a paired device; refused.");
+        note!("A browser opened the app socket without a paired device; refused.");
         return Ok(Response::text(401, "Pair this device first").write(&mut stream)?);
     };
     let Some(key) = request.header("sec-websocket-key") else {
@@ -218,7 +218,7 @@ fn websocket(
         Ok(ToHost::Hello { protocol }) if protocol == PROTOCOL => {}
         // An older page: it is told to reload, and fetches the new one.
         Ok(ToHost::Hello { .. }) | Err(_) => {
-            eprintln!("{} runs an older page; told it to reload.", device.label);
+            note!("{} runs an older page; told it to reload.", device.label);
             reply(&ToBrowser::Hello { protocol: PROTOCOL })?;
             close_politely(&stream);
             return Ok(());
@@ -238,14 +238,14 @@ fn websocket(
     };
     let (sender, outbound) = mpsc::sync_channel::<Outbound>(OUTBOUND);
     let Some(link) = hub.attach(sender, visitor.clone()) else {
-        eprintln!("{} was refused: too many pages are open.", visitor.label);
+        note!("{} was refused: too many pages are open.", visitor.label);
         reply(&ToBrowser::Toast {
             text: "Too many pages show Herdr UI. Close one and reload this page.".into(),
         })?;
         close_politely(&stream);
         return Ok(());
     };
-    eprintln!("{} connected.", visitor.label);
+    note!("{} connected.", visitor.label);
     let label = visitor.label.clone();
     let socket = writer.clone();
     thread::Builder::new()
@@ -266,7 +266,7 @@ fn websocket(
     } else {
         "the app stopped"
     };
-    eprintln!("{label} disconnected: {ended}.");
+    note!("{label} disconnected: {ended}.");
     hub.detach(link);
     hub.receive(Inbound::Disconnected(link));
     let _ = stream.shutdown(Shutdown::Both);

@@ -435,12 +435,23 @@ pub(crate) fn install(shared: &Shared, text: &HtmlElement) -> Vec<Listener> {
     if let Some(document) = dom::document() {
         let target: &EventTarget = document.as_ref();
         let app = shared.clone();
+        let shared_page = shared.clone();
         listeners.push(Listener::new(target, "visibilitychange", true, move |_| {
             let visible = dom::document().is_some_and(|document| !document.hidden());
             if let Ok(app) = app.try_borrow_mut() {
                 app.send(&ToHost::Visible { visible });
             }
+            // A phone that wakes or a tab shown again reconnects at once.
+            if visible {
+                crate::app::reconnect_now(&shared_page);
+            }
         }));
+        if let Some(window) = dom::window() {
+            let online = shared.clone();
+            listeners.push(Listener::new(window.as_ref(), "online", true, move |_| {
+                crate::app::reconnect_now(&online);
+            }));
+        }
         // Dropped files reach the page only as blobs, never as paths the
         // app could open; keep the browser from navigating to them.
         for name in ["dragover", "drop"] {
