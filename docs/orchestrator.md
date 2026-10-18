@@ -1,13 +1,14 @@
 # Orchestrator
 
-The Orchestrator tab (`crates/herdr-gpui/src/orchestrator/`) lists a
-repository's issues, pull requests, and the agent runs dispatched for them,
-and dispatches new ones through the Herdr CLI. User-facing behavior is in the
-crate README's "Orchestrator" section; this page is for working on it.
+The orchestrator (`crates/herdr-gpui/src/orchestrator/`) lists a repository's
+issues, pull requests, and the agent runs dispatched for them in the activity
+bar's Pull requests and Issues sections, and dispatches new ones through the
+Herdr CLI. User-facing behavior is in the crate README's "Orchestrator"
+section; this page is for working on it.
 
 ## Shared state with agent-launcher
 
-The tab reads and writes agent-launcher's per-repository SQLite database, so
+The orchestrator reads and writes agent-launcher's per-repository SQLite database, so
 both applications can run against one repository at once. agent-launcher's
 `docs/shared-state.md` is the contract: the file's location, the schema
 version (`PRAGMA user_version`, currently 1), key formats, JSON column shapes,
@@ -35,17 +36,18 @@ agent-launcher wrote it and check that migration keeps its rows.
 | `model.rs`, `location.rs`, `store.rs` | Records in the database's shapes, its path, and SQLite access. |
 | `repo.rs` | Finding a checkout's repository, main checkout, Beads, and remote on its host. |
 | `github.rs`, `gitlab.rs`, `beads.rs` | The sources: a full listing each. GitHub reads only what changed since the last sync, with a full listing again every 30 minutes; GitLab lists its open issues in full on every sync. |
+| `review.rs` | Each open pull request's review decision, review requests, and checks, read after every GitHub sync and kept in the snapshot only: they change with every CI run, and the database's rows are agent-launcher's contract. |
 | `service.rs` | The worker thread per open view: sync, reload, and the action queue. |
 | `actions.rs` | Dispatch, stop, send, remove, delete: each on its own thread. |
 | `prompt.rs` | Prompt profiles, agent-launcher's built-in and review prompts. |
 | `naming.rs` | agent-launcher's branch names, and runs found from branches. |
-| `view/` | The view entity: inbox, preview, item pages, dialogs. Pure row logic is in `view/rows.rs`. |
-| `tab.rs` | Hosting the view in a tab: opening, restoring, the tick, and events. |
-| `window.rs` | Hosting the same view in a window of its own, still fed from the main window's tick. |
+| `view/` | The view entity: the list of every repository (`view/repo.rs` keeps each one's worker, snapshot, and rows; an item's page and actions go to its own), the backend and project pills, filters, the item pane, dialogs. Pure row, merge, and grouping logic is in `view/rows.rs`. |
+| `host.rs` | The window's one view and the repositories it lists, one per Git common directory per host across every connected host's workspaces: the tick that feeds it, and its events. |
+| `section.rs` | The Pull requests and Issues sections, and the commands that open them narrowed to a project. |
 
 The view is a GPUI entity that talks to its host only through `Event`s and
-setters (`set_look`, `set_live`, `set_github`, `set_hosts`), so a tab or a
-window of its own can host it. Nothing in it blocks: the worker does every disk, network, and host
+setters (`set_look`, `set_live`, `set_github`, `set_hosts`). Tabs hosted it
+before the activity bar; tabs saved by those builds are dropped on load. Nothing in it blocks: the worker does every disk, network, and host
 script call, and the UI reads the newest `Snapshot` from a coalescing mailbox.
 
 Live agent status comes from each connected host's Herdr snapshot, matched to

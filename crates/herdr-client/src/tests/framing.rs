@@ -37,11 +37,12 @@ fn geometry_and_frame_reader_limits() {
         .write_all(&((MAX_GRAPHICS_FRAME_SIZE + 1) as u32).to_le_bytes())
         .unwrap();
     assert!(FrameReader::new().poll(&mut client).is_err());
-    let mut reader = FrameReader::new();
-    reader.started = Some(Instant::now() - TIMEOUT - POLL);
+    // The deadline is checked by the worker on every pass, not by the read.
+    let mut reader = FrameReader::with_timeout(Duration::ZERO);
+    reader.started = Some(Instant::now());
     assert!(
         reader
-            .poll(&mut client)
+            .check_timeout()
             .unwrap_err()
             .to_string()
             .contains("timed out")

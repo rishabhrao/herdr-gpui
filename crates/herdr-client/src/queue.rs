@@ -4,21 +4,42 @@
 
 use crate::{Error, Result, handle::Command, transport::Stream};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
-use std::{io, time::Duration};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{io, sync::Arc, time::Duration};
 
 /// Create a queue that holds at most `capacity` commands.
 pub(crate) fn channel(capacity: usize) -> io::Result<(CommandSender, CommandReceiver)> {
     let (sender, receiver) = crossbeam_channel::bounded(capacity);
     let (wake, wait) = wake_pair()?;
     Ok((
-        CommandSender { sender, wake },
-        CommandReceiver { receiver, wait },
+        CommandSender {
+            sender,
+            wake: Waker(Arc::new(wake)),
+        },
+        CommandReceiver {
+            receiver,
+            wait,
+            #[cfg(test)]
+            waits: Arc::default(),
+        },
     ))
+}
+
+/// Wakes the worker for work that reaches it outside the queue, such as a
+/// clipboard image published on its own channel.
+#[derive(Clone)]
+pub(crate) struct Waker(Arc<Wake>);
+
+impl Waker {
+    pub(crate) fn wake(&self) {
+        self.0.wake();
+    }
 }
 
 pub(crate) struct CommandSender {
     sender: Sender<Command>,
-    wake: Wake,
+    wake: Waker,
 }
 
 impl CommandSender {
@@ -39,11 +60,19 @@ impl CommandSender {
     pub(crate) fn wake(&self) {
         self.wake.wake();
     }
+
+    pub(crate) fn waker(&self) -> Waker {
+        self.wake.clone()
+    }
 }
 
 pub(crate) struct CommandReceiver {
     receiver: Receiver<Command>,
     wait: Wait,
+    /// Odd while the worker is inside `wait`, so a test can act only once the
+    /// worker has nothing left but its wakes to notice the action.
+    #[cfg(test)]
+    pub(crate) waits: Arc<AtomicUsize>,
 }
 
 impl CommandReceiver {
@@ -55,10 +84,16 @@ impl CommandReceiver {
         self.receiver.is_empty()
     }
 
-    /// Block until `stream` is readable, a command is queued, or `timeout`
-    /// passes. Returns whether a read of `stream` will not wait.
-    pub(crate) fn wait(&self, stream: &Stream, timeout: Duration) -> Result<bool> {
-        self.wait.wait(stream, timeout)
+    /// Block until `stream` is readable (or, with `writable`, writable), a
+    /// wake arrives, or `timeout` passes. Returns whether a read of `stream`
+    /// will not wait.
+    pub(crate) fn wait(&self, stream: &Stream, writable: bool, timeout: Duration) -> Result<bool> {
+        #[cfg(test)]
+        self.waits.fetch_add(1, Ordering::AcqRel);
+        let readable = self.wait.wait(stream, writable, timeout);
+        #[cfg(test)]
+        self.waits.fetch_add(1, Ordering::AcqRel);
+        readable
     }
 }
 
@@ -92,7 +127,7 @@ mod unix {
         pub(super) fn wake(&self) {
             // Best effort by design: `WouldBlock` means a wake is already
             // pending, and a closed peer means no worker is left to wake. The
-            // worker's bounded poll timeout covers anything else.
+            // worker's idle wait cap bounds anything else.
             let _ = (&self.0).write(&[1]);
         }
     }
@@ -100,14 +135,24 @@ mod unix {
     pub(super) struct Wait(UnixStream);
 
     impl Wait {
-        pub(super) fn wait(&self, stream: &Stream, timeout: Duration) -> Result<bool> {
+        pub(super) fn wait(
+            &self,
+            stream: &Stream,
+            writable: bool,
+            timeout: Duration,
+        ) -> Result<bool> {
             // Saturate: an unrepresentable timeout means waiting indefinitely.
             let timeout = Timespec::try_from(timeout).unwrap_or(Timespec {
                 tv_sec: i64::MAX,
                 tv_nsec: 0,
             });
+            let interest = if writable {
+                PollFlags::IN | PollFlags::OUT
+            } else {
+                PollFlags::IN
+            };
             let mut fds = [
-                PollFd::new(stream, PollFlags::IN),
+                PollFd::new(stream, interest),
                 PollFd::new(&self.0, PollFlags::IN),
             ];
             match poll(&mut fds, Some(&timeout)) {
@@ -115,8 +160,9 @@ mod unix {
                 Err(rustix::io::Errno::INTR) => return Ok(false),
                 Err(error) => return Err(io::Error::from(error).into()),
             }
-            // Hang-up and error count as readable so the read reports them.
-            let readable = !fds[0].revents().is_empty();
+            // Hang-up and error count as readable so the read reports them;
+            // writability alone only sends the worker back to its write.
+            let readable = !fds[0].revents().difference(PollFlags::OUT).is_empty();
             if !fds[1].revents().is_empty() {
                 self.drain()?;
             }
@@ -129,7 +175,8 @@ mod unix {
             let mut buf = [0; 64];
             loop {
                 match (&self.0).read(&mut buf) {
-                    // The handle is gone; it set `stop` before dropping its end.
+                    // Every waker is gone; the handle set `stop` and woke the
+                    // worker before dropping its own.
                     Ok(0) => return Ok(()),
                     Ok(_) => {}
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
@@ -142,7 +189,7 @@ mod unix {
 }
 
 /// A named pipe has no descriptor to poll beside a wake, so the worker keeps
-/// relying on the stream's emulated receive timeout to notice queued commands.
+/// relying on the stream's receive timeout to notice queued commands.
 #[cfg(windows)]
 mod windows {
     use crate::{Result, transport::Stream};
@@ -161,7 +208,7 @@ mod windows {
     pub(super) struct Wait;
 
     impl Wait {
-        pub(super) fn wait(&self, _: &Stream, _: Duration) -> Result<bool> {
+        pub(super) fn wait(&self, _: &Stream, _: bool, _: Duration) -> Result<bool> {
             Ok(true)
         }
     }
@@ -177,6 +224,8 @@ mod tests {
         Command {
             boot_id: "boot".into(),
             bytes: vec![1],
+            input_pane: None,
+            written: Default::default(),
             request: None,
             image: None,
         }
@@ -188,7 +237,9 @@ mod tests {
         let (sender, receiver) = channel(1).unwrap();
         let waiter = thread::spawn(move || {
             let start = Instant::now();
-            let readable = receiver.wait(&stream, Duration::from_secs(60)).unwrap();
+            let readable = receiver
+                .wait(&stream, false, Duration::from_secs(60))
+                .unwrap();
             (readable, start.elapsed(), receiver)
         });
         sender.try_send(command()).unwrap();
@@ -206,10 +257,14 @@ mod tests {
         for _ in 0..1000 {
             sender.wake();
         }
-        assert!(!receiver.wait(&stream, Duration::ZERO).unwrap());
+        assert!(!receiver.wait(&stream, false, Duration::ZERO).unwrap());
         // Nothing is left to wake the next wait: it runs to its timeout.
         let start = Instant::now();
-        assert!(!receiver.wait(&stream, Duration::from_millis(20)).unwrap());
+        assert!(
+            !receiver
+                .wait(&stream, false, Duration::from_millis(20))
+                .unwrap()
+        );
         assert!(start.elapsed() >= Duration::from_millis(20));
     }
 
@@ -218,10 +273,18 @@ mod tests {
         let (stream, mut peer) = Stream::pair().unwrap();
         let (_sender, receiver) = channel(1).unwrap();
         peer.write_all(&[0]).unwrap();
-        assert!(receiver.wait(&stream, Duration::from_secs(60)).unwrap());
+        assert!(
+            receiver
+                .wait(&stream, false, Duration::from_secs(60))
+                .unwrap()
+        );
         let (stream, peer) = Stream::pair().unwrap();
         drop(peer);
-        assert!(receiver.wait(&stream, Duration::from_secs(60)).unwrap());
+        assert!(
+            receiver
+                .wait(&stream, false, Duration::from_secs(60))
+                .unwrap()
+        );
     }
 
     #[test]
@@ -229,10 +292,14 @@ mod tests {
         let (stream, _peer) = Stream::pair().unwrap();
         let (sender, receiver) = channel(1).unwrap();
         sender.try_send(command()).unwrap();
-        assert!(!receiver.wait(&stream, Duration::ZERO).unwrap());
+        assert!(!receiver.wait(&stream, false, Duration::ZERO).unwrap());
         assert!(matches!(sender.try_send(command()), Err(Error::Full)));
         let start = Instant::now();
-        assert!(!receiver.wait(&stream, Duration::from_millis(20)).unwrap());
+        assert!(
+            !receiver
+                .wait(&stream, false, Duration::from_millis(20))
+                .unwrap()
+        );
         assert!(start.elapsed() >= Duration::from_millis(20));
     }
 }

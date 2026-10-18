@@ -9,7 +9,14 @@ pub(crate) fn local_path() -> OsString {
         );
     }
     if cfg!(unix) {
-        dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
+        dirs.extend(
+            [
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                "/home/linuxbrew/.linuxbrew/bin",
+            ]
+            .map(PathBuf::from),
+        );
     }
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     dirs.extend(std::env::split_paths(&inherited));
@@ -26,21 +33,4 @@ pub(crate) fn local_path() -> OsString {
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    #[test]
-    fn fallback_includes_homebrew() {
-        assert!(
-            std::env::split_paths(&super::local_path())
-                .any(|path| path == std::path::Path::new("/opt/homebrew/bin"))
-        );
-    }
-
-    #[test]
-    fn fallback_includes_system_tools_once() {
-        let path: Vec<_> = std::env::split_paths(&super::local_path()).collect();
-        for system in ["/usr/sbin", "/sbin"] {
-            let system = std::path::Path::new(system);
-            assert_eq!(path.iter().filter(|dir| *dir == system).count(), 1);
-        }
-    }
-}
+mod tests;

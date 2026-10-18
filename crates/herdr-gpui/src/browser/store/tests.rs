@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
 
+mod orchestrator_tabs;
+
 fn url(value: &str) -> Option<Location> {
     Some(Location::Web {
         url: WebUrl::try_from(value).unwrap(),

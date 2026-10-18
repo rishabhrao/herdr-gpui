@@ -55,3 +55,39 @@ fn back_and_forward_keep_the_same_room_when_they_lead_the_strip(cx: &mut TestApp
     }
     assert!(checked > 0);
 }
+
+#[gpui::test]
+fn back_keeps_its_room_in_the_expanded_header_with_the_activity_bar(cx: &mut TestAppContext) {
+    let (view, cx) = window(cx);
+    for bar in [false, true] {
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.config.sidebar_style.activity_bar = bar;
+                cx.notify();
+            })
+        });
+        draw(cx);
+        let header = cx.debug_bounds("sidebar-titlebar").unwrap();
+        let navigation = cx.debug_bounds("titlebar-navigation").unwrap();
+        assert!(header.contains(&navigation.center()), "bar: {bar}");
+        // The bar takes the toggle to its column; Back stays where the
+        // toggle's glyph would leave it, the same room after the clearance.
+        let before = match cx
+            .debug_bounds("toggle-sidebar")
+            .filter(|toggle| header.contains(&toggle.center()))
+        {
+            Some(toggle) => toggle.right() - px(SIDEBAR_TOGGLE_INSET),
+            None => header.left() + px(leading_inset()),
+        };
+        assert_eq!(
+            navigation.left() - before,
+            px(NAVIGATION_MARGIN),
+            "bar: {bar}"
+        );
+        assert_eq!(
+            cx.debug_bounds("toggle-sidebar")
+                .is_some_and(|toggle| header.contains(&toggle.center())),
+            !bar
+        );
+    }
+}

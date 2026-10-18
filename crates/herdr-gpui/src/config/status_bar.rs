@@ -14,6 +14,26 @@ pub enum Detail {
     Compact,
 }
 
+/// What the cup keeps awake.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AwakeScope {
+    /// The display and the system, so the screen never locks.
+    #[default]
+    Display,
+    /// Only the system, like `caffeinate -i`; the display may sleep and lock.
+    System,
+}
+
+impl AwakeScope {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Display => "display",
+            Self::System => "system",
+        }
+    }
+}
+
 /// How a status bar button appears.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -57,6 +77,7 @@ pub struct StatusBar {
     pub usage: Detail,
     pub system_load: Detail,
     pub keep_awake: bool,
+    pub keep_awake_scope: AwakeScope,
     pub theme: Button,
     pub shortcuts: Button,
     pub report_issue: Button,
@@ -69,6 +90,7 @@ impl Default for StatusBar {
             usage: Detail::default(),
             system_load: Detail::default(),
             keep_awake: true,
+            keep_awake_scope: AwakeScope::default(),
             theme: Button::default(),
             shortcuts: Button::default(),
             report_issue: Button::default(),
@@ -82,6 +104,7 @@ pub(crate) enum Edit {
     Usage(Detail),
     SystemLoad(Detail),
     KeepAwake(bool),
+    KeepAwakeScope(AwakeScope),
     Theme(Button),
     Shortcuts(Button),
     ReportIssue(Button),
@@ -93,6 +116,7 @@ impl Edit {
             Self::Usage(detail) => ("usage", detail.name().into()),
             Self::SystemLoad(detail) => ("system_load", detail.name().into()),
             Self::KeepAwake(shown) => ("keep_awake", shown.into()),
+            Self::KeepAwakeScope(scope) => ("keep_awake_scope", scope.name().into()),
             Self::Theme(button) => ("theme", button.name().into()),
             Self::Shortcuts(button) => ("shortcuts", button.name().into()),
             Self::ReportIssue(button) => ("report_issue", button.name().into()),

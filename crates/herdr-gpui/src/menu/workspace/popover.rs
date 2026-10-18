@@ -223,53 +223,59 @@ impl HerdrWindow {
         } else {
             rgb(theme.surface).blend(rgba((theme.foreground << 8) | 0x0f))
         };
-        div()
-            .id(label)
-            .debug_selector(move || format!("workspace-menu-{label}"))
-            .flex_1()
-            .min_w_0()
-            .min_h(px(64.))
-            .px(px(4.))
-            .py(px(10.))
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap(px(6.))
-            .rounded(px(crate::config::corners::CONTROL))
-            .bg(if selected { rgb(theme.active) } else { resting })
-            .text_color(ink)
-            .text_size(px((self.config.ui.size - 1.).max(8.)))
-            .when_some(tile.action.icon(), |tile_div, icon| {
-                tile_div.child(
-                    svg()
-                        .path(icon)
-                        .size(px(20.))
-                        .flex_none()
-                        .text_color(ink)
-                        .debug_selector(move || format!("workspace-menu-icon-{label}")),
-                )
-            })
-            .child(
-                div()
-                    .debug_selector(move || format!("workspace-menu-label-{label}"))
-                    .max_w_full()
-                    .truncate()
-                    .child(tile.caption()),
+        crate::accessibility::disabled(
+            div()
+                .id(label)
+                .role(Role::MenuItem)
+                .aria_label(label.trim_end_matches("..."))
+                .when(selected, |tile| tile.aria_active_descendant()),
+            !tile.enabled,
+        )
+        .debug_selector(move || format!("workspace-menu-{label}"))
+        .flex_1()
+        .min_w_0()
+        .min_h(px(64.))
+        .px(px(4.))
+        .py(px(10.))
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(6.))
+        .rounded(px(crate::config::corners::CONTROL))
+        .bg(if selected { rgb(theme.active) } else { resting })
+        .text_color(ink)
+        .text_size(px((self.config.ui.size - 1.).max(8.)))
+        .when_some(tile.action.icon(), |tile_div, icon| {
+            tile_div.child(
+                svg()
+                    .path(icon)
+                    .size(px(20.))
+                    .flex_none()
+                    .text_color(ink)
+                    .debug_selector(move || format!("workspace-menu-icon-{label}")),
             )
-            .map(|tile_div| {
-                if !tile.enabled {
-                    return tile_div.opacity(0.4);
-                }
-                let action = tile.action;
-                tile_div
-                    .cursor_pointer()
-                    .on_hover(Self::workspace_hover(action, cx))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        cx.stop_propagation();
-                        this.activate_workspace_menu(action, window, cx);
-                    }))
-            })
+        })
+        .child(
+            div()
+                .debug_selector(move || format!("workspace-menu-label-{label}"))
+                .max_w_full()
+                .truncate()
+                .child(tile.caption()),
+        )
+        .map(|tile_div| {
+            if !tile.enabled {
+                return tile_div.opacity(0.4);
+            }
+            let action = tile.action;
+            tile_div
+                .cursor_pointer()
+                .on_hover(Self::workspace_hover(action, cx))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.activate_workspace_menu(action, window, cx);
+                }))
+        })
     }
 
     /// A rarer action, as a plain row. Its icon leads, in the same column as
@@ -285,6 +291,9 @@ impl HerdrWindow {
         div()
             .id(label)
             .debug_selector(move || format!("workspace-menu-{label}"))
+            .role(Role::MenuItem)
+            .aria_label(label.trim_end_matches("..."))
+            .when(selected, |row| row.aria_active_descendant())
             .mx(px(2.))
             .min_h(px(self.config.ui.line_height() + 12.))
             .px(px(ROW_INSET))
@@ -332,6 +341,9 @@ impl HerdrWindow {
         div()
             .id(label)
             .debug_selector(move || format!("workspace-menu-{label}"))
+            .role(Role::MenuItem)
+            .aria_label(label.trim_end_matches("..."))
+            .when(selected, |row| row.aria_active_descendant())
             .mt(px(6.))
             .mx(px(2.))
             .min_h(px(self.config.ui.line_height() + 12.))

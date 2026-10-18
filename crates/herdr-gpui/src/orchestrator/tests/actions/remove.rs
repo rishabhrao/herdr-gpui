@@ -88,9 +88,14 @@ fn remove_falls_back_to_git_once_the_workspace_is_gone() {
         .args(["-C", &site.main_root, "worktree", "list", "--porcelain"])
         .output()
         .unwrap();
+    // Match the listed path, not any "wt": the random temporary directory
+    // name every path shares can contain it too.
+    let listed = String::from_utf8_lossy(&listed.stdout);
     assert!(
-        !String::from_utf8_lossy(&listed.stdout).contains("wt"),
-        "git still lists the worktree"
+        !listed
+            .lines()
+            .any(|line| line.starts_with("worktree ") && line.ends_with("/wt")),
+        "git still lists the worktree: {listed}"
     );
     assert!(
         Store::open(&site.database)

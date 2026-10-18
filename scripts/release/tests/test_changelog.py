@@ -68,7 +68,7 @@ class ChangelogTests(unittest.TestCase):
         mock.chmod(0o755)
         self.log = self.work / "calls.jsonl"
         self.env = {"PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
-                    "HOME": str(self.work), "MOCK_LOG": str(self.log)}
+                    "HOME": str(self.work), "MOCK_LOG": str(self.log), "WINDOWS_SIGNED": "true"}
 
     def generate(self, version="20260920.3", out=None, success=True, betas=(), script=SCRIPT):
         result = subprocess.run(["bash", str(script), version, str(self.out if out is None else out), *betas],
@@ -89,6 +89,31 @@ class ChangelogTests(unittest.TestCase):
         self.assertIn("## [v20260920.3]", notes)
         self.assertIn("- Mock entry", notes)
         self.assertIn("# Changelog", (self.out / "CHANGELOG.md").read_text())
+
+    def test_the_body_says_whether_windows_is_signed(self):
+        self.env["WINDOWS_SIGNED"] = "false"
+        self.generate()
+        notes = (self.out / "RELEASE_NOTES.md").read_text()
+        self.assertIn("unsigned Windows", notes)
+        self.assertIn("except on Windows", notes)
+        self.assertNotIn("Authenticode", notes)
+        shutil.rmtree(self.out)
+        self.out.mkdir()
+        self.env["WINDOWS_SIGNED"] = "true"
+        self.generate()
+        notes = (self.out / "RELEASE_NOTES.md").read_text()
+        self.assertIn("Authenticode-signed Windows", notes)
+        self.assertNotIn("unsigned", notes)
+
+    def test_an_unstated_windows_signing_choice_is_refused(self):
+        for value in (None, "", "yes", "TRUE"):
+            with self.subTest(value=value):
+                self.env.pop("WINDOWS_SIGNED", None)
+                if value is not None:
+                    self.env["WINDOWS_SIGNED"] = value
+                result = self.generate(success=False)
+                self.assertIn("WINDOWS_SIGNED", result.stderr)
+        self.assertFalse(self.log.exists())
 
     def test_the_tag_being_cut_names_the_still_unreleased_commits(self):
         self.generate()
@@ -159,7 +184,7 @@ class RealChangelogTests(unittest.TestCase):
     def test_history_renders_conventional_types_into_keep_a_changelog_groups(self):
         with tempfile.TemporaryDirectory(prefix="herdr-changelog-real-") as temp:
             subprocess.run(["bash", str(SCRIPT), "20260920.3", temp],
-                           capture_output=True, text=True, timeout=180, check=True)
+                           env={**os.environ, "WINDOWS_SIGNED": "true"}, capture_output=True, text=True, timeout=180, check=True)
             changelog = (Path(temp) / "CHANGELOG.md").read_text()
         self.assertIn("# Changelog", changelog)
         # No "## [v20260920.3]" check: that section is rightly absent when nothing
@@ -189,7 +214,8 @@ class RealChangelogTests(unittest.TestCase):
             (work / "out").mkdir()
             script = history(work, {"PATH": os.environ["PATH"], "HOME": temp}, *BETA_HISTORY)
             subprocess.run(["bash", str(script), "20260920.3", str(work / "out"),
-                            "v20260905.1", "v20260906.2"], env={"PATH": os.environ["PATH"], "HOME": temp},
+                            "v20260905.1", "v20260906.2"],
+                           env={"PATH": os.environ["PATH"], "HOME": temp, "WINDOWS_SIGNED": "true"},
                            capture_output=True, text=True, timeout=180, check=True)
             notes = (work / "out" / "RELEASE_NOTES.md").read_text()
         self.assertIn("## [v20260920.3]", notes)

@@ -46,6 +46,15 @@ MAIN = r'''
 const APP_VERSION: &str = env!("HERDR_RELEASE_VERSION");
 pub use updater::UpdateError;
 
+// The updater starts children with `herdr_client::new_command`, which sets
+// CREATE_NO_WINDOW on Windows. This harness links no herdr-client, so it
+// answers to that name itself with a plain Command for its Unix hosts.
+extern crate self as herdr_client;
+#[allow(dead_code)]
+fn new_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    std::process::Command::new(program)
+}
+
 fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
     use anyhow::Context as _;
     let args: Vec<_> = std::env::args_os().skip(1).collect();
@@ -128,6 +137,21 @@ def generate(root, temporary):
                 definition[key] = value
         dependencies[name] = definition
         references.append(reference)
+    # The updater starts every child through herdr_client::new_command. Only
+    # that std-only module is compiled, from its own source file, in a local
+    # crate whose name and version match the workspace lock's herdr-client.
+    client = tomllib.loads((root / "crates/herdr-client/Cargo.toml").read_text())["package"]
+    client_package = {"name": client["name"], "version": workspace["package"]["version"],
+                      "edition": workspace["package"]["edition"], "publish": False}
+    (temporary / "herdr-client/src").mkdir(parents=True)
+    (temporary / "herdr-client/Cargo.toml").write_text(
+        "[package]\n" + "".join(f"{json.dumps(key)} = {toml_value(value)}\n"
+                                for key, value in client_package.items()))
+    process = root / "crates/herdr-client/src/process.rs"
+    (temporary / "herdr-client/src/lib.rs").write_text(
+        f"#[path = {json.dumps(str(process), ensure_ascii=False)}]\n"
+        "mod process;\npub use process::new_command;\n")
+    dependencies[client["name"]] = {"path": "herdr-client"}
 
     manifest = "[workspace]\nresolver = " + toml_value(workspace["resolver"]) + "\n"
     for section, values in [("package", package), ("dependencies", dependencies)]:

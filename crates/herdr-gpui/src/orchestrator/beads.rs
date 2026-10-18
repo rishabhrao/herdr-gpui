@@ -83,8 +83,14 @@ fn prefix(root: &str) -> String {
 }
 
 fn safety_flags(host: &Host, root: &str, cancelled: &AtomicBool) -> Result<Vec<&'static str>> {
-    let body = format!("{}bd --help 2>&1\n", prefix(root));
-    let help = capture(host, &body, "Reading bd's options", cancelled)?;
+    const READING: &str = "Reading bd's options";
+    // `bd`'s help goes to stdout, which is all a local run reads.
+    let help = if host.is_local() {
+        local(host, root, &["--help"], READING, cancelled)?
+    } else {
+        let body = format!("{}bd --help 2>&1\n", prefix(root));
+        capture(host, &body, READING, cancelled)?
+    };
     Ok(flags_from_help(&String::from_utf8_lossy(&help)))
 }
 
@@ -103,6 +109,10 @@ fn run(
     args: &[&str],
     cancelled: &AtomicBool,
 ) -> Result<Vec<u8>> {
+    if host.is_local() {
+        let args: Vec<&str> = flags.iter().chain(args).copied().collect();
+        return local(host, root, &args, "Reading Beads", cancelled);
+    }
     let command = flags
         .iter()
         .chain(args)
@@ -111,6 +121,27 @@ fn run(
         .join(" ");
     let body = format!("{}bd {command}\n", prefix(root));
     capture(host, &body, "Reading Beads", cancelled)
+}
+
+/// `bd` with `args` run directly in `root` on this machine, with Beads'
+/// routing pinned as [`prefix`] pins it.
+fn local(
+    host: &Host,
+    root: &str,
+    args: &[&str],
+    operation: &'static str,
+    cancelled: &AtomicBool,
+) -> Result<Vec<u8>> {
+    if !host.has_local("bd") {
+        return Err(Error::BeadsMissing);
+    }
+    let mut command = host.local_command("bd");
+    command
+        .args(args)
+        .current_dir(root)
+        .env("BEADS_DIR", std::path::Path::new(root).join(".beads"))
+        .env_remove("BEADS_DB");
+    Host::capture_command(command, Host::QUERY_IDLE, cancelled).map_err(script(operation))
 }
 
 fn capture(

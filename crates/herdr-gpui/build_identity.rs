@@ -13,6 +13,7 @@ pub struct Identity {
     pub branch: String,
     pub detached: bool,
     pub watched: Vec<PathBuf>,
+    pub commit: String,
 }
 
 fn anchored<'a>(command: &'a mut Command, manifest: &Path) -> &'a mut Command {
@@ -61,6 +62,7 @@ pub fn detect(manifest: &Path) -> Identity {
     .map(PathBuf::from) else {
         return identity;
     };
+    identity.commit = git(manifest, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
     if let Some(root) = git(manifest, &["rev-parse", "--show-toplevel"]) {
         let pointer = Path::new(&root).join(".git");
         if pointer.is_file() {

@@ -19,6 +19,7 @@ mod tests;
 
 pub(crate) use chart::sparkline;
 pub(crate) use model::{Device, Link, Tally, online_tally};
+pub(crate) use view::Look;
 
 use crate::{
     HerdrWindow,

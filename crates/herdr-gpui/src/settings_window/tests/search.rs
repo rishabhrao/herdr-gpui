@@ -46,6 +46,7 @@ fn every_catalog_id_is_unique_and_belongs_to_its_section() {
         let prefix = match entry.section {
             Section::Theme => "theme-",
             Section::Sidebar => "sidebar-",
+            Section::Indicators => "indicators-",
             Section::Fonts => "fonts-",
             Section::General => "general-",
             Section::Tabs => "tabs-",

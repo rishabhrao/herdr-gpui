@@ -175,7 +175,7 @@ impl SettingsWindow {
             return;
         }
         if let Some(theme) = self.prepared_app_theme(&self.config.theme, light) {
-            self.theme = theme.with_contrast(self.config.contrast);
+            self.theme = theme.styled_for(&self.config);
             return;
         }
         let mut config = self.config.clone();
@@ -207,7 +207,7 @@ impl SettingsWindow {
                 {
                     return;
                 }
-                this.theme = theme.with_contrast(this.config.contrast);
+                this.theme = theme.styled_for(&this.config);
                 this.sync_appearance(cx);
                 this.publish_appearance(cx);
             });

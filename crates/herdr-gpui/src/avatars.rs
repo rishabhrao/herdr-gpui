@@ -2,7 +2,6 @@ use gpui::{Image, ImageFormat};
 mod cache;
 use std::{
     collections::HashMap,
-    process::Command,
     sync::{Arc, mpsc},
     thread,
     time::{Duration, SystemTime},
@@ -95,19 +94,18 @@ impl Avatars {
 }
 
 fn repo_owner(cwd: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["-C", cwd, "config", "--get", "remote.origin.url"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+    for key in ["remote.upstream.url", "remote.origin.url"] {
+        if let Ok(output) = herdr_client::new_command("git")
+            .args(["-C", cwd, "config", "--default", "", "--get", key])
+            .output()
+            && output.status.success()
+            && let Ok(text) = std::str::from_utf8(&output.stdout)
+            && let Some(owner) = github_owner(text.trim_end_matches(['\r', '\n']))
+        {
+            return Some(owner);
+        }
     }
-    // Git resolves both normal repositories and linked worktrees for us.
-    github_owner(
-        std::str::from_utf8(&output.stdout)
-            .ok()?
-            .trim_end_matches(['\r', '\n']),
-    )
+    None
 }
 
 fn github_owner(remote: &str) -> Option<String> {
@@ -131,20 +129,42 @@ fn segment(value: &str) -> bool {
 }
 
 pub(crate) fn github_repo(remote: &str) -> Option<(String, String)> {
-    let path = [
-        "https://github.com/",
-        "http://github.com/",
-        "git@github.com:",
-        "ssh://git@github.com/",
-    ]
-    .into_iter()
-    .find_map(|prefix| remote.strip_prefix(prefix))?;
+    let path = ["git@github.com:", "ssh://git@github.com/"]
+        .into_iter()
+        .find_map(|prefix| remote.strip_prefix(prefix))
+        .or_else(|| http_path(remote))?;
     let (owner, repo) = path.split_once('/')?;
     let repo = repo.strip_suffix(".git").unwrap_or(repo);
     if !segment(owner) || !segment(repo) {
         return None;
     }
     Some((owner.to_ascii_lowercase(), repo.to_owned()))
+}
+
+/// The path of an `http(s)://[userinfo@]github.com/` remote.
+///
+/// Git accepts a user name, or a user name and token, before the host
+/// (`https://user@github.com/o/r`, `https://user:token@github.com/o/r`).
+/// The host is what Git connects to, so it alone must be `github.com`; the
+/// userinfo is skipped and never kept. Userinfo that a URL parser could read
+/// as the end of the authority (`/`, `?`, `#`, `\`, a second `@`) is refused
+/// so the host cannot be misread.
+fn http_path(remote: &str) -> Option<&str> {
+    let rest = ["https://", "http://"]
+        .into_iter()
+        .find_map(|scheme| remote.strip_prefix(scheme))?;
+    let (authority, path) = rest.split_once('/')?;
+    let host = match authority.split_once('@') {
+        None => authority,
+        Some((userinfo, host)) => {
+            let plain = |b: u8| b.is_ascii_graphic() && !matches!(b, b'@' | b'?' | b'#' | b'\\');
+            if userinfo.is_empty() || !userinfo.bytes().all(plain) {
+                return None;
+            }
+            host
+        }
+    };
+    (host == "github.com").then_some(path)
 }
 
 fn cached_image(url: &str) -> Option<(Arc<Image>, bool)> {

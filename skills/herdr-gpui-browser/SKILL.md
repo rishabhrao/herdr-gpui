@@ -216,6 +216,7 @@ for what only Herdr UI shows or keeps.
 | List or focus the app's windows and its own tabs | `herdr-gpui window`, `herdr-gpui tab`, `herdr-gpui tab focus ID` |
 | Block until something happens in the app | `herdr-gpui wait tab-closed ID --timeout 600`, `herdr-gpui events --follow` |
 | Read or change a Herdr UI setting | `herdr-gpui config get KEY`, `herdr-gpui config set KEY VALUE` |
+| Install agents or rerun the setup script on a saved cloud machine | `herdr-gpui config set cloud.agents '["claude"]'`, `herdr-gpui cloud setup ID` |
 | Keep the machine awake during a long job | `herdr-gpui caffeine on --for 2h` |
 | Check whether the app runs, and which windows and hosts it has | `herdr-gpui status` |
 

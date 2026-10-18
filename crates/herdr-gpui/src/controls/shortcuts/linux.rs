@@ -45,6 +45,9 @@ pub(super) fn defaults(command: Command) -> &'static [&'static str] {
         TabNumber(8) => &["ctrl-shift-8"],
         TabNumber(9) => &["ctrl-shift-9"],
         ToggleSidebar => &["ctrl-shift-b"],
+        // Windows' own key for moving between a window's regions.
+        FocusNextRegion => &["f6"],
+        FocusPreviousRegion => &["shift-f6"],
         ToggleZenMode => &["ctrl-alt-z"],
         IncreaseFontSize => &["ctrl-shift-=", "ctrl-shift-+"],
         DecreaseFontSize => &["ctrl-shift--"],

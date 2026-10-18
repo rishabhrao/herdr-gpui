@@ -38,16 +38,17 @@ impl HerdrWindow {
                     .debug_selector(|| "review-against".into())
                     .flex_1()
                     .min_w_0()
-                    .truncate()
+                    .flex()
+                    .items_center()
+                    .gap_1()
                     .text_color(rgb(theme.muted))
-                    .child(
-                        match review.loaded().and_then(|loaded| loaded.base.as_deref()) {
-                            Some(base) if review.scope == Scope::Branch => {
-                                format!("{} against {base}", review.checkout.branch)
-                            }
-                            _ => review.checkout.branch.clone(),
-                        },
-                    ),
+                    .child(div().min_w_0().truncate().child(match review.scope {
+                        Scope::Branch => format!("{} against", review.checkout.branch),
+                        Scope::Uncommitted => review.checkout.branch.clone(),
+                    }))
+                    .when(review.scope == Scope::Branch, |against| {
+                        against.child(self.render_review_base(id, review, cx))
+                    }),
             )
             .when(review.batch_out, |header| {
                 header.child(

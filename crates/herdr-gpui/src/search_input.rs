@@ -3,14 +3,14 @@ use std::ops::Range;
 
 use gpui::{
     App, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, EntityInputHandler,
-    EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton, Pixels, Point, ShapedLine,
-    TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, canvas, div, fill, point,
-    prelude::*, px, rgb, size,
+    EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton, Pixels, Point, Role,
+    ShapedLine, SharedString, TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, canvas,
+    div, fill, point, prelude::*, px, rgb, size,
 };
 
 use crate::config::{Config, FontConfig, Theme};
 use crate::fonts::StyledFont;
-use crate::{actions, input::ViewInputHandler};
+use crate::{actions, input::ViewInputHandler, words};
 
 pub struct Changed;
 
@@ -364,6 +364,33 @@ impl SearchInput {
                 }
                 _ => return,
             }
+        } else if actions::word_modifiers(modifiers)
+            && matches!(key, "backspace" | "delete" | "left" | "right")
+        {
+            // macOS sends these as commands, never text, so the native
+            // handler below would drop them. A masked secret is one word,
+            // as in a native secure field, so its words are not revealed.
+            let selection = self.edit.selection();
+            let backward = matches!(key, "backspace" | "left");
+            let from = match key {
+                "left" if !modifiers.shift && !selection.is_empty() => selection.start,
+                "right" if !modifiers.shift && !selection.is_empty() => selection.end,
+                _ => self.edit.cursor,
+            };
+            let offset = match (backward, self.masked) {
+                (true, true) => 0,
+                (false, true) => self.edit.text.len(),
+                (true, false) => words::previous_start(&self.edit.text, from),
+                (false, false) => words::next_end(&self.edit.text, from),
+            };
+            if matches!(key, "left" | "right") {
+                self.edit.select_to(offset, modifiers.shift);
+            } else {
+                if selection.is_empty() {
+                    self.edit.select_to(offset, true);
+                }
+                self.replace_text_in_range(None, "", window, cx);
+            }
         } else {
             // Option/dead-key text also goes through the native input handler.
             return;
@@ -486,6 +513,21 @@ impl Render for SearchInput {
         let height = px(self.font.line_height());
         div()
             .debug_selector(|| "theme-search".into())
+            .id("search-input")
+            .map(|field| {
+                // A masked field is a secret: its role says so and it reports
+                // no value, so a screen reader never reads it out.
+                let field = if self.masked {
+                    field.role(Role::PasswordInput)
+                } else {
+                    field
+                        .role(Role::TextInput)
+                        .aria_value(SharedString::from(self.edit.text.clone()))
+                };
+                field.when(!self.placeholder.is_empty(), |field| {
+                    field.aria_label(SharedString::from(self.placeholder.clone()))
+                })
+            })
             .w_full()
             .when(self.framed, |field| {
                 field
@@ -560,7 +602,7 @@ impl Render for SearchInput {
                         let completion = input
                             .shown_completion()
                             .filter(|_| !placeholder && input.focus.is_focused(window));
-                        let text: gpui::SharedString = if placeholder {
+                        let text: SharedString = if placeholder {
                             input.placeholder.clone().into()
                         } else if input.masked {
                             "*".repeat(input.text().chars().count()).into()
@@ -697,6 +739,7 @@ mod tests {
     use super::*;
 
     mod completion;
+    mod word_keys;
 
     #[test]
     fn masked_offsets_count_characters_both_ways() {

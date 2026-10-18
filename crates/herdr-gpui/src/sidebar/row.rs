@@ -360,12 +360,13 @@ pub(super) fn row(
     // Content starts below the highlight's edge, which sits half the row
     // spacing in from the row's own.
     let content_top = vertical_padding + look.spacing() / 2.;
-    let show_detail = matches!(kind, RowKind::Agent(_))
-        || if tree == RowTree::None {
-            layout.workspace_details()
-        } else {
-            layout.child_details()
-        };
+    // An agent with nothing to say below its name, such as one nested under
+    // the workspace that names its place, takes one line.
+    let show_detail = match kind {
+        RowKind::Agent(_) => !detail.is_empty(),
+        RowKind::Workspace if tree == RowTree::None => layout.workspace_details(),
+        RowKind::Workspace => layout.child_details(),
+    };
     let (name_color, weight, detail_color) = row_text(kind, focused, theme);
     let name_color = if teleported {
         left_behind(name_color, theme)
@@ -470,8 +471,7 @@ pub(super) fn row(
         .gap(px(gap))
         .py(px(content_top))
         .cursor_pointer()
-        .map(|row| cx.mark.apply(row, key, &look))
-        .map(|row| look.mark(row, key, state, theme))
+        .map(|row| look.mark(row, key, (state, cx.mark), theme))
         // Tree lines run in the indent the row already reserves, so a child is
         // tied to its parent without box-drawing glyphs in the label.
         .when(draw_tree, |row| {

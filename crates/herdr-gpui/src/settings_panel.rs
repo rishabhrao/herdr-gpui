@@ -39,7 +39,7 @@ impl HerdrWindow {
                         this.reload_notification_config(cx);
                     }
                     Err(error) => {
-                        this.settings.error = Some(format!("Load shared settings: {error}"));
+                        this.settings.error = Some(format!("Load Herdr settings: {error}"));
                     }
                 }
                 cx.notify();
@@ -70,7 +70,7 @@ impl HerdrWindow {
             );
             match shared.theme(light) {
                 Ok(theme) => {
-                    self.theme = theme.with_contrast(self.config.contrast);
+                    self.theme = theme.styled_for(&self.config);
                     if let Some(mut appearance) =
                         cx.try_global::<crate::app::InitialAppearance>().cloned()
                         && appearance.config.theme == "Follow Herdr"

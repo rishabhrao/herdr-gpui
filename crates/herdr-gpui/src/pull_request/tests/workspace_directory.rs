@@ -107,7 +107,7 @@ fn the_worker_resolves_the_directory_and_verifies_repository_and_branch() {
     );
     assert_eq!(
         local_repository(&input, deadline(), &|| false).unwrap(),
-        ("example".into(), "project".into())
+        origin_base("example", "project")
     );
 
     // HEAD is on another branch than the daemon reports.

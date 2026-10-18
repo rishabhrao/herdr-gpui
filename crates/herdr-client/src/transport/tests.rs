@@ -35,3 +35,5 @@ fn windows_socket_path_connects_and_exchanges_bytes() {
     assert_eq!(&response, b"daemon");
     assert!(!path.exists());
 }
+
+mod deadlines;

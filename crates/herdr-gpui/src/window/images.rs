@@ -86,7 +86,7 @@ impl HerdrWindow {
         cx.notify();
     }
 
-    fn accepts_image_input(&self) -> bool {
+    pub(super) fn accepts_image_input(&self) -> bool {
         self.menu.page.is_none()
             && self.live.status.is_connected()
             && self.input_ready()
@@ -95,9 +95,9 @@ impl HerdrWindow {
 
     /// The daemon stages clipboard images beside the pane's processes, so the
     /// bridge serves local endpoints too: GUI text paste cannot carry an image.
-    /// Only macOS and Linux have a bounded background clipboard reader.
+    /// Only macOS, Linux, and Windows have a bounded background clipboard reader.
     pub(crate) fn accepts_clipboard_images(&self) -> bool {
-        cfg!(any(target_os = "macos", target_os = "linux")) && self.accepts_image_input()
+        cfg!(any(target_os = "macos", target_os = "linux", windows)) && self.accepts_image_input()
     }
 
     /// Dropped files and pasted image paths need bridging only when the pane
@@ -146,9 +146,15 @@ impl HerdrWindow {
         {
             return false;
         }
+        self.input_target_shown(&image.target)
+    }
+
+    /// Whether `target` still takes input as it did: a pane the snapshot
+    /// lists with no popup over it, or the same popup still open.
+    pub(super) fn input_target_shown(&self, target: &InputTarget) -> bool {
         // Snapshot delivery can briefly invalidate the surface without changing
         // the target. Missing cells are not evidence that a pane disappeared.
-        if let InputTarget::Pane(id) = &image.target
+        if let InputTarget::Pane(id) = target
             && self
                 .live
                 .snapshot
@@ -160,7 +166,7 @@ impl HerdrWindow {
         self.live
             .surface
             .as_ref()
-            .is_none_or(|surface| match &image.target {
+            .is_none_or(|surface| match target {
                 InputTarget::Pane(id) => {
                     surface.popup.is_none() && surface.panes.iter().any(|pane| &pane.pane_id == id)
                 }
@@ -286,9 +292,14 @@ impl HerdrWindow {
                     return Ok(fallback.map_or(Prepared::Empty, Prepared::Input));
                 };
                 if !image_only && let Some(paths) = external_paths(&item) {
-                    // A local pane keeps the paste in this reserved slot; a
-                    // remote pane needs the drop's image bridge or file copy.
+                    // A local pane keeps the paste in this reserved slot, as an
+                    // image when it is a temporary drag item the pane cannot
+                    // open, so input typed meanwhile still follows it. A remote
+                    // pane needs the drop's image bridge or file copy.
                     if !bridge_paths && let Ok(text) = super::file_drop::quote_paths(&paths) {
+                        if let Some(source) = image_source::temporary_drag_image(&paths) {
+                            return Prepared::image(source.prepare(), Some(text));
+                        }
                         return Ok(Prepared::Input(ClientPaneInputEvent::Paste(text)));
                     }
                     return Ok(Prepared::Files(paths));

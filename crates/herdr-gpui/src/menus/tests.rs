@@ -13,7 +13,7 @@ fn badge_preview_is_available_only_in_the_macos_qa_menu() {
             MenuItem::Action { name, action, .. } if name.as_ref() == label => Some(action),
             _ => None,
         });
-        if cfg!(target_os = "macos") {
+        if cfg!(any(target_os = "macos", windows)) {
             assert!(
                 action
                     .unwrap()

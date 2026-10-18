@@ -1,5 +1,6 @@
 //! General: interface toggles, the optional `[features]` flags, clipboard
-//! feedback, merged worktrees, the browser skill and the update channel.
+//! feedback, merged worktrees, the browser skill, launch at login (Windows)
+//! and the update channel.
 use super::{CLIPBOARD_POSITIONS, SettingsWindow, on_off, ui};
 use crate::settings_window::inputs::DropdownField;
 use crate::{
@@ -52,7 +53,7 @@ impl SettingsWindow {
             .child(
                 ui::row(theme, "general-ports", "Show listening ports")
                     .description("Port chips on workspaces with a dev server.")
-                    .control(self.preference_toggle(
+                    .switch(self.preference_toggle(
                         "general-ports-toggle",
                         self.config.show_listening_ports,
                         Preference::ShowListeningPorts(!self.config.show_listening_ports),
@@ -62,7 +63,7 @@ impl SettingsWindow {
             .child(
                 ui::row(theme, "general-checkpoints", "Checkpoint agent turns")
                     .description("Snapshot the worktree after each agent turn.")
-                    .control(self.preference_toggle(
+                    .switch(self.preference_toggle(
                         "general-checkpoints-toggle",
                         self.config.agent_checkpoints,
                         Preference::AgentCheckpoints(!self.config.agent_checkpoints),
@@ -72,7 +73,7 @@ impl SettingsWindow {
             .child(
                 ui::row(theme, "general-smooth-scroll", "Smooth scrolling")
                     .description("Scroll terminal history between rows; off steps whole rows.")
-                    .control(self.preference_toggle(
+                    .switch(self.preference_toggle(
                         "general-smooth-scroll-toggle",
                         self.config.smooth_scroll,
                         Preference::SmoothScroll(!self.config.smooth_scroll),
@@ -85,10 +86,10 @@ impl SettingsWindow {
             .child(
                 self.gate_shared(
                     ui::row(theme, "general-copy-on-select", "Copy on select")
-                        .tag(ui::Source::Shared)
+                        .tag(ui::Source::Herdr)
                         .description("Off: \u{2318}C / Ctrl-C copies the highlighted selection."),
                 )
-                .control(
+                .switch(
                     ui::toggle(theme, "general-copy-on-select-toggle", copy, ready).when(
                         ready,
                         |toggle| {
@@ -101,7 +102,7 @@ impl SettingsWindow {
             )
             .child(
                 ui::row(theme, "general-copied-toast", "Copied notification")
-                    .tag(ui::Source::Local)
+                    .tag(ui::Source::HerdrUi)
                     .control(self.override_dropdown(
                         DropdownField::ClipboardEnabled,
                         on_off(base.0),
@@ -112,7 +113,7 @@ impl SettingsWindow {
             )
             .child(
                 ui::row(theme, "general-clipboard-position", "Notification position")
-                    .tag(ui::Source::Local)
+                    .tag(ui::Source::HerdrUi)
                     .control(self.override_dropdown(
                         DropdownField::ClipboardPosition,
                         base_position,
@@ -132,7 +133,7 @@ impl SettingsWindow {
                     "Deletes a clean linked worktree and closes its workspace once its PR is \
                      merged. The focused workspace asks first.",
                 )
-                .control(self.preference_toggle(
+                .switch(self.preference_toggle(
                     "general-merged-worktrees-toggle",
                     merged,
                     Preference::RemoveMergedWorktrees(!merged),
@@ -156,14 +157,15 @@ impl SettingsWindow {
                         .on_click(cx.listener(move |this, _, _, cx| this.save_skill(choice, cx))),
                 ),
             )
+            .children(self.startup_rows(cx))
             .child(ui::section(theme, "Updates", None))
             .child(
                 ui::row(theme, "general-update-beta", "Install beta releases")
                     .description(
                         "Betas ship before they are promoted to stable. Turning this off never \
-                         downgrades; Homebrew installations always follow stable.",
+                         downgrades; Homebrew installations update in place while it is on.",
                     )
-                    .control(self.preference_toggle(
+                    .switch(self.preference_toggle(
                         "general-update-beta-toggle",
                         beta,
                         Preference::UpdateChannel(if beta {
@@ -174,6 +176,17 @@ impl SettingsWindow {
                         cx,
                     )),
             )
+    }
+
+    /// Windows' **Launch at login**; other platforms have no such setting yet.
+    fn startup_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        #[cfg(windows)]
+        return self.launch_at_login_rows(cx);
+        #[cfg(not(windows))]
+        {
+            let _ = cx;
+            Vec::new()
+        }
     }
 
     /// One row per `[features]` flag, generated from [`Feature::ALL`] so a
@@ -187,7 +200,7 @@ impl SettingsWindow {
                 let on = features.enabled(feature);
                 ui::row(&self.theme, id, feature.label())
                     .description(feature.description())
-                    .control(self.preference_toggle(
+                    .switch(self.preference_toggle(
                         format!("{id}-toggle"),
                         on,
                         Preference::Feature(feature, !on),
@@ -209,7 +222,7 @@ impl SettingsWindow {
                 match choice {
                     Choice::Installed => {
                         let text =
-                            crate::agent_skill::text(std::env::current_exe().ok().as_deref());
+                            crate::agent_skill::text(crate::agent_skill::executable().as_deref());
                         crate::agent_skill::install(&home, &text)?;
                     }
                     Choice::Declined => {

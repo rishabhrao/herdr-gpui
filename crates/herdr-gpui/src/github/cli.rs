@@ -22,7 +22,7 @@ const OUTPUT_LIMIT: usize = 16 * 1024;
 /// The GitHub CLI's token for github.com. Blocks on a subprocess: call it
 /// from a background worker.
 pub(super) fn token() -> Result<SecretString> {
-    let mut command = Command::new("gh");
+    let mut command = herdr_client::new_command("gh");
     // An app opened from the Dock or a desktop launcher has a minimal PATH.
     crate::login_env::apply(&mut command);
     run(&mut command)

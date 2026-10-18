@@ -158,19 +158,17 @@ fn empty_configured_rows_keep_only_the_upstream_fallback(cx: &mut gpui::TestAppC
 fn configured_inline_status_is_centered_in_its_glyph_budget(cx: &mut gpui::TestAppContext) {
     let (view, cx) = cx.add_window_view(fixture_window);
     let tolerance = cx.update(|window, _| px(1. / window.scale_factor()));
-    for (size, style) in [12., 20., 36.]
-        .into_iter()
-        .flat_map(|size| ["dots", "symbols"].map(|style| (size, style)))
-    {
+    for (size, icons) in [12., 20., 36.].into_iter().flat_map(|size| {
+        [
+            crate::config::StatusIcons::Dots,
+            crate::config::StatusIcons::Solid,
+        ]
+        .map(|icons| (size, icons))
+    }) {
         view.update(cx, |view, cx| {
             view.config.sidebar.size = size;
             view.sidebar_width = Some(160.);
-            view.settings.shared = Some(
-                crate::herdr_settings::Settings::parse_text(&format!(
-                    "[ui]\nstatus_indicators = '{style}'\n"
-                ))
-                .unwrap(),
-            );
+            view.config.status_icons = icons;
             view.config.sidebar_layout.agents =
                 toml::from_str(r#"rows = [["workspace", "state_icon"]]"#).unwrap();
             cx.notify();
@@ -179,14 +177,18 @@ fn configured_inline_status_is_centered_in_its_glyph_budget(cx: &mut gpui::TestA
         let cell = cx.debug_bounds("inline-status-cell").unwrap();
         let mark = cx.debug_bounds("inline-status-mark").unwrap();
         assert!(mark.size.width <= cell.size.width);
-        assert_eq!(
-            mark.size.width,
-            px(if style == "symbols" {
-                size
-            } else {
-                super::super::STATUS_WIDTH
-            })
-        );
+        let slot = cx.update(|_, cx| {
+            let config = &view.read(cx).config;
+            super::super::Indicators::new(
+                None,
+                icons,
+                false,
+                false,
+                &crate::config::Theme::default(),
+            )
+            .width(&config.sidebar)
+        });
+        assert_eq!(mark.size.width, px(slot), "{icons:?} at {size}");
         assert!(
             (cell.center().x - mark.center().x).abs() <= tolerance,
             "size={size}, cell={cell:?}, mark={mark:?}"

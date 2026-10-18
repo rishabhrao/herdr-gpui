@@ -19,13 +19,6 @@ fn queued(
     (call, server.next().unwrap(), waiting)
 }
 
-fn socket_dir() -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix("hgc")
-        .tempdir_in("/tmp")
-        .unwrap()
-}
-
 #[gpui::test]
 fn tabs_are_listed_focused_and_closed(cx: &mut gpui::TestAppContext) {
     let (view, cx) = window(cx);
@@ -116,8 +109,8 @@ fn a_tab_of_a_workspace_no_window_lists_is_not_found(cx: &mut gpui::TestAppConte
 #[gpui::test]
 fn devices_open_in_the_shown_workspace_at_once(cx: &mut gpui::TestAppContext) {
     let (_view, cx) = window(cx);
-    let directory = socket_dir();
-    let server = socket::Server::bind(&directory.path().join("control.sock")).unwrap();
+    let address = socket::test_address();
+    let server = socket::Server::bind(&address.path).unwrap();
     let (call, incoming, waiting) = queued(&server, TabOp::Devices, Caller::default());
     let mut watches = Watches::default();
     cx.cx.update(|cx| serve(call, incoming, &mut watches, cx));
@@ -137,8 +130,8 @@ fn devices_open_in_the_shown_workspace_at_once(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 fn a_tab_for_another_workspace_waits_for_the_switch(cx: &mut gpui::TestAppContext) {
     let (view, cx) = window(cx);
-    let directory = socket_dir();
-    let server = socket::Server::bind(&directory.path().join("control.sock")).unwrap();
+    let address = socket::test_address();
+    let server = socket::Server::bind(&address.path).unwrap();
     let caller = Caller {
         workspace_id: Some("w1".into()),
         ..Caller::default()
@@ -176,8 +169,8 @@ fn a_tab_for_another_workspace_waits_for_the_switch(cx: &mut gpui::TestAppContex
 #[gpui::test]
 fn requests_for_unknown_workspaces_and_bad_paths_are_refused(cx: &mut gpui::TestAppContext) {
     let (_view, cx) = window(cx);
-    let directory = socket_dir();
-    let server = socket::Server::bind(&directory.path().join("control.sock")).unwrap();
+    let address = socket::test_address();
+    let server = socket::Server::bind(&address.path).unwrap();
     let mut watches = Watches::default();
     let missing = Caller {
         workspace_id: Some("w_missing".into()),

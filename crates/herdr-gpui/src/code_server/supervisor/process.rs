@@ -35,12 +35,6 @@ pub(super) fn isolate(command: &mut Command) {
         .stderr(Stdio::null());
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(command, 0);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
 }
 
 /// Asks the child and what it started to stop, without waiting. Quick
@@ -66,18 +60,12 @@ pub(super) fn kill(child: &mut Child) {
     }
     #[cfg(windows)]
     {
-        let mut taskkill = Command::new("taskkill");
-        taskkill
+        let _ = herdr_client::new_command("taskkill")
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            taskkill.creation_flags(CREATE_NO_WINDOW);
-        }
-        let _ = taskkill.status();
+            .stderr(Stdio::null())
+            .status();
     }
     let _ = child.kill();
 }

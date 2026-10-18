@@ -48,13 +48,10 @@ fn pending_send_covers_screenshot_saving_and_failure(cx: &mut TestAppContext) {
                 scope: scope(&view.read(cx).endpoints[0]),
                 pane_id: "w0:p1".into(),
             };
-            let text = if cfg!(unix) {
-                cx.default_global::<crate::browser::Feedback>()
-                    .take(&target)
-            } else {
-                cx.read_from_clipboard().and_then(|item| item.text())
-            }
-            .unwrap();
+            let text = cx
+                .default_global::<crate::browser::Feedback>()
+                .take(&target)
+                .unwrap();
             assert_eq!(text.matches("Note: Send once.").count(), 1);
         });
     }

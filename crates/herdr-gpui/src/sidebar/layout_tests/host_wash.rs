@@ -117,9 +117,9 @@ fn group_modes_wash_the_selected_host(cx: &mut gpui::TestAppContext) {
     }
 }
 
-/// The wash is a layer of the row, the size of its highlight, under it.
+/// The wash is a layer of the row, the size of its highlight.
 #[gpui::test]
-fn the_wash_paints_beneath_the_highlight(cx: &mut gpui::TestAppContext) {
+fn the_wash_is_the_size_of_the_highlight(cx: &mut gpui::TestAppContext) {
     let (_fixture, cx) = cx.add_window_view(|window, cx| {
         let view = cx.new(|cx| {
             let mut view = fixture_window(window, cx);
@@ -138,4 +138,74 @@ fn the_wash_paints_beneath_the_highlight(cx: &mut gpui::TestAppContext) {
     let row = cx.debug_bounds("row-herdr").unwrap();
     assert_eq!(wash, highlight, "the wash covers exactly the highlight");
     assert!(row.contains(&wash.center()));
+}
+
+/// The solid layers painted exactly over the highlight `selector`, bottom
+/// first: the highlight's own fill and the host's wash, in paint order.
+fn layers(cx: &mut gpui::VisualTestContext, selector: &'static str) -> Vec<gpui::Background> {
+    let region = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} is drawn"));
+    cx.update(|window, _| {
+        let region = region.scale(window.scale_factor());
+        let mut quads = window.painted_quads();
+        quads.sort_by_key(|quad| quad.order);
+        quads
+            .into_iter()
+            .filter(|quad| quad.bounds == region)
+            .map(|quad| quad.background)
+            .filter(|background| background.as_solid().is_some_and(|color| color.a > 0.))
+            .collect()
+    })
+}
+
+/// A selected row keeps its host's colour in flat layouts as it does in
+/// rounded ones. A flat fill is opaque, so the wash paints over it; a
+/// rounded outline is translucent, so the wash stays under it.
+#[gpui::test]
+fn a_selected_row_keeps_its_host_colour(cx: &mut gpui::TestAppContext) {
+    use crate::config::{Density, LayoutMode, Style};
+    use gpui::{Background, Hsla, rgb, rgba};
+
+    const COLOUR: u32 = 0x336699;
+    let wash = Background::from(rgba((COLOUR << 8) | super::super::wash::REST_ALPHA));
+    for style in [Style::Flat, Style::Rounded] {
+        let (fixture, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| {
+                let mut view = fixture_window(window, cx);
+                view.config.layout.mode = LayoutMode::new(Density::Comfortable, style);
+                view.config.sidebar_style.hosts =
+                    BTreeMap::from([(view.endpoints[0].label.clone(), COLOUR)]);
+                // A second host, so the selected one draws a header.
+                view.endpoints.push(crate::endpoint::Endpoint::new(
+                    "ssh:test".into(),
+                    "Remote".into(),
+                    ConnectTarget::Ssh {
+                        target: "unused".into(),
+                        session: "default".into(),
+                    },
+                    true,
+                ));
+                view
+            });
+            cx.observe(&view, |_, _, cx| cx.notify()).detach();
+            SidebarFixture(view)
+        });
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| full_draw(window, cx).clear(cx));
+        let theme = cx.update(|_, cx| fixture.read(cx).0.read(cx).theme.clone());
+        let selected = match style {
+            Style::Flat => Background::from(Hsla::from(rgb(theme.active))),
+            Style::Rounded => Background::from(rgba((theme.foreground << 8) | 0x14)),
+        };
+        let expected = match style {
+            Style::Flat => [selected, wash],
+            Style::Rounded => [wash, selected],
+        };
+        // The focused workspace and the header of the host it is on.
+        for selector in ["highlight-herdr", "highlight-host-local"] {
+            assert_eq!(layers(cx, selector), expected, "{style:?} {selector}");
+        }
+    }
 }

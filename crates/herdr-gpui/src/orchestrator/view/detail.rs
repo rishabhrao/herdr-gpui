@@ -1,5 +1,5 @@
-//! One item's page: its description (Markdown, drawn as text), its runs, and
-//! its raw details, with the overview in a column beside the description.
+//! One item's page, in the pane beside a section's list: its overview and
+//! description (Markdown, drawn as text), its runs, and its raw details.
 
 use super::{
     Detail, DetailTab, Event, OrchestratorView,
@@ -28,15 +28,20 @@ impl OrchestratorView {
             self.detail = None;
             return div().into_any_element();
         };
-        let runs = Runs::new(&self.snapshot.runs, &self.snapshot.sessions, &self.live);
+        let runs = Runs::new(&self.snapshot().runs, &self.snapshot().sessions, &self.live);
         let item_runs = runs.of_item(&detail.key);
         let body = match detail.tab {
+            // The pane is narrow: the overview, with its actions, leads,
+            // and the description follows under it.
             DetailTab::Description => div()
+                .id("orchestrator-description-page")
                 .flex_1()
                 .min_h_0()
+                .overflow_y_scroll()
                 .flex()
-                .child(self.render_description(&item))
+                .flex_col()
                 .child(self.render_overview(&item, &runs, &item_runs, cx))
+                .child(self.render_description(&item))
                 .into_any_element(),
             DetailTab::Agent => self.render_runs(&runs, &item_runs, cx),
             DetailTab::Details => self.render_details(&item, cx),
@@ -67,7 +72,7 @@ impl OrchestratorView {
             None => ("Issues", "icons/note.svg", Tab::Issues),
         };
         let repo = self
-            .snapshot
+            .snapshot()
             .repo
             .as_ref()
             .and_then(|info| info.remote.as_ref())
@@ -75,7 +80,7 @@ impl OrchestratorView {
             .unwrap_or_else(|| item.key.source.repository.clone());
         let key = item.key.canonical();
         let url = item.url.clone();
-        let writable = self.snapshot.access == Some(Access::ReadWrite);
+        let writable = self.snapshot().access == Some(Access::ReadWrite);
         let pull_request = item.pull_request.is_some();
         let review_key = item.key.canonical();
         div()
@@ -140,12 +145,31 @@ impl OrchestratorView {
                     })
                     .when_some(url, |el, url| {
                         el.child(
-                            look.icon_button("orchestrator-detail-web", "icons/external.svg")
-                                .on_click(cx.listener(move |_, _, _, cx| {
+                            look.icon_button(
+                                "orchestrator-detail-web",
+                                "icons/external.svg",
+                                "Open in browser",
+                            )
+                            .on_click(cx.listener(
+                                move |_, _, _, cx| {
                                     cx.emit(Event::OpenUrl(url.clone()));
-                                })),
+                                },
+                            )),
                         )
-                    }),
+                    })
+                    .child(
+                        look.icon_button(
+                            "orchestrator-detail-close",
+                            "icons/close.svg",
+                            "Close details",
+                        )
+                        .debug_selector(|| "orchestrator-detail-close".into())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.detail = None;
+                            this.merge_open = false;
+                            cx.notify();
+                        })),
+                    ),
             )
             .child(
                 div()
@@ -240,7 +264,7 @@ impl OrchestratorView {
             .min_w_0()
             .text_size(look.size())
             .child(
-                look.icon_button("orchestrator-back", "icons/arrow-left.svg")
+                look.icon_button("orchestrator-back", "icons/arrow-left.svg", "Back")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.detail = None;
                         cx.notify();
@@ -292,9 +316,7 @@ impl OrchestratorView {
         };
         div()
             .id("orchestrator-description")
-            .flex_1()
             .min_w_0()
-            .overflow_y_scroll()
             .p_4()
             .child(content)
             .into_any_element()
@@ -337,13 +359,12 @@ impl OrchestratorView {
         div()
             .id("orchestrator-overview")
             .flex_none()
-            .w(px(300.))
-            .overflow_y_scroll()
+            .w_full()
             .p_4()
             .flex()
             .flex_col()
             .gap_2()
-            .border_l_1()
+            .border_b_1()
             .border_color(rgb(theme.active))
             .child(look.label("OVERVIEW"))
             .child(row("Source", text(source)))
@@ -522,6 +543,82 @@ impl OrchestratorView {
             )
     }
 
+    /// A run in a few lines: agent, host, branch, status, and the agent's
+    /// own title while Herdr shows it, with Open when it can be reached.
+    pub(super) fn run_card_small(
+        &self,
+        runs: &Runs<'_>,
+        row: RunRow,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let look = &self.look;
+        let theme = &look.theme;
+        let run = &runs.runs[row.run];
+        let live = runs.live(row.run);
+        let color = look.status_hue(row.status);
+        let host = run
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.host.clone())
+            .unwrap_or_else(|| "local".into());
+        let branch = run
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.branch.clone())
+            .unwrap_or_default();
+        let title = live.and_then(|agent| agent.title.clone());
+        let index = row.run;
+        div()
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .rounded(px(corners::CONTROL))
+            .bg(rgb(theme.surface))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(look.icon(agent_icon(&run.agent), 16., theme.foreground))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(format!("{} on {host}", run.agent)),
+                    )
+                    .child(look.dot(color, 7.))
+                    .child(
+                        div()
+                            .text_size(look.small())
+                            .text_color(rgb(color))
+                            .child(row.status.label()),
+                    ),
+            )
+            .when(!branch.is_empty(), |el| {
+                el.child(look.mono(branch).text_color(rgb(theme.muted)).truncate())
+            })
+            .when_some(title, |el, title| {
+                el.child(
+                    div()
+                        .text_size(look.small())
+                        .text_color(rgb(theme.subtext()))
+                        .truncate()
+                        .child(title),
+                )
+            })
+            .when(live.is_some(), |el| {
+                el.child(
+                    div().pt_1().child(
+                        look.button(("orchestrator-open-run", index), "Open agent", true)
+                            .on_click(cx.listener(move |this, _, _, cx| this.open_run(index, cx))),
+                    ),
+                )
+            })
+            .into_any_element()
+    }
+
     fn render_details(&self, item: &Item, cx: &mut Context<Self>) -> AnyElement {
         let look = &self.look;
         let theme = &look.theme;
@@ -551,7 +648,7 @@ impl OrchestratorView {
             value.map_or_else(|| "\u{2014}".to_owned(), |value| value.to_rfc3339())
         };
         let deletable = item.key.source.provider == crate::orchestrator::Provider::Beads
-            && self.snapshot.access == Some(Access::ReadWrite);
+            && self.snapshot().access == Some(Access::ReadWrite);
         let (source, id) = (item.key.source.clone(), item.key.native_id.clone());
         rows.push(("Created", time(item.created_at)));
         rows.push(("Updated", time(item.updated_at)));
@@ -611,7 +708,7 @@ impl OrchestratorView {
         let look = &self.look;
         let theme = &look.theme;
         let own = run.owner == Owner::HerdrGpui;
-        let writable = self.snapshot.access == Some(Access::ReadWrite);
+        let writable = self.snapshot().access == Some(Access::ReadWrite);
         let branch = run
             .workspace
             .as_ref()
@@ -663,16 +760,20 @@ impl OrchestratorView {
             })
             .when(own && writable && removable, |el| {
                 el.child(
-                    look.icon_button(("orchestrator-card-remove", index), "icons/trash.svg")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.ask(
-                                Confirm::Remove {
-                                    run: remove_run.clone(),
-                                    branch: branch.clone(),
-                                },
-                                cx,
-                            );
-                        })),
+                    look.icon_button(
+                        ("orchestrator-card-remove", index),
+                        "icons/trash.svg",
+                        "Remove",
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.ask(
+                            Confirm::Remove {
+                                run: remove_run.clone(),
+                                branch: branch.clone(),
+                            },
+                            cx,
+                        );
+                    })),
                 )
             })
     }

@@ -16,6 +16,9 @@ pub enum LaunchMode {
     /// Talk to the running app, or read its files, then exit without
     /// starting GPUI.
     Control(control::Invocation),
+    /// Hand a `herdr-gpui://` link to the running app, or start the app
+    /// and follow it there.
+    Link(crate::link::Link),
     /// Show the UI variants compiled in from `HERDR_MOCKUP_FILE`.
     #[cfg(feature = "mockup")]
     Mockup(MockupOptions),
@@ -100,6 +103,10 @@ pub enum CliError {
     },
     #[error("arguments must be UTF-8")]
     InvalidEncoding(OsString),
+    #[error("invalid link: {0}")]
+    Link(#[from] crate::link::Error),
+    #[error("a herdr-gpui:// link must be the only argument")]
+    LinkArguments,
     #[cfg(feature = "mockup")]
     #[error("{0} requires a path")]
     MissingMockupPath(&'static str),
@@ -115,8 +122,8 @@ pub enum CliError {
     #[cfg(feature = "integration-test")]
     #[error("--integration-test requires an explicit --socket")]
     MissingIntegrationSocket,
-    #[cfg(all(feature = "integration-test", not(target_os = "macos")))]
-    #[error("--performance-test currently requires macOS native event delivery")]
+    #[cfg(all(feature = "integration-test", not(any(target_os = "macos", windows))))]
+    #[error("--performance-test currently requires macOS or Windows native event delivery")]
     UnsupportedPerformancePlatform,
 }
 
@@ -168,6 +175,19 @@ impl LaunchOptions {
             return Ok(Self {
                 target: ConnectTarget::Local,
                 mode: LaunchMode::Control(control::parse(family, args)?),
+                serve: None,
+            });
+        }
+        if let Some(link) = args.next_if(|arg| crate::link::is_link(arg)) {
+            // The shell substitutes the whole link into one argument; a
+            // second one means it was split, perhaps to smuggle an option.
+            if args.next().is_some() {
+                return Err(CliError::LinkArguments);
+            }
+            let link = link.into_string().map_err(CliError::InvalidEncoding)?;
+            return Ok(Self {
+                target: ConnectTarget::Local,
+                mode: LaunchMode::Link(crate::link::Link::parse(&link)?),
                 serve: None,
             });
         }
@@ -262,7 +282,7 @@ impl LaunchOptions {
             if mode == LaunchMode::Integration && socket.is_none() {
                 return Err(CliError::MissingIntegrationSocket);
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", windows)))]
             if mode == LaunchMode::Performance {
                 return Err(CliError::UnsupportedPerformancePlatform);
             }

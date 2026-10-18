@@ -1,5 +1,5 @@
 //! Informational and usage-error paths must not reach GPUI or require a desktop/daemon.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::disallowed_methods)]
 
 use std::{
     process::{Command, Output, Stdio},
@@ -215,16 +215,11 @@ fn browser_open_reports_a_missing_app_and_a_refused_address() {
         "{output:?}"
     );
     let output = cli_in(&["browser", "open", "localhost:3000"], Some(state.path()));
-    if cfg!(unix) {
-        assert_eq!(output.status.code(), Some(3), "{output:?}");
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("not running"),
-            "{output:?}"
-        );
-    } else {
-        // No control socket on this platform yet: unsupported, not refused.
-        assert_eq!(output.status.code(), Some(8), "{output:?}");
-    }
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("not running"),
+        "{output:?}"
+    );
     assert!(output.stdout.is_empty(), "{output:?}");
 }
 
@@ -253,8 +248,7 @@ fn local_pages_and_feedback_need_the_app_and_a_plain_folder() {
 
     // A plain file is accepted and only the missing app stops it.
     let output = cli_in(&["browser", "open", page], Some(state.path()));
-    let expected = if cfg!(unix) { 3 } else { 8 };
-    assert_eq!(output.status.code(), Some(expected), "{output:?}");
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
 
     // A file in a hidden folder is never served.
     let output = cli_in(
@@ -315,12 +309,8 @@ fn control_commands_report_a_missing_app_by_status_and_in_json() {
         .prefix("hgc")
         .tempdir_in(parent)
         .unwrap();
-    // Windows builds have no control socket yet, and say so by status.
-    let (status, code, message) = if cfg!(unix) {
-        (3, "not_running", "Herdr UI is not running")
-    } else {
-        (8, "unsupported", "Unix socket")
-    };
+    // The state directory names a socket, or on Windows a pipe, of its own.
+    let (status, code, message) = (3, "not_running", "Herdr UI is not running");
     let output = cli_in(&["status"], Some(state.path()));
     assert_eq!(output.status.code(), Some(status), "{output:?}");
     let stderr = String::from_utf8(output.stderr).unwrap();

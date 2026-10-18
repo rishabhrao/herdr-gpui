@@ -20,6 +20,11 @@ pub(crate) struct Job {
     pub(crate) provider: CloudProvider,
     pub(crate) name: String,
     pub(crate) status: String,
+    /// How far along the job is, from its latest step; `None` before one.
+    pub(crate) progress: Option<f32>,
+    /// The setup script the device runs once shown, fixed when it was asked
+    /// for so an edit to the config meanwhile cannot change it.
+    setup: Option<String>,
     _worker: Worker,
 }
 
@@ -30,6 +35,9 @@ pub(crate) struct Jobs {
     /// How many jobs have finished, so a view showing saved devices (such as
     /// Settings) can tell when to read them again.
     finished: u64,
+    /// Bumped whenever a job starts, steps, or finishes, so a view showing
+    /// their progress redraws for that and not for the window's other changes.
+    revision: u64,
 }
 
 impl Jobs {
@@ -43,6 +51,10 @@ impl Jobs {
 
     pub(crate) fn finished(&self) -> u64 {
         self.finished
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Count a job as finished without running one.
@@ -72,11 +84,13 @@ impl Jobs {
 
 impl HerdrWindow {
     /// Run `work` to add the machine `name` from `provider`; it reports
-    /// through the picker and a toast. `work` blocks on its own worker.
+    /// through the picker and a toast. `work` blocks on its own worker. A
+    /// machine added with a `setup` script runs it once a window shows it.
     pub(crate) fn start_cloud_job(
         &mut self,
         provider: CloudProvider,
         name: String,
+        setup: Option<String>,
         work: impl FnOnce(&dyn Fn() -> bool, &dyn Fn(Step)) -> crate::Result<SavedDevice>
         + Send
         + 'static,
@@ -105,8 +119,11 @@ impl HerdrWindow {
             provider,
             name,
             status: format!("Contacting {}…", super::name(provider)),
+            progress: None,
+            setup,
             _worker: worker,
         });
+        self.cloud_jobs.revision += 1;
         cx.notify();
         Ok(())
     }
@@ -115,21 +132,43 @@ impl HerdrWindow {
         let Some(index) = self.cloud_jobs.jobs.iter().position(|job| job.id == id) else {
             return;
         };
+        self.cloud_jobs.revision += 1;
         match update {
-            Update::Step(step) => self.cloud_jobs.jobs[index].status = step.text(),
+            Update::Step(step) => {
+                let job = &mut self.cloud_jobs.jobs[index];
+                job.status = step.text();
+                job.progress = Some(step.progress());
+            }
             Update::Finished(result) => {
                 let job = self.cloud_jobs.jobs.remove(index);
                 self.cloud_jobs.finished += 1;
                 let (name, noun) = (super::name(job.provider), super::noun(job.provider));
                 match result {
-                    Ok(saved) => self.local_transfer_notice(
-                        &format!("{name} {noun} ready"),
-                        format!(
-                            "{} is ready. Choose it in the device picker to start working.",
-                            saved.label
-                        ),
-                        cx,
-                    ),
+                    Ok(saved) => {
+                        let then = if job.setup.is_some() {
+                            "; its setup script runs in a new tab when it connects"
+                        } else {
+                            " to start working"
+                        };
+                        self.local_transfer_notice(
+                            &format!("{name} {noun} ready"),
+                            format!(
+                                "{} is ready. Choose it in the device picker{then}.",
+                                saved.label
+                            ),
+                            cx,
+                        );
+                        if let Some(script) = job.setup {
+                            let pending = crate::cloud_setup::Pending::new(
+                                saved.endpoint_id(),
+                                saved.label,
+                                job.provider,
+                                script,
+                                std::time::Instant::now(),
+                            );
+                            self.queue_cloud_setup(pending, cx);
+                        }
+                    }
                     Err(error) => self.local_transfer_notice(
                         &format!("{name} {noun} setup failed"),
                         format!("{}: {error}", job.name),

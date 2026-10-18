@@ -112,11 +112,7 @@ fn kept(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, pane: &str) -> O
 }
 
 fn delivered(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, pane: &str) -> Option<String> {
-    if cfg!(unix) {
-        kept(view, cx, pane)
-    } else {
-        cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
-    }
+    kept(view, cx, pane)
 }
 
 #[gpui::test]

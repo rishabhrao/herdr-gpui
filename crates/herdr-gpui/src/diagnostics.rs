@@ -18,9 +18,10 @@ use std::{
     sync::{
         Arc, OnceLock,
         atomic::{AtomicU64, Ordering},
-        mpsc::{self, Receiver, SyncSender},
+        mpsc::{self, Receiver, SyncSender, TrySendError},
     },
     thread,
+    time::{Duration, Instant},
 };
 use tracing::{
     Event, Level, Subscriber,
@@ -150,6 +151,7 @@ pub(crate) fn init() -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
     });
     let _ = SINK.set(Sink {
         counters: counters.clone(),
+        flushes: path.as_ref().map(|_| lines.clone()),
         path,
     });
     tracing::subscriber::set_global_default(subscriber(Capture { lines, counters }))
@@ -157,7 +159,17 @@ pub(crate) fn init() -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
 
 struct Sink {
     counters: Arc<Counters>,
+    /// Where `flush` queues its marker, while a writer runs.
+    flushes: Option<SyncSender<Queued>>,
     path: Option<PathBuf>,
+}
+
+/// What the writer takes from its queue.
+enum Queued {
+    /// One serialized record, newline included.
+    Line(Vec<u8>),
+    /// Answered once every line queued before it is written or dropped.
+    Flush(SyncSender<()>),
 }
 
 /// The file the writer appends to, when one could be started.
@@ -177,6 +189,36 @@ pub(crate) fn dropped() -> u64 {
         .map_or(0, |sink| sink.counters.dropped.load(Ordering::Relaxed))
 }
 
+/// Waits, at most `timeout`, until every line this thread queued before the
+/// call was written or dropped. For a crashing process, which would otherwise
+/// end before the writer reaches its last records; nothing else needs to wait.
+pub(crate) fn flush(timeout: Duration) -> bool {
+    SINK.get()
+        .and_then(|sink| sink.flushes.as_ref())
+        .is_none_or(|flushes| flush_through(flushes, timeout))
+}
+
+/// Queues a marker behind this thread's lines (the queue is FIFO) and waits
+/// for the writer to answer it.
+fn flush_through(queue: &SyncSender<Queued>, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    let (ack, acked) = mpsc::sync_channel(1);
+    let mut marker = Queued::Flush(ack);
+    loop {
+        match queue.try_send(marker) {
+            Ok(()) => break,
+            Err(TrySendError::Full(back)) if Instant::now() < deadline => {
+                marker = back;
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(_) => return false,
+        }
+    }
+    acked
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .is_ok()
+}
+
 #[derive(Default)]
 struct Counters {
     generation: AtomicU64,
@@ -190,7 +232,7 @@ impl Counters {
     }
 }
 
-fn write_lines(path: PathBuf, queued: Receiver<Vec<u8>>, counters: &Counters) {
+fn write_lines(path: PathBuf, queued: Receiver<Queued>, counters: &Counters) {
     let mut log = LogFile {
         path,
         file: None,
@@ -198,18 +240,35 @@ fn write_lines(path: PathBuf, queued: Receiver<Vec<u8>>, counters: &Counters) {
     };
     let mut batch = Vec::new();
     while let Ok(first) = queued.recv() {
-        batch.extend_from_slice(&first);
-        let mut lines = 1;
-        while batch.len() < BATCH_BYTES
-            && let Ok(line) = queued.try_recv()
-        {
-            batch.extend_from_slice(&line);
-            lines += 1;
+        let mut lines = 0;
+        let mut flushed = None;
+        let mut next = Some(first);
+        while let Some(item) = next.take() {
+            match item {
+                Queued::Line(line) => {
+                    batch.extend_from_slice(&line);
+                    lines += 1;
+                }
+                // Everything before the marker is in this batch; it is
+                // answered once the batch is written.
+                Queued::Flush(ack) => {
+                    flushed = Some(ack);
+                    break;
+                }
+            }
+            if batch.len() < BATCH_BYTES {
+                next = queued.try_recv().ok();
+            }
         }
-        if log.append(&batch).is_err() {
-            counters.lose(lines);
-        } else {
-            counters.generation.fetch_add(1, Ordering::Release);
+        if lines > 0 {
+            if log.append(&batch).is_err() {
+                counters.lose(lines);
+            } else {
+                counters.generation.fetch_add(1, Ordering::Release);
+            }
+        }
+        if let Some(ack) = flushed {
+            let _ = ack.try_send(());
         }
         batch.clear();
     }
@@ -379,7 +438,7 @@ fn subscriber(capture: Capture) -> impl Subscriber + Send + Sync {
 }
 
 struct Capture {
-    lines: SyncSender<Vec<u8>>,
+    lines: SyncSender<Queued>,
     counters: Arc<Counters>,
 }
 struct FormattingGuard;
@@ -438,7 +497,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Capture {
             return;
         };
         line.push(b'\n');
-        if self.lines.try_send(line).is_err() {
+        if self.lines.try_send(Queued::Line(line)).is_err() {
             self.counters.lose(1);
         }
     }

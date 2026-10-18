@@ -34,6 +34,13 @@ impl HerdrWindow {
             }
             None => colored("offline".into(), theme.ink(theme.palette[1])),
         };
+        let spoken = match (reading.latency(), reading.loss_percent()) {
+            (Some(latency), Some(loss)) => {
+                format!("Network {:.0} ms, {loss:.0}% loss", millis(latency))
+            }
+            (Some(latency), None) => format!("Network {:.0} ms", millis(latency)),
+            (None, _) => "Network offline".to_owned(),
+        };
         let loss = reading.loss_percent().map(|loss| {
             colored(
                 format!("{loss:.0}%"),
@@ -44,6 +51,8 @@ impl HerdrWindow {
             div()
                 .id("network-quality")
                 .debug_selector(|| "network-quality".into())
+                .role(Role::Label)
+                .aria_value(spoken)
                 .flex()
                 .flex_none()
                 .items_center()

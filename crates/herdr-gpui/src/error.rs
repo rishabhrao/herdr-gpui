@@ -2,10 +2,7 @@
 pub use crate::updater::UpdateError;
 use daemon::daemon_error_message;
 pub use github::{GitHubAccountsError, GitHubJsonError};
-use std::{
-    io,
-    path::{Path, PathBuf},
-};
+use std::{io, path::PathBuf};
 pub use theme::ThemeParseError;
 
 #[cfg(any(target_os = "macos", windows))]
@@ -22,6 +19,9 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
+    #[cfg(feature = "azure")]
+    #[error(transparent)]
+    Azure(#[from] crate::azure::Error),
     #[error(transparent)]
     Backdrop(#[from] crate::backdrop::Error),
     #[cfg(feature = "boat")]
@@ -37,7 +37,7 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[error("Could not keep the display awake: {0}")]
+    #[error("Could not keep the machine awake: {0}")]
     Caffeine(#[source] keepawake::Error),
     #[error("No agent is working, so there is nothing to stay awake for")]
     CaffeineNoWorkingAgents,
@@ -78,7 +78,7 @@ pub enum Error {
     ClipboardChanged,
     #[error("Clipboard text is not valid UTF-8.")]
     ClipboardEncoding(#[source] std::str::Utf8Error),
-    #[error("Could not read the clipboard using wl-paste or xclip.")]
+    #[error("Could not read the clipboard; on Linux, install wl-paste or xclip.")]
     ClipboardProcess(#[source] io::Error),
     #[error("Clipboard content exceeds the {limit}-byte limit.")]
     ClipboardSize { limit: usize },
@@ -89,6 +89,12 @@ pub enum Error {
     #[cfg(feature = "cloud")]
     #[error(transparent)]
     Cloud(#[from] crate::cloud::Error),
+    /// Only CPU and memory are sampled on an Azure machine so far.
+    #[cfg(feature = "azure")]
+    #[error("This is not available for cloud machines yet.")]
+    CloudHostUnsupported,
+    #[error(transparent)]
+    CloudSetup(#[from] crate::cloud_setup::Error),
     #[error(transparent)]
     Code(#[from] crate::code_server::Error),
     #[error("This file is missing, larger than 1 MiB, or not UTF-8 text")]
@@ -120,6 +126,8 @@ pub enum Error {
     ControlMessageSize { limit: usize },
     #[error("Herdr UI closed the control connection without answering")]
     ControlNoResponse,
+    #[error("{} is held by something other than this user's Herdr UI, so it is not used", path.display())]
+    ControlPipeForeign { path: PathBuf },
     #[error("{message}")]
     ControlRejected {
         code: crate::control::ErrorCode,
@@ -133,14 +141,15 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[error(
-        "Controlling a running Herdr UI needs a Unix socket, which this platform build does not provide"
-    )]
-    ControlUnsupported,
+    #[error("Could not identify the Windows user: {0}")]
+    ControlUser(#[source] io::Error),
     #[error("Missing credential directory.")]
     CredentialDirectory,
     #[error("Cannot access private credential file.")]
     CredentialIo(#[source] io::Error),
+    #[cfg(windows)]
+    #[error(transparent)]
+    CredentialManager(#[from] crate::github::CredentialManagerError),
     #[error(
         "Cannot access private credential file. Require an owned directory and regular 0600 file; symlinks are rejected."
     )]
@@ -497,6 +506,9 @@ pub enum Error {
         command: &'static str,
         keystroke: String,
     },
+    #[cfg(windows)]
+    #[error(transparent)]
+    LaunchAtLogin(#[from] crate::launch_at_login::Error),
     #[error("File not found: {}", path.display())]
     LinkedFileMissing { path: PathBuf },
     #[error("This link names a file on another computer, {host}. It is not opened from here.")]
@@ -547,6 +559,8 @@ pub enum Error {
     NotInCheckout,
     #[error("Could not read the orchestrator's database: {0}")]
     OrchestratorItems(#[source] crate::orchestrator::Error),
+    #[error(transparent)]
+    Overview(#[from] crate::overview::Error),
     #[cfg(target_os = "macos")]
     #[error("The window has no view to place a page beneath")]
     PageStack,
@@ -720,7 +734,7 @@ pub enum Error {
         source: herdr_client::Error,
     },
     #[error(
-        "No base branch to compare with: neither the pull request's base nor origin/HEAD, main, or master exists locally."
+        "No base branch to compare with: neither the pull request's base nor origin/HEAD, main, or master exists locally. Pick one with the base button above."
     )]
     ReviewNoBase,
     #[error("These changes are too large to review here, even leaving out the largest files.")]
@@ -921,8 +935,6 @@ pub enum Error {
     UsageTimeout,
     #[error("Could not reach this host over SSH to read usage.")]
     UsageUnreachable,
-    #[error("Remote usage needs SSH, which this platform's client does not support.")]
-    UsageUnsupported,
     #[cfg(any(target_os = "macos", windows))]
     #[error("Could not create the page: {0}")]
     WebView(#[from] wry::Error),
@@ -965,25 +977,21 @@ pub enum Error {
     WorktreeScriptsUnsupportedHost,
     #[error("Select a checkout from the daemon's worktree list.")]
     WorktreeSelection,
-    /// Probes that open a shell on the host (usage, load, ports, checkpoints)
-    /// have no route into a WSL distribution yet.
-    #[error("This is not available for WSL distributions yet.")]
+    /// A shell into a WSL distribution starts through `wsl.exe`, which only a
+    /// Windows client has.
+    #[error("WSL distributions can only be reached from Windows.")]
     WslHostUnsupported,
+    #[error("Another drop's paths are still being mapped in WSL. Try again in a moment.")]
+    WslPasteBusy,
+    #[error("The pane the files were dropped on changed before their paths were ready.")]
+    WslPasteTargetGone,
     // keep-sorted end
-}
-
-impl Error {
-    pub(crate) fn at_path(self, path: &Path) -> Self {
-        Self::Path {
-            path: path.to_owned(),
-            source: Box::new(self),
-        }
-    }
 }
 
 mod config;
 mod daemon;
 mod github;
+mod path;
 mod theme;
 
 #[cfg(test)]

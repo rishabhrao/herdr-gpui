@@ -51,7 +51,9 @@ static META: Meta = Meta::new("windsurf", "Windsurf")
          devin_primary_org_id into one JSON object: \
          {\"devin_session_token\": \"…\", \"devin_auth1_token\": \"…\", \
          \"devin_account_id\": \"…\", \"devin_primary_org_id\": \"…\"}. Without it, the \
-         plan the Windsurf editor cached at its last launch is shown.",
+         plan the Windsurf editor cached at its last launch is shown; on the Mac \
+         running Herdr only when windsurf is in show_providers, as macOS may ask before Herdr reads \
+         another app's data.",
     )]);
 
 impl Service for Windsurf {
@@ -62,6 +64,10 @@ impl Service for Windsurf {
     fn fetch(&self, probe: &mut Probe) -> Option<Result<Report>> {
         if let Some(bundle) = probe.setting("session") {
             return Some(web(probe, &bundle));
+        }
+        // The cache lives in Windsurf's own folder; see [`Probe::app_data`].
+        if !probe.app_data() {
+            return None;
         }
         let cache = if probe.is_macos() {
             MAC_CACHE

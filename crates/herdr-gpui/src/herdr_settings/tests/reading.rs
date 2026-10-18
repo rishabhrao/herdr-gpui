@@ -29,7 +29,6 @@ fn windows_shared_settings_are_bounded_and_read_only() -> anyhow::Result<()> {
 fn defaults_and_path_precedence_without_environment_mutation() -> anyhow::Result<()> {
     let settings = parsed("")?;
     assert_eq!(settings.theme_name, "catppuccin");
-    assert_eq!(settings.indicators, IndicatorStyle::Dots);
     assert!(settings.sound_enabled);
     assert_eq!(settings.toast_delivery, ToastDelivery::Off);
     assert_eq!(settings.toast_delay_seconds, 1);
@@ -72,7 +71,6 @@ enabled = false
 position = "top-center"
 "#,
     )?;
-    assert_eq!(settings.indicators, IndicatorStyle::Symbols);
     assert_eq!(settings.toast_delivery, ToastDelivery::System);
     assert_eq!(settings.toast_delay_seconds, 3600);
     assert_eq!(settings.toast_position, ToastPosition::TopLeft);
@@ -143,7 +141,6 @@ fn name_prompts_follow_both_ui_keys() -> anyhow::Result<()> {
 fn values_from_a_newer_herdr_fall_back_one_by_one() -> anyhow::Result<()> {
     // Each value this build cannot read keeps its own default.
     for text in [
-        "[ui]\nstatus_indicators = 'bars'",
         "[ui]\nagent_panel_sort = 'grouped'",
         "[ui.sound]\nenabled = 'true'",
         "[theme]\nauto_switch = 1",
@@ -161,7 +158,6 @@ fn values_from_a_newer_herdr_fall_back_one_by_one() -> anyhow::Result<()> {
     ] {
         let settings = parsed(text)?;
         let defaults = parsed("")?;
-        assert_eq!(settings.indicators, defaults.indicators, "{text}");
         assert_eq!(settings.agent_sort, defaults.agent_sort, "{text}");
         assert_eq!(settings.sound_enabled, defaults.sound_enabled, "{text}");
         assert_eq!(settings.toast_delivery, defaults.toast_delivery, "{text}");
@@ -195,7 +191,6 @@ fn values_from_a_newer_herdr_fall_back_one_by_one() -> anyhow::Result<()> {
          [ui.toast.clipboard]\nenabled = false\nposition = 'middle'",
     )?;
     assert_eq!(settings.theme_name, "nord");
-    assert_eq!(settings.indicators, IndicatorStyle::Symbols);
     assert_eq!(settings.toast_delivery, ToastDelivery::Herdr);
     assert_eq!(settings.toast_delay_seconds, 9);
     assert_eq!(settings.toast_position, ToastPosition::TopLeft);

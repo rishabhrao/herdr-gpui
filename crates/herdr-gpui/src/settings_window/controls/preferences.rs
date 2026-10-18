@@ -70,7 +70,7 @@ impl SettingsWindow {
         div().debug_selector(|| "integrations-search".into()).flex().flex_col().gap(px(16.))
             .child(self.controls.integration_search.clone())
             .child(self.source.update(cx, |source, cx| source.render_filtered_integrations(&query, cx))
-                .unwrap_or_else(|_| div().child("Open a session window to manage agent integrations. Local preferences remain available.")))
+                .unwrap_or_else(|_| div().child("Open a session window to manage agent integrations. Herdr UI settings remain available.")))
     }
 
     /// A switch that saves `edit` when clicked; saves refuse to overlap, so a

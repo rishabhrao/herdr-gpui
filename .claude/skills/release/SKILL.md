@@ -37,6 +37,18 @@ failure is not a surprise:
 | `origin` is `penso/herdr-gpui` | `git remote get-url origin` |
 | `gh` authenticated as `penso` | `gh api user --jq .login` |
 | Local HEAD == `origin/main` on GitHub | compare `git rev-parse HEAD` with `gh api repos/penso/herdr-gpui/git/ref/heads/main --jq .object.sha` |
+The release workflow runs no test suites of its own: its `ci-gate` job
+requires a successful owner-triggered push or manual CI run on main with every
+platform check and Linux optimized build completed successfully. A green run
+with skipped checks does not qualify. CI builds macOS release binaries on pull
+requests only, so the release's macOS builds get the macOS runners. `dispatch.sh` does not wait for CI: the
+release builds while CI runs, and `ci-gate` holds `sign` and `windows-sign`
+until CI passes, so a failed or cancelled CI run fails the release at `ci-gate`.
+If a CI job fails on a known flake, rerun it (`gh run rerun <id> --failed`)
+while `ci-gate` waits. For a documentation-only commit whose push CI skipped
+the suites, run `gh workflow run ci.yml --repo penso/herdr-gpui --ref main`
+before dispatching. Apple's notary and stapler calls retry ten times in
+`sign-macos.sh`, so a dropped connection there rarely needs a rerun.
 
 The script never fetches or checks out for you: if HEAD does not match, stop and
 tell the owner rather than pulling on their behalf.
@@ -89,13 +101,19 @@ everything since the previous stable one. `release.yml` and `promote.yml` share 
 ## The run stops for approvals
 
 Jobs run roughly: `audit` (shown as "Release Workflow Security") and `validate`,
-then `macos-checks`, `macos-build` (arm64 + x86_64), `linux` (aarch64 + x86_64),
-`windows` (x86_64 MSVC), `metadata` and `changelog`, then `sign`, `attest`, `publish`,
-and finally `homebrew`.
+then `macos-build` (arm64 + x86_64, both on Apple Silicon), `linux` (aarch64 + x86_64),
+`windows` (x86_64 and ARM64 MSVC), `metadata` and `changelog`, then `sign` and
+`windows-sign` (Authenticode, one per Windows target), `windows-smoke` (installs
+the signed installers), `attest`, `publish`, and finally `homebrew` and `winget`.
+Until the `WINDOWS_SIGNING_SUBJECT` repository variable is set, `windows-sign`,
+`windows-smoke` and `winget` are skipped and Windows ships unsigned.
 
-`sign`, `attest` and `publish` use the **`release`** environment; `homebrew` uses
-the **`homebrew`** environment. Both have required reviewers, so the run pauses
-at each and waits. `sign` is additionally gated on the actor being `penso`.
+`sign`, `windows-sign`, `attest` and `publish` use the **`release`** environment;
+`homebrew` uses the **`homebrew`** environment and `winget` the **`winget`**
+environment. All have required reviewers, so the run pauses at each and waits.
+`sign` is additionally gated on the actor being `penso`. Betas skip `homebrew`
+and `winget`; `just release-promote` runs both. `winget` only warns until the
+first winget-pkgs version is submitted by hand (`scripts/release/README.md`).
 
 Approve a pending gate:
 

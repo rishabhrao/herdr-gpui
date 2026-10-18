@@ -31,6 +31,11 @@ pub(super) struct HostMark {
 }
 
 impl HostMark {
+    /// The opacity of the host's rows.
+    pub(super) fn opacity(self) -> f32 {
+        if self.dim { DIM_OPACITY } else { 1. }
+    }
+
     /// The mark for the host named `label`, given whether it holds the
     /// selected workspace. In `row` mode only configured colours show. The
     /// group modes raise the selected host's wash, with the theme's active
@@ -70,9 +75,9 @@ impl HostMark {
         }
     }
 
-    /// The row's wash layer and dimming. The layer is absolutely positioned,
-    /// inset like the highlight, and added before it, so the highlight and
-    /// the row's content paint over the colour.
+    /// The row's wash layer and dimming. The layer is absolutely positioned
+    /// and inset like the highlight; [`SidebarLook::washed`] decides which
+    /// of the two paints on top. The row's content paints over both.
     pub(super) fn apply<E: ParentElement + Styled>(
         &self,
         row: E,

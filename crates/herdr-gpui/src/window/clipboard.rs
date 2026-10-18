@@ -2,12 +2,12 @@
 
 use crate::{Error, Result};
 use gpui::ClipboardItem;
-#[cfg(any(target_os = "macos", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 use gpui::{Image, ImageFormat};
 
-#[cfg(any(target_os = "macos", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 const TEXT_LIMIT: usize = 2 * 1024 * 1024;
-#[cfg(any(target_os = "macos", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 const IMAGE_LIMIT: usize = super::image_source::MAX_IMAGE_INPUT_BYTES;
 
 /// Blocking: invoke only on a background executor, never through an App context.
@@ -29,7 +29,11 @@ pub(super) fn read(image_only: bool) -> Result<Option<ClipboardItem>> {
     {
         linux::read(image_only)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    {
+        windows::read(image_only)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         let _ = image_only;
         Err(Error::ClipboardUnsupported)
@@ -110,7 +114,7 @@ fn file_paths(pasteboard: &objc2_app_kit::NSPasteboard) -> Vec<std::path::PathBu
         .collect()
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows, test))]
 fn read_with(
     image_only: bool,
     mut acquire: impl FnMut(Option<ImageFormat>, usize) -> Result<Option<Vec<u8>>>,
@@ -165,7 +169,11 @@ mod linux {
             std::env::var_os("WAYLAND_DISPLAY").is_some(),
             std::env::var_os("DISPLAY").is_some(),
             |program, args, limit, deadline| {
-                output(Command::new(program).args(args), limit, deadline)
+                output(
+                    herdr_client::new_command(program).args(args),
+                    limit,
+                    deadline,
+                )
             },
         )
     }
@@ -380,6 +388,9 @@ mod linux {
     }
 }
 
+#[cfg(windows)]
+mod windows;
+
 #[cfg(all(test, target_os = "macos"))]
 mod pasteboard_tests;
 
@@ -495,7 +506,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     #[test]
     fn unsupported_platform_is_explicit() {
         assert!(matches!(read(true), Err(Error::ClipboardUnsupported)));

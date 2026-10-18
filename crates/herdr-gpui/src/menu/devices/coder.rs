@@ -53,6 +53,9 @@ pub(in crate::menu) struct Wizard {
     /// Run Herdr's installer when the workspace lacks it. On by default: the
     /// switch is the user's approval, given before the job starts.
     install: bool,
+    /// Run the configured setup script once the device connects. Off for an
+    /// existing workspace, which may well be set up already.
+    setup: bool,
     status: Option<String>,
     /// Dropping the job cancels it, so closing the dialog stops its work.
     job: Option<worker::Worker>,
@@ -99,6 +102,7 @@ impl HerdrWindow {
             name: self.coder_input("Workspace name", &name, cx),
             label: self.coder_input("Device name (defaults to the workspace name)", "", cx),
             install: true,
+            setup: true,
             status: None,
             job: None,
             error: None,
@@ -291,6 +295,7 @@ impl HerdrWindow {
         wizard.choice = Some(Choice::Template(template.id.clone()));
         wizard.presets = None;
         wizard.preset = None;
+        wizard.setup = true;
         self.set_coder_error(None);
         self.coder_job(cx, move |settings, _, send| {
             let id = template.id.clone();
@@ -306,6 +311,7 @@ impl HerdrWindow {
         wizard.choice = Some(Choice::Existing(workspace.id.clone()));
         wizard.presets = None;
         wizard.preset = None;
+        wizard.setup = false;
         self.set_coder_error(None);
         cx.notify();
     }
@@ -397,10 +403,20 @@ impl HerdrWindow {
             label: wizard.label.read(cx).text().trim().to_owned(),
             install: wizard.install,
         };
+        let script = wizard
+            .setup
+            .then(|| {
+                self.config
+                    .cloud
+                    .script(CloudProvider::Coder)
+                    .ok()
+                    .flatten()
+            })
+            .flatten();
         let work = move |cancelled: &dyn Fn() -> bool, report: &dyn Fn(crate::cloud::Step)| {
             setup::add_device(request, cancelled, report)
         };
-        match self.start_cloud_job(CloudProvider::Coder, name, work, cx) {
+        match self.start_cloud_job(CloudProvider::Coder, name, script, work, cx) {
             // The footer's count and the picker's Adding list show progress.
             Ok(()) => self.dismiss_menu(window, cx),
             Err(error) => {
@@ -626,6 +642,7 @@ impl HerdrWindow {
             (Some(Choice::Existing(id)), Some(account)) if account.saved.contains(id)
         );
         let text = |text: String| div().flex_none().text_color(rgb(theme.muted)).child(text);
+        let has_script = matches!(self.config.cloud.script(CloudProvider::Coder), Ok(Some(_)));
         body = match wizard.phase {
             Phase::Checking | Phase::Loading => {
                 body.child(text("Checking your Coder account…".into()))
@@ -661,6 +678,21 @@ impl HerdrWindow {
                             cx.notify();
                         },
                     ))
+                    .when(has_script, |body| {
+                        body.child(self.coder_row(
+                            "coder-run-setup",
+                            "Run the setup script when it connects".into(),
+                            crate::cloud_setup::summary(&self.config.cloud, CloudProvider::Coder),
+                            wizard.setup,
+                            cx,
+                            |this, cx| {
+                                if let Some(wizard) = &mut this.menu.coder {
+                                    wizard.setup = !wizard.setup;
+                                }
+                                cx.notify();
+                            },
+                        ))
+                    })
                 }),
         };
         if let Some(status) = &wizard.status {
@@ -758,3 +790,6 @@ impl HerdrWindow {
         true
     }
 }
+
+#[cfg(test)]
+mod tests;

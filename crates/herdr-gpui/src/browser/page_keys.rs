@@ -7,7 +7,7 @@
 //!
 //! A local event monitor runs before any of that. While a page is the
 //! window's first responder, it hands the key straight to the page, so the
-//! page's own shortcuts win, as a terminal program's do in its pane. Two
+//! page's own shortcuts win, as a terminal program's do in its pane. Three
 //! kinds of key go elsewhere, as they do in Safari:
 //!
 //! - Cut, copy, and paste reach a page as the edit menu's actions, not as
@@ -16,6 +16,9 @@
 //! - The keys macOS keeps for the app and its windows, such as quit and
 //!   hide, stay with the app. A child page swallows keys it leaves
 //!   unhandled, so these would otherwise do nothing while it has focus.
+//! - The keys bound to moving to another tab, workspace, or agent stay with
+//!   the app, as a browser keeps its tab keys. Without them, only the mouse
+//!   could leave a page.
 //!
 //! The monitor and the edit actions are the AppKit calls here, and they need
 //! `unsafe`: the monitor's handler must return a valid event or null, and an
@@ -24,14 +27,16 @@
 //! equivalents.
 #![allow(unsafe_code)]
 
+use crate::{controls::Command, keymap::Keymap};
 use block2::RcBlock;
+use gpui::{KeybindingKeystroke, Keystroke, Modifiers};
 use objc2::{
     ClassType, MainThreadMarker, rc::Retained, runtime::AnyObject, runtime::NSObjectProtocol, sel,
 };
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType};
 use objc2_web_kit::WKWebView;
 use std::{
-    cell::OnceCell,
+    cell::{OnceCell, RefCell},
     ptr::{NonNull, null_mut},
 };
 
@@ -39,6 +44,49 @@ thread_local! {
     /// The monitor, installed with the first page and kept for the life of
     /// the app.
     static MONITOR: OnceCell<Option<Retained<AnyObject>>> = const { OnceCell::new() };
+    /// The keystrokes of the commands that leave a page, from the keymap
+    /// bound last.
+    static LEAVING: RefCell<Vec<KeybindingKeystroke>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The commands a focused page leaves to the app: moving to another tab,
+/// workspace, or agent.
+fn leaves_page(command: Command) -> bool {
+    matches!(
+        command,
+        Command::NextTab
+            | Command::PreviousTab
+            | Command::TabNumber(_)
+            | Command::NextWorkspace
+            | Command::PreviousWorkspace
+            | Command::WorkspaceNumber(_)
+            | Command::NextAgent
+            | Command::PreviousAgent
+            | Command::AgentNumber(_)
+    )
+}
+
+/// From now on, a focused page leaves to the app the keystrokes `keymap`
+/// binds to the commands that leave a page. Prefix chords are not among
+/// them: the prefix is the page's.
+pub(crate) fn bind(keymap: &Keymap) {
+    let keys = keymap
+        .bindings()
+        .filter(|(command, _)| leaves_page(*command))
+        .filter_map(|(_, label)| Keystroke::parse(label).ok())
+        .map(KeybindingKeystroke::from_keystroke)
+        .collect();
+    LEAVING.with(|leaving| *leaving.borrow_mut() = keys);
+}
+
+/// Whether `typed` is bound to a command that leaves a page.
+fn leaves(typed: &Keystroke) -> bool {
+    LEAVING.with(|leaving| {
+        leaving
+            .borrow()
+            .iter()
+            .any(|bound| typed.should_match(bound))
+    })
 }
 
 /// Starts routing keys to pages. Later calls do nothing.
@@ -91,6 +139,53 @@ struct Held {
     shift: bool,
     option: bool,
     control: bool,
+    function: bool,
+}
+
+/// The keystroke GPUI reads from a key pressed with `held`. `plain` is what
+/// the key types with no modifier, or with Command alone while Command is
+/// held, as GPUI reads shortcuts; `shifted` is what it types with Shift as
+/// held.
+fn typed(held: Held, plain: &str, shifted: &str) -> Keystroke {
+    let first = plain.chars().next();
+    let named = first.and_then(named_key);
+    Keystroke {
+        modifiers: Modifiers {
+            control: held.control,
+            alt: held.option,
+            shift: held.shift,
+            platform: held.command,
+            // Arrows and function keys always carry Fn, which GPUI drops.
+            function: held.function
+                && !first.is_some_and(|key| ('\u{f700}'..='\u{f747}').contains(&key)),
+        },
+        key_char: named.is_none().then(|| shifted.to_owned()),
+        key: named.unwrap_or_else(|| plain.to_lowercase()),
+    }
+}
+
+/// GPUI's name for a key that types no text of its own.
+fn named_key(key: char) -> Option<String> {
+    let name = match key {
+        ' ' => "space",
+        '\t' | '\u{19}' => "tab",
+        '\r' | '\u{3}' => "enter",
+        '\u{7f}' => "backspace",
+        '\u{1b}' => "escape",
+        '\u{f700}' => "up",
+        '\u{f701}' => "down",
+        '\u{f702}' => "left",
+        '\u{f703}' => "right",
+        '\u{f704}'..='\u{f726}' => return Some(format!("f{}", u32::from(key) - 0xf703)),
+        '\u{f728}' => "delete",
+        '\u{f729}' => "home",
+        '\u{f72b}' => "end",
+        '\u{f72c}' => "pageup",
+        '\u{f72d}' => "pagedown",
+        '\u{f746}' => "insert",
+        _ => return None,
+    };
+    Some(name.to_owned())
 }
 
 /// Routes a key down by its modifiers and the character it types without
@@ -139,12 +234,25 @@ fn deliver(event: &NSEvent) -> bool {
                 shift: flags.contains(NSEventModifierFlags::Shift),
                 option: flags.contains(NSEventModifierFlags::Option),
                 control: flags.contains(NSEventModifierFlags::Control),
+                function: flags.contains(NSEventModifierFlags::Function),
             };
-            let key = event
+            let shifted = event
                 .charactersIgnoringModifiers()
-                .map(|key| key.to_string().to_lowercase())
+                .map(|key| key.to_string())
                 .unwrap_or_default();
-            match route(held, &key) {
+            let layout = if held.command {
+                NSEventModifierFlags::Command
+            } else {
+                NSEventModifierFlags::empty()
+            };
+            let plain = event
+                .charactersByApplyingModifiers(layout)
+                .map(|key| key.to_string())
+                .unwrap_or_default();
+            if leaves(&typed(held, &plain, &shifted)) {
+                return false;
+            }
+            match route(held, &shifted.to_lowercase()) {
                 Route::Page => page.keyDown(event),
                 Route::App => return false,
                 Route::Edit(edit) => {

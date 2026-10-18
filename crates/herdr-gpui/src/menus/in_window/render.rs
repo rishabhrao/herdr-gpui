@@ -70,6 +70,10 @@ impl HerdrWindow {
         let bar = div()
             .id("application-menu-bar")
             .debug_selector(|| "application-menu-bar".into())
+            // The overlay's copy repeats this bar for the pointer only.
+            .when(measure, |bar| {
+                bar.role(Role::MenuBar).aria_label("Menu bar")
+            })
             .relative()
             .flex()
             .flex_none()
@@ -104,6 +108,7 @@ impl HerdrWindow {
                     .map(|(slot, (index, name, disabled))| {
                         let buttons = buttons.clone();
                         let selector = format!("application-menu-{name}");
+                        let view = cx.entity().downgrade();
                         let active = self
                             .menu
                             .application
@@ -112,6 +117,30 @@ impl HerdrWindow {
                         div()
                             .id(SharedString::from(selector.clone()))
                             .debug_selector(move || selector.clone())
+                            .when(measure, |button| {
+                                let heading = button.role(Role::MenuItem).aria_label(name.clone());
+                                let heading = crate::accessibility::disabled(heading, disabled);
+                                if disabled {
+                                    return heading;
+                                }
+                                heading
+                                    .aria_expanded(active)
+                                    .on_a11y_action(
+                                        AccessibleAction::Expand,
+                                        crate::accessibility::update(
+                                            view.clone(),
+                                            move |this, window, cx| {
+                                                this.open_application_menu(index, window, cx)
+                                            },
+                                        ),
+                                    )
+                                    .on_a11y_action(
+                                        AccessibleAction::Collapse,
+                                        crate::accessibility::update(view, |this, window, cx| {
+                                            this.dismiss_menu(window, cx)
+                                        }),
+                                    )
+                            })
                             .relative()
                             .flex_none()
                             .h_full()
@@ -179,14 +208,18 @@ impl HerdrWindow {
         crate::titlebar::movable(bar, window)
     }
 
-    fn application_shortcut(&self, action: &dyn Action, cx: &App) -> String {
+    /// A menu item's shortcut in keymap spelling, the way the palette and the
+    /// Keyboard Shortcuts page show it. A `cmd-` the user configured is
+    /// named for this desktop's platform key, as GPUI's `unparse` names it.
+    pub(super) fn application_shortcut(&self, action: &dyn Action, cx: &App) -> String {
         if let Some(command) = action.as_any().downcast_ref::<crate::RunCommand>() {
+            let platform = if cfg!(windows) { "win-" } else { "super-" };
             return self
                 .keymap()
                 .shortcuts(command.command)
                 .next()
                 .unwrap_or_default()
-                .replace("cmd-", "super-");
+                .replace("cmd-", platform);
         }
         cx.key_bindings()
             .borrow()
@@ -196,7 +229,7 @@ impl HerdrWindow {
                 binding
                     .keystrokes()
                     .iter()
-                    .map(ToString::to_string)
+                    .map(KeybindingKeystroke::unparse)
                     .collect::<Vec<_>>()
                     .join(" ")
             })
@@ -234,6 +267,12 @@ impl HerdrWindow {
         let Some(menu) = &self.menu.application else {
             return overlay;
         };
+        // Focus stays on the overlay while the arrows move the highlight, so
+        // the overlay is the menu and the highlighted row its active item.
+        overlay = overlay.role(Role::Menu).aria_label(
+            menu.current()
+                .map_or_else(|| SharedString::from("Menu"), |menu| menu.name.clone()),
+        );
         let bar = self.menu.application_bar.bar.get();
         let content = self.menu.application_bar.content.get();
         let compact = self.compact_application_bar(window);
@@ -299,9 +338,24 @@ impl HerdrWindow {
                 }
             };
             let selector = format!("application-item-{name}");
+            let spoken = match detail.as_str() {
+                "" | "›" => name.clone(),
+                shortcut => format!("{name}, {shortcut}"),
+            };
+            let item = div()
+                .id(("application-item", index))
+                .role(if checked {
+                    Role::MenuItemCheckBox
+                } else {
+                    Role::MenuItem
+                })
+                .aria_label(spoken)
+                .when(checked, |item| item.aria_toggled(Toggled::True))
+                .when(menu.selected == Some(index), |item| {
+                    item.aria_active_descendant()
+                });
             rows = rows.child(
-                div()
-                    .id(("application-item", index))
+                crate::accessibility::disabled(item, disabled)
                     .debug_selector(move || selector.clone())
                     .flex()
                     .flex_none()
@@ -366,6 +420,8 @@ impl HerdrWindow {
                     div()
                         .id("application-menu-back")
                         .debug_selector(|| "application-menu-back".into())
+                        .role(Role::MenuItem)
+                        .aria_label(format!("Back to {}", current.name))
                         .flex_none()
                         .p(px(8.))
                         .cursor_pointer()

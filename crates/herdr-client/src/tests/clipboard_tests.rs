@@ -50,19 +50,4 @@ fn image_writer_preserves_offsets_through_short_writes_and_timeouts() {
     ));
 }
 
-#[cfg(windows)]
-#[test]
-fn images_refuse_unbounded_pipe_writes() {
-    let (client, _server, worker) = test_client();
-    assert!(matches!(
-        client
-            .handle
-            .reserve_clipboard_image("boot", ClientClipboardImageTarget::DirectTerminal),
-        Err(Error::ClipboardImageUnsupported)
-    ));
-    client.handle.disconnect();
-    worker.join().unwrap().unwrap();
-}
-
-#[cfg(unix)]
-mod unix;
+mod session;

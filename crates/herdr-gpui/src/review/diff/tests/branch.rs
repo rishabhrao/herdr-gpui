@@ -61,7 +61,7 @@ fn changed(loaded: &Loaded, kind: Kind) -> Vec<&str> {
 
 /// The checkout's changes in `scope`, every file read.
 fn read(directory: &tempfile::TempDir, scope: Scope, hint: Option<&str>) -> crate::Result<Loaded> {
-    let mut loaded = load(&input(directory), scope, hint, false)?;
+    let mut loaded = load(&input(directory), scope, None, hint, false)?;
     loaded.read_all();
     Ok(loaded)
 }
@@ -117,7 +117,7 @@ fn the_base_falls_back_from_a_missing_or_unsafe_hint() {
 #[test]
 fn candidates_are_full_refs_in_order_without_repeats() {
     assert_eq!(
-        load::base_candidates(Some("develop"), Some("refs/remotes/origin/main")),
+        load::base_candidates(None, Some("develop"), Some("refs/remotes/origin/main")),
         [
             "refs/remotes/origin/develop",
             "refs/heads/develop",

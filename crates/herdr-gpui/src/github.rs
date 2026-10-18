@@ -4,6 +4,8 @@
 
 mod auth;
 mod cli;
+#[cfg(windows)]
+mod credential_manager;
 mod credentials;
 mod device;
 mod http;
@@ -14,6 +16,8 @@ mod secret_service;
 mod store;
 mod token;
 
+#[cfg(windows)]
+pub use credential_manager::Error as CredentialManagerError;
 #[cfg(all(unix, feature = "boat"))]
 pub(crate) use credentials::read_checked as read_private_entry;
 
@@ -28,7 +32,12 @@ pub(crate) use {
     store::{Account, Note, Store},
 };
 // Cloud providers keep their own secrets in the same store.
-#[cfg(any(feature = "boat", feature = "coder", feature = "daytona"))]
+#[cfg(any(
+    feature = "azure",
+    feature = "boat",
+    feature = "coder",
+    feature = "daytona"
+))]
 pub(crate) use store::{Entry, read_entry, save_entry};
 
 use crate::Result;

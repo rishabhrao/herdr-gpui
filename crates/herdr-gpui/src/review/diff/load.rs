@@ -120,10 +120,34 @@ pub(super) fn plain_branch(name: &str) -> bool {
             .any(|c| c.is_whitespace() || c.is_control() || "~^:?*[\\@{".contains(c))
 }
 
-/// Refs the base may be, most specific first: the pull request's base, the
-/// remote's default branch, then the usual names. Full ref names, so none can
-/// be taken for an option.
-pub(super) fn base_candidates(hint: Option<&str>, remote_head: Option<&str>) -> Vec<String> {
+/// A local or remote-tracking branch's full ref, as the user may pick it
+/// for the base: nothing else Git would resolve.
+pub(super) fn branch_ref(name: &str) -> bool {
+    name.strip_prefix("refs/heads/")
+        .or_else(|| name.strip_prefix("refs/remotes/"))
+        .is_some_and(plain_branch)
+}
+
+/// A branch's ref as it is shown: `origin/main` or `main`.
+pub(crate) fn short_ref(name: &str) -> &str {
+    name.strip_prefix("refs/remotes/")
+        .or_else(|| name.strip_prefix("refs/heads/"))
+        .unwrap_or(name)
+}
+
+/// Refs the base may be, most specific first: the branch the user picked,
+/// the pull request's base, the remote's default branch, then the usual
+/// names. Full ref names, so none can be taken for an option.
+pub(super) fn base_candidates(
+    chosen: Option<&str>,
+    hint: Option<&str>,
+    remote_head: Option<&str>,
+) -> Vec<String> {
+    let mut refs: Vec<String> = chosen
+        .filter(|name| branch_ref(name))
+        .map(str::to_owned)
+        .into_iter()
+        .collect();
     let mut names: Vec<&str> = hint.into_iter().filter(|name| plain_branch(name)).collect();
     if let Some(head) = remote_head
         .and_then(|head| head.strip_prefix("refs/remotes/origin/"))
@@ -132,7 +156,6 @@ pub(super) fn base_candidates(hint: Option<&str>, remote_head: Option<&str>) -> 
         names.push(head);
     }
     names.extend(["main", "master"]);
-    let mut refs = Vec::new();
     for name in names {
         for candidate in [
             format!("refs/remotes/origin/{name}"),
@@ -150,6 +173,7 @@ pub(super) fn base_candidates(hint: Option<&str>, remote_head: Option<&str>) -> 
 /// left it. Reads local refs only; nothing is fetched.
 fn branch_base(
     checkout: &str,
+    chosen: Option<&str>,
     hint: Option<&str>,
     deadline: Instant,
 ) -> crate::Result<(String, String)> {
@@ -162,7 +186,7 @@ fn branch_base(
         &never,
     )
     .ok();
-    for candidate in base_candidates(hint, remote_head.as_deref()) {
+    for candidate in base_candidates(chosen, hint, remote_head.as_deref()) {
         let merge_base = crate::git::git(
             checkout,
             &["merge-base", "HEAD", &candidate],
@@ -171,12 +195,7 @@ fn branch_base(
             &never,
         );
         if let Ok(commit) = merge_base {
-            let label = candidate
-                .strip_prefix("refs/remotes/")
-                .or_else(|| candidate.strip_prefix("refs/heads/"))
-                .unwrap_or(&candidate)
-                .to_owned();
-            return Ok((label, commit));
+            return Ok((short_ref(&candidate).to_owned(), commit));
         }
     }
     Err(crate::Error::ReviewNoBase)
@@ -224,11 +243,13 @@ fn text(bytes: Vec<u8>) -> String {
 }
 
 /// Lists the focused checkout's changes in `scope`, none of their lines
-/// read yet; `base_hint` names the pull request's base branch when one is
-/// known. Blocking.
+/// read yet; `base` is the branch's ref the user picked to compare with, and
+/// `base_hint` names the pull request's base branch when one is known.
+/// Blocking.
 pub(crate) fn load(
     input: &Input,
     scope: Scope,
+    base: Option<&str>,
     base_hint: Option<&str>,
     whitespace: bool,
 ) -> crate::Result<Loaded> {
@@ -237,7 +258,7 @@ pub(crate) fn load(
     let (base, revision, before) = match scope {
         Scope::Uncommitted => (None, "HEAD".to_owned(), "HEAD".to_owned()),
         Scope::Branch => {
-            let (label, commit) = branch_base(&checkout, base_hint, deadline)?;
+            let (label, commit) = branch_base(&checkout, base, base_hint, deadline)?;
             let short: String = commit.chars().take(7).collect();
             let before = format!("{label} at {short}");
             (Some(label), commit, before)

@@ -13,6 +13,6 @@ fn last_seen_reads_in_plain_units() {
 
 #[test]
 fn web_access_sits_with_the_other_connections() {
-    assert_eq!(Section::WebAccess.group(), Group::Connect);
+    assert_eq!(Section::WebAccess.group(), Some(Group::Connect));
     assert!(Section::ALL.contains(&Section::WebAccess));
 }

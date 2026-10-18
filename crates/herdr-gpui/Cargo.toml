@@ -37,6 +37,7 @@ percent-encoding.workspace     = true
 pulldown-cmark.workspace       = true
 rodio.workspace                = true
 rusqlite.workspace             = true
+rustls                         = { optional = true, workspace = true }
 secrecy.workspace              = true
 serde.workspace                = true
 serde_ignored.workspace        = true
@@ -53,11 +54,13 @@ toml.workspace                 = true
 toml_edit.workspace            = true
 tracing.workspace              = true
 tracing-subscriber.workspace   = true
+tungstenite                    = { optional = true, workspace = true }
 unicode-properties.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace        = true
 ureq.workspace                 = true
 uuid.workspace                 = true
+webpki-roots                   = { optional = true, workspace = true }
 zeroize.workspace              = true
 
 [build-dependencies]
@@ -68,10 +71,13 @@ gpui = { features = ["test-support"], workspace = true }
 test-case.workspace = true
 
 [features]
-default = ["boat", "coder", "daytona", "railway"]
+default = ["azure", "boat", "coder", "daytona", "railway"]
 # Machines from cloud providers as devices: the shared device list, background
 # jobs, and connector. Turned on by each provider below; not useful alone.
 cloud = ["herdr-client/cloud"]
+# Azure VMs and Container Apps sandboxes as devices, with generic credentials
+# or local Azure CLI. Sandboxes are reached over the data plane's exec stream.
+azure = ["cloud", "herdr-client/azure", "dep:base64", "dep:rustls", "dep:tungstenite", "dep:webpki-roots"]
 # Boat sandboxes as devices, with an API key and per-machine SSH key setup.
 boat = ["cloud", "herdr-client/boat"]
 # Coder workspaces as devices, with OAuth2 sign-in.
@@ -103,9 +109,53 @@ rustix.workspace = true
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 wry.workspace = true
 
+# The control pipe: `interprocess` creates it with a DACL, and `windows-sys`
+# reads the user and the pipe owner it is checked against. `windows-sys` also
+# sets the window attributes and reads the system settings GPUI leaves to the
+# app, keeps saved sign-ins in Credential Manager (`github::credential_manager`),
+# and opens avatar cache entries without following reparse points. It also
+# checks an update installer's Authenticode signature (`updater::windows`),
+# registers with Restart Manager (`restart_manager`), writes crash minidumps
+# (`crash::windows`), and sends the
+# performance fixture its window messages.
+# `clipboard-win` reads the clipboard on a background thread (see
+# `window/clipboard`). `windows` has the shell's COM and WinRT interfaces (the
+# taskbar, the jump list, and toasts); `windows-registry` reads the link
+# handler.
 [target.'cfg(windows)'.dependencies]
+clipboard-win.workspace     = true
+interprocess.workspace      = true
 raw-window-handle.workspace = true
-windows.workspace           = true
+windows = { features = [
+  "Data_Xml_Dom",
+  "UI_Notifications",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+], workspace = true }
+windows-registry.workspace = true
+windows-sys = { features = [
+  "Wdk_System_SystemServices",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Security_Authorization",
+  "Win32_Security_Credentials",
+  "Win32_Security_Cryptography",
+  "Win32_Security_Cryptography_Catalog",
+  "Win32_Security_Cryptography_Sip",
+  "Win32_Security_WinTrust",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Console",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Kernel",
+  "Win32_System_Memory",
+  "Win32_System_Recovery",
+  "Win32_System_Registry",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_UI_Accessibility",
+  "Win32_UI_WindowsAndMessaging",
+], workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 fontdb.workspace       = true

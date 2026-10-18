@@ -26,6 +26,33 @@ pub struct Backdrop {
     /// A picture behind the window, absolute or under `~/`. It covers the
     /// desktop, so the window itself stays opaque.
     pub image: Option<PathBuf>,
+    /// What `blur` paints behind the window on Windows 11. Other platforms,
+    /// and Windows 10, have one blur and ignore it.
+    pub material: Material,
+}
+
+/// The Windows 11 system backdrop a blurred window asks DWM for.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Material {
+    /// The desktop behind the window, blurred and tinted: what Windows uses
+    /// for menus and flyouts.
+    #[default]
+    Acrylic,
+    /// The wallpaper, blurred and tinted, under the whole window: what
+    /// Windows uses for its own app windows. It does not show the windows
+    /// behind, and is cheaper to draw than acrylic.
+    Mica,
+}
+
+impl Material {
+    /// The config file spelling.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Acrylic => "acrylic",
+            Self::Mica => "mica",
+        }
+    }
 }
 
 impl Default for Backdrop {
@@ -34,6 +61,7 @@ impl Default for Backdrop {
             opacity: 1.,
             blur: false,
             image: None,
+            material: Material::default(),
         }
     }
 }
@@ -82,6 +110,7 @@ fn resolve(image: &Path) -> Result<PathBuf, Error> {
 pub(crate) enum Edit {
     Opacity(f32),
     Blur(bool),
+    Material(Material),
     /// `None` removes the picture.
     Image(Option<PathBuf>),
 }
@@ -98,6 +127,7 @@ impl Edit {
                 ("opacity", Some(rounded.into()))
             }
             Self::Blur(blur) => ("blur", Some((*blur).into())),
+            Self::Material(material) => ("material", Some(material.name().into())),
             Self::Image(image) => {
                 candidate.image = image.clone();
                 let value = image

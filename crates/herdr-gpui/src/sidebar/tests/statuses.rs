@@ -1,13 +1,5 @@
 use super::*;
 
-const STATUSES: [AgentStatus; 5] = [
-    AgentStatus::Working,
-    AgentStatus::Blocked,
-    AgentStatus::Done,
-    AgentStatus::Idle,
-    AgentStatus::Unknown,
-];
-
 #[test]
 fn status_colors_keep_upstream_literals_where_they_already_read() {
     // Upstream's default palette (Catppuccin Mocha), which its status dots use
@@ -22,8 +14,8 @@ fn status_colors_keep_upstream_literals_where_they_already_read() {
             let mut theme = Theme::builtin(name).unwrap();
             assert_eq!(status_style(status, &theme).2, color, "{name}");
             theme.palette.fill(0x123456);
-            let indicators = Indicators::new(None, None, false, &theme);
-            assert_eq!(indicators.style, IndicatorStyle::Dots);
+            let indicators = Indicators::new(None, StatusIcons::default(), false, false, &theme);
+            assert_eq!(indicators.icons, StatusIcons::Dots);
             assert_eq!(indicators.color(status), color);
         }
     }
@@ -35,27 +27,10 @@ fn status_colors_keep_upstream_literals_where_they_already_read() {
     }
 }
 
+/// Dots keep upstream's narrow slot; every drawn set takes the same slot at
+/// each font size, so switching sets never shifts a row's text.
 #[test]
-fn status_symbols_match_upstream_without_changing_status_colors() {
-    let mut indicators = Indicators::new(None, None, false, &Theme::default());
-    indicators.style = IndicatorStyle::Symbols;
-    for (status, symbol) in [
-        (AgentStatus::Working, "\u{25d0}"),
-        (AgentStatus::Blocked, "\u{d7}"),
-        (AgentStatus::Done, "\u{2713}"),
-        (AgentStatus::Idle, "\u{25cb}"),
-        (AgentStatus::Unknown, "\u{b7}"),
-    ] {
-        assert_eq!(status_symbol(status), symbol);
-        assert_eq!(
-            indicators.color(status),
-            status_style(status, &Theme::default()).2
-        );
-    }
-}
-
-#[test]
-fn status_slots_are_fixed_for_each_style_and_font_size() {
+fn status_slots_are_fixed_for_each_set_and_font_size() {
     use gpui::{Styled, px};
     for size in [6., 8., 12., 12.5, 16., 20., 32.] {
         let font = FontConfig {
@@ -65,33 +40,30 @@ fn status_slots_are_fixed_for_each_style_and_font_size() {
             line_height_multiple: None,
             weight: gpui::FontWeight::NORMAL,
         };
-        for style in [IndicatorStyle::Dots, IndicatorStyle::Symbols] {
-            let mut indicators = Indicators::new(None, None, false, &Theme::default());
-            indicators.style = style;
-            let width = match style {
-                IndicatorStyle::Dots => STATUS_WIDTH,
-                IndicatorStyle::Symbols => size.ceil().max(STATUS_WIDTH),
-            };
-            assert_eq!(indicators.width(&font), width);
-            for status in [
-                AgentStatus::Working,
-                AgentStatus::Blocked,
-                AgentStatus::Done,
-                AgentStatus::Idle,
-                AgentStatus::Unknown,
-            ] {
+        let drawn =
+            Indicators::new(None, StatusIcons::Solid, false, false, &Theme::default()).width(&font);
+        for &icons in StatusIcons::ALL {
+            let indicators = Indicators::new(None, icons, false, false, &Theme::default());
+            let width = indicators.width(&font);
+            if icons == StatusIcons::Dots {
+                assert_eq!(width, STATUS_WIDTH);
+            } else {
+                assert_eq!(width, drawn, "{icons:?} at {size}");
+            }
+            for status in STATUSES {
                 let mut slot = status_indicator(status, &font, indicators);
-                assert_eq!(slot.style().size.width, Some(px(width).into()));
-                if style == IndicatorStyle::Symbols {
-                    assert_eq!(slot.text_style().font_size, Some(px(size).into()));
-                }
+                assert_eq!(
+                    slot.style().size.width,
+                    Some(px(width).into()),
+                    "{icons:?} {status:?} at {size}"
+                );
             }
         }
     }
 }
 
 #[test]
-fn symbol_rows_keep_layout_density_and_expand_child_indent() {
+fn wide_mark_rows_keep_layout_density_and_expand_child_indent() {
     use super::super::row::{RowIcon, RowKind, RowTree, row};
     use crate::config::LayoutMode;
     use gpui::{Styled, px};
@@ -112,9 +84,8 @@ fn symbol_rows_keep_layout_density_and_expand_child_indent() {
         },
     ] {
         let layout = super::super::layout::for_mode(mode);
-        for style in [IndicatorStyle::Dots, IndicatorStyle::Symbols] {
-            let mut indicators = Indicators::new(None, None, false, &theme);
-            indicators.style = style;
+        for icons in [StatusIcons::Dots, StatusIcons::Tiles] {
+            let indicators = Indicators::new(None, icons, false, false, &theme);
             for kind in [
                 RowKind::Workspace,
                 RowKind::Agent(crate::icons::AgentIcon::Generic),

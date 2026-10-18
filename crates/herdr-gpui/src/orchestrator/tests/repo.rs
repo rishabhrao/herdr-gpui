@@ -143,3 +143,90 @@ fn github_dot_com_gitlab_and_beads_are_synced() {
     let info = parse(&ConnectTarget::Local, enterprise).unwrap();
     assert!(!sources(&info)[0].1);
 }
+
+/// A local checkout is read with `git` run directly, which every client
+/// platform can do: from a linked worktree, the shared common directory, the
+/// main checkout, Beads, and the `origin` remote.
+#[test]
+fn a_local_worktree_is_read_without_a_shell() {
+    use crate::orchestrator::{location::Repository, repo::detect};
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("app");
+    let linked = dir.path().join("linked");
+    std::fs::create_dir_all(main.join(".beads")).unwrap();
+    let git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&main)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "base",
+    ]);
+    git(&["remote", "add", "upstream", "git@gitlab.com:g/app.git"]);
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/penso/app.git",
+    ]);
+    git(&[
+        "worktree",
+        "add",
+        "-q",
+        &linked.to_string_lossy(),
+        "-b",
+        "side",
+    ]);
+
+    let host = crate::teleport::Host::new(&ConnectTarget::Local).unwrap();
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let info = detect(
+        &ConnectTarget::Local,
+        &host,
+        &linked.to_string_lossy(),
+        &never,
+    )
+    .unwrap();
+    let common = crate::orchestrator::repo::plain(main.join(".git").canonicalize().unwrap());
+    assert_eq!(info.repository, Repository::Local(common));
+    assert_eq!(
+        std::path::Path::new(&info.main_root)
+            .canonicalize()
+            .unwrap(),
+        main.canonicalize().unwrap()
+    );
+    assert!(info.beads);
+    let remote = info.remote.unwrap();
+    assert_eq!(remote.name, "origin");
+    assert_eq!(remote.source.repository, "penso/app");
+
+    // A folder outside Git, and one that is gone, are not repositories.
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    for folder in [outside, dir.path().join("gone")] {
+        assert!(matches!(
+            detect(
+                &ConnectTarget::Local,
+                &host,
+                &folder.to_string_lossy(),
+                &never
+            ),
+            Err(Error::NotARepository)
+        ));
+    }
+}

@@ -5,7 +5,9 @@
 //! the terminal. GPUI reuses a cached view's layout and paint until that view
 //! is notified, so the window notifies this one whenever it is notified itself
 //! (`HerdrWindow::new` observes itself), and a surface-only update redraws the
-//! window without notifying it (`HerdrWindow::redraw_terminal`).
+//! window without notifying it (`HerdrWindow::redraw_terminal`). Moving
+//! status marks draw in the window's mark layer (`mark_layer`), so their
+//! frames do not invalidate it either.
 //!
 //! The rows still come from `HerdrWindow::render_sidebar`, so their listeners
 //! and state stay where they were.
@@ -53,9 +55,16 @@ impl Render for SidebarView {
             cx.default_global::<crate::performance::Counts>()
                 .sidebar_renders += 1;
         }
+        // Every moving mark is reserved again below.
+        if let Some(marks) = crate::mark_layer::Marks::of(window, cx) {
+            marks.forget(cx.entity_id());
+        }
         // A closed window leaves nothing to draw.
         self.window
             .update(cx, |view, cx| match view.sidebar_mode() {
+                _ if view.activity_bar_leads() => view
+                    .render_activity(self.indicators, window, cx)
+                    .into_any_element(),
                 SidebarMode::Rail if !view.drawer_open() => view
                     .render_rail(self.indicators, window, cx)
                     .into_any_element(),
@@ -97,9 +106,9 @@ mod tests {
             view.read(cx).sidebar_view.clone()
         });
         for text in [
-            "[ui]\nstatus_indicators = 'symbols'\n[theme.custom]\nyellow = '#123456'\n",
-            "[ui]\nstatus_indicators = 'symbols'\n[theme.custom]\nyellow = '#ff9900'\n",
-            "[ui]\nstatus_indicators = 'dots'\n[theme.custom]\nyellow = '#ff9900'\n",
+            "[theme.custom]\nyellow = '#123456'\n",
+            "[theme.custom]\nyellow = '#ff9900'\n",
+            "[theme.custom]\nyellow = '#00ff00'\n",
         ] {
             let (before, previous) = cx.update(|_, cx| {
                 let sidebar = sidebar.read(cx);
@@ -115,6 +124,7 @@ mod tests {
                 let expected = Indicators::new(
                     parent.settings.shared.as_ref(),
                     parent.config.status_icons,
+                    parent.config.edge_rail,
                     matches!(
                         cx.window_appearance(),
                         gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight

@@ -185,6 +185,7 @@ impl HerdrWindow {
                             theme: theme.clone(),
                             error: None,
                         });
+                        crate::caffeine::set_scope(config.status_bar.keep_awake_scope, cx);
                         if config.keybindings != this.config.keybindings {
                             crate::actions::rebind_keys(cx);
                         } else if config.layout.mode != this.config.layout.mode {
@@ -368,6 +369,8 @@ impl HerdrWindow {
                 | Command::ToggleSidebar
                 | Command::OpenCode
                 | Command::ToggleStatusBar
+                | Command::FocusNextRegion
+                | Command::FocusPreviousRegion
                 | Command::ToggleZenMode
                 | Command::DevicesOverview
                 | Command::IncreaseFontSize

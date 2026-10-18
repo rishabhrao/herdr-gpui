@@ -67,7 +67,15 @@ impl HerdrWindow {
     /// Back or Forward along the selected endpoint's focus trail. The trail
     /// remembers the step only once its request is queued, so a press while
     /// an earlier one is still landing leaves that one in charge.
-    pub(crate) fn travel(&mut self, step: Step, cx: &mut Context<Self>) {
+    pub(crate) fn travel(&mut self, step: Step, window: &mut Window, cx: &mut Context<Self>) {
+        // A pane a section opened goes back to that section first.
+        if step == Step::Back
+            && self.activity_section().is_none()
+            && let Some(panel) = self.activity.return_to
+        {
+            self.show_activity_panel(panel, window, cx);
+            return;
+        }
         let Some(snapshot) = self.live.snapshot.clone() else {
             return;
         };
@@ -84,6 +92,12 @@ impl HerdrWindow {
     }
 
     pub(crate) fn can_travel(&self, step: Step) -> bool {
+        if step == Step::Back
+            && self.activity_section().is_none()
+            && self.activity.return_to.is_some()
+        {
+            return true;
+        }
         self.live.snapshot.as_deref().is_some_and(|snapshot| {
             self.endpoints[self.selected_endpoint]
                 .history
@@ -168,7 +182,7 @@ impl HerdrWindow {
                 focus,
                 active: true,
             });
-            state.surface = None;
+            state.invalidate_surface();
             state.dirty = true;
             self.live = state.clone();
             self.activation_deadline = Some(
@@ -264,6 +278,11 @@ impl HerdrWindow {
             }
             Command::NewBrowserTab => {
                 self.open_browser_tab(None, window, cx);
+                return;
+            }
+            Command::NextTab | Command::PreviousTab | Command::TabNumber(_)
+                if self.step_tab(command, window, cx) =>
+            {
                 return;
             }
             Command::ReopenClosedTab => {
@@ -406,6 +425,8 @@ impl HerdrWindow {
                 return;
             }
             Command::ToggleSidebar => self.toggle_sidebar(),
+            Command::FocusNextRegion => return self.cycle_region(true, window, cx),
+            Command::FocusPreviousRegion => return self.cycle_region(false, window, cx),
             // Window chrome only, so it runs while the daemon is still away.
             Command::ToggleStatusBar => {
                 self.status_bar_visible = !self.status_bar_visible;
@@ -502,8 +523,10 @@ impl HerdrWindow {
                     Command::Back => Step::Back,
                     _ => Step::Forward,
                 };
-                self.travel(step, cx);
-                window.focus(&self.focus, cx);
+                self.travel(step, window, cx);
+                if self.activity_section().is_none() {
+                    window.focus(&self.focus, cx);
+                }
                 return;
             }
             Command::PreviousWorkspace
@@ -599,7 +622,7 @@ impl HerdrWindow {
             self.dismiss_menu(window, cx);
         }
         let install = cx.background_executor().spawn(async move {
-            let text = crate::agent_skill::text(std::env::current_exe().ok().as_deref());
+            let text = crate::agent_skill::text(crate::agent_skill::executable().as_deref());
             crate::agent_skill::install(&home, &text)
         });
         cx.spawn(async move |this, cx| {

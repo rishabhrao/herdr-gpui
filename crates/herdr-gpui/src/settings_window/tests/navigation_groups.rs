@@ -20,6 +20,13 @@ fn navigation_lists_every_section_under_its_group(cx: &mut TestAppContext) {
     cx.update(|window, cx| crate::sidebar::layout_tests::full_draw(window, cx).clear(cx));
     let search = cx.debug_bounds("settings-nav-search").unwrap();
     let mut last_bottom = search.bottom();
+    for section in Section::ALL.iter().filter(|s| s.group().is_none()) {
+        let row = cx
+            .debug_bounds(leak(section.selector()))
+            .unwrap_or_else(|| panic!("missing section {section:?}"));
+        assert!(row.top() >= last_bottom, "{section:?} above every group");
+        last_bottom = row.bottom();
+    }
     for group in Group::ALL {
         let label = cx
             .debug_bounds(leak(format!(
@@ -32,7 +39,7 @@ fn navigation_lists_every_section_under_its_group(cx: &mut TestAppContext) {
             "{group:?} below the previous row"
         );
         last_bottom = label.bottom();
-        for section in Section::ALL.iter().filter(|s| s.group() == group) {
+        for section in Section::ALL.iter().filter(|s| s.group() == Some(group)) {
             let row = cx
                 .debug_bounds(leak(section.selector()))
                 .unwrap_or_else(|| panic!("missing section {section:?}"));

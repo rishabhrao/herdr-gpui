@@ -2,13 +2,13 @@
 use super::*;
 use crate::orchestrator::{
     Request, Timing,
-    view::{Event, Look, OrchestratorView, rows::Tab},
+    view::{Look, OrchestratorView, rows::Tab},
 };
 use gpui::{Modifiers, TestAppContext};
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 #[gpui::test]
-fn the_run_arrow_asks_to_open_the_run(cx: &mut TestAppContext) {
+fn a_double_click_opens_the_item_beside_the_list(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let request = Request {
         target: herdr_client::ConnectTarget::Local,
@@ -24,37 +24,52 @@ fn the_run_arrow_asks_to_open_the_run(cx: &mut TestAppContext) {
         ui: config.ui.clone(),
         mono: config.terminal.clone(),
     };
-    let (view, cx) = cx.add_window_view(|_, cx| OrchestratorView::new(request, look, cx));
-    let events: Rc<RefCell<Vec<Event>>> = Rc::default();
-    let seen = events.clone();
-    cx.update(|_, cx| {
-        cx.subscribe(&view, move |_, event: &Event, _| {
-            seen.borrow_mut().push(event.clone())
-        })
-        .detach();
-    });
+    let (view, cx) = cx.add_window_view(|_, cx| OrchestratorView::with_repo(request, look, cx));
+    cx.simulate_resize(gpui::size(gpui::px(1100.), gpui::px(600.)));
     let issue = item(Provider::Github, "377", "Icons", "2026-10-04T00:00:00Z");
-    let theirs = run("r1", &issue, RunState::Failed, "2026-10-04T01:00:00Z");
+    let key = issue.key.canonical();
     cx.update(|_, cx| {
         view.update(cx, |view, cx| {
-            view.recorded_runs = Arc::new(vec![theirs]);
-            view.tab = Tab::Runs;
+            view.repo_mut().snapshot.items = Arc::new(vec![issue]);
+            view.tab = Tab::Issues;
             view.refresh_rows();
             cx.notify();
         })
     });
     cx.run_until_parked();
-    let bounds = cx
-        .debug_bounds("orchestrator-run-open-1")
-        .unwrap_or_else(|| panic!("the arrow of the first run, after its group heading"));
-    cx.simulate_click(bounds.center(), Modifiers::none());
+    let row: &'static str = Box::leak(format!("orchestrator-row-{key}").into_boxed_str());
+    let list = cx.debug_bounds("orchestrator-list").unwrap();
+    let at = cx.debug_bounds(row).unwrap().center();
+    // One click selects; the list keeps the width.
+    cx.simulate_click(at, Modifiers::none());
     cx.run_until_parked();
-    let events = events.borrow();
-    assert!(
-        matches!(
-            events.as_slice(),
-            [Event::OpenWorkspace { host: None, session: None, workspace_id }] if workspace_id == "w-r1"
-        ),
-        "{events:?}"
+    assert!(cx.debug_bounds("orchestrator-pane").is_none());
+    // A second click in time opens the item in a pane beside the list.
+    cx.simulate_event(gpui::MouseDownEvent {
+        position: at,
+        button: gpui::MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count: 2,
+        first_mouse: false,
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        position: at,
+        button: gpui::MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count: 2,
+    });
+    cx.run_until_parked();
+    let pane = cx.debug_bounds("orchestrator-pane").unwrap();
+    let narrowed = cx.debug_bounds("orchestrator-list").unwrap();
+    assert!(narrowed.size.width < list.size.width);
+    assert!(pane.left() >= narrowed.right());
+    // Its close button gives the list its width back.
+    let close = cx.debug_bounds("orchestrator-detail-close").unwrap();
+    cx.simulate_click(close.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("orchestrator-pane").is_none());
+    assert_eq!(
+        cx.debug_bounds("orchestrator-list").unwrap().size,
+        list.size
     );
 }

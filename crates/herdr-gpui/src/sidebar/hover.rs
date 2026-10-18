@@ -19,6 +19,9 @@ pub(crate) struct HoverRest {
     /// The pointer has moved since it entered the row. Dismissing a menu leaves
     /// the pointer where it was, so without this the menu would reopen under it.
     pub(crate) moved: bool,
+    /// The row was clicked while the pointer was on it. A click already chose
+    /// what to do with the row, so its menu waits until the pointer leaves.
+    pub(crate) pressed: bool,
 }
 
 /// A menu the pointer opened by resting. It closes again as soon as the pointer
@@ -41,6 +44,7 @@ impl HerdrWindow {
     pub(crate) fn save_chrome(&self) {
         if let Some(preferences) = &self.sidebar_preferences {
             preferences.save(crate::preferences::Chrome {
+                activity_panel: self.activity.chosen(),
                 sidebar_width: self.sidebar_width,
                 sidebar_split: self.sidebar_split,
                 agent_sort: self.agent_sort_modified.then_some(self.agent_sort),
@@ -72,12 +76,32 @@ impl HerdrWindow {
         {
             return;
         }
+        // A redraw after the click can report the same row entered again;
+        // only leaving it lifts the click's veto.
+        let pressed = self
+            .hover
+            .as_ref()
+            .is_some_and(|hover| hover.workspace == workspace && hover.pressed);
         self.hover = Some(HoverRest {
             workspace: workspace.to_owned(),
             position: window.mouse_position(),
             scroll: self.sidebar_scroll[0].offset(),
             since: Instant::now(),
             moved: false,
+            pressed,
+        });
+    }
+
+    /// A press on a workspace row keeps its hover menu closed until the
+    /// pointer leaves the row.
+    pub(crate) fn press_hovered_workspace(&mut self, workspace: &str, position: Point<Pixels>) {
+        self.hover = Some(HoverRest {
+            workspace: workspace.to_owned(),
+            position,
+            scroll: self.sidebar_scroll[0].offset(),
+            since: Instant::now(),
+            moved: false,
+            pressed: true,
         });
     }
 
@@ -104,6 +128,9 @@ impl HerdrWindow {
         let Some(hover) = &mut self.hover else {
             return;
         };
+        if hover.pressed {
+            return;
+        }
         if hover.scroll != scroll {
             self.hover = None;
             return;

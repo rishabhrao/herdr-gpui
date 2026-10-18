@@ -26,6 +26,7 @@ Closing or detaching the GUI must leave the daemon and its terminals running.
 | `crates/herdr-client` | Discovery, socket worker, session transitions, ordered commands, and client-local activity projection |
 | `crates/herdr-gpui` | Native UI, connection bridge, presentation state, semantic input, geometry, and painting |
 | `crates/herdr-gpui-launcher` | Windows-only windowed launcher that starts `herdr-gpui.exe` without a console window; std plus `MessageBoxW` for start failures |
+| `crates/embed-resource` | No-op stand-in for GPUI's `embed-resource` build dependency, patched in so GPUI embeds no Windows manifest beside `crates/herdr-gpui/windows.manifest`; not a production crate |
 | `crates/test-support/sandbox.rs` | Shared isolated process setup for opt-in integration tests; not a production crate |
 | `crates/test-support/pe.rs` | Windows executable (PE) reader for tests that check subsystem and resources; not a production crate |
 
@@ -134,6 +135,7 @@ agents in Herdr panes can use what only this client shows or keeps
 
 - Treat app, window, and entity contexts as UI-thread execution. A foreground `spawn` future does not make blocking work safe.
 - Never perform blocking socket/disk I/O, process waits, sleeps, or expensive background computation on the UI thread. Use the existing worker threads or GPUI background executor, then apply results through the appropriate context update.
+- Start child processes with `herdr_client::new_command`, never `Command::new` (clippy rejects it outside tests). On Windows a console child built any other way can open a window of its own.
 - Keep render and input paths thin. Render from prepared state and bounded caches; do not query the daemon, scan files, or launch processes while rendering.
 - Preserve continuously drained ordered events and the coalesced latest-state mailbox. Do not replace them with an unbounded UI event queue.
 - Route connection/startup failures through the authoritative inbox. Reconnect and detach must isolate old inboxes so delayed events and paint acknowledgements cannot affect the new connection.
@@ -207,8 +209,14 @@ just ci
 - For linking, startup, or packaging changes, also use `just test-build` to build the release executable and exercise its CLI without a desktop.
 - The `windows` CI job checks formatting, lints every target and feature, and
   runs workspace tests with default and all features, including headless UI and
-  CLI tests. Optimized Windows builds and CLI tests run in the release workflow;
-  native GUI behavior is unproven. Keep the `cfg(unix)`/`cfg(windows)`
+  CLI tests, split like `checks` into parallel `default` and `all` legs. The
+  `windows-native` job runs `live_gui` (the `test-gui` and `test-sidebar`
+  equivalents) against a pinned `herdr.exe`, and the release-mode performance
+  budget, on both Windows runners, except the live-daemon test on
+  ARM64, where the emulated daemon ignores Enter; the optimized Windows build
+  and its installer run in `windows-package` when their inputs change, and in
+  the release workflow, which only smoke-tests the CLI of the bytes it ships
+  and requires CI to have passed on the commit. Keep the `cfg(unix)`/`cfg(windows)`
   split honest and say plainly what a platform cannot do instead of stubbing
   behavior that appears to work.
 - A `cfg` gate is only proven on the platform it names. Before handing off a

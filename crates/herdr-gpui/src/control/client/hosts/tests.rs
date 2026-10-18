@@ -198,3 +198,9 @@ fn cloud_machines_read_one_per_line() {
     );
     assert!(text(&[]).contains("cloud add"));
 }
+
+#[test]
+fn cloud_help_describes_running_setup_again() {
+    let help = super::super::help::usage(Some("cloud"));
+    assert!(help.contains("herdr-gpui cloud setup ID"), "{help}");
+}

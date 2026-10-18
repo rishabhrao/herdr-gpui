@@ -84,11 +84,11 @@ fn digest(listing: &install::Finished) -> Option<&str> {
 /// OpenSSH can otherwise authenticate with that half's key from the agent.
 pub(super) fn fingerprint(path: &Path, cancelled: &impl Fn() -> bool) -> Result<String> {
     let list = |source: &std::ffi::OsStr, input: &str| {
-        let mut command = Command::new("ssh-keygen");
+        let mut command = herdr_client::new_command("ssh-keygen");
         command.args(["-l", "-E", "sha256", "-f"]).arg(source);
         run(command, input, cancelled)
     };
-    let mut derive = Command::new("ssh-keygen");
+    let mut derive = herdr_client::new_command("ssh-keygen");
     derive.args(["-y", "-P", ""]).arg("-f").arg(path);
     let listing = match run(derive, "", cancelled)? {
         install::Finished {
@@ -232,7 +232,7 @@ pub(super) fn generate(
         .tempdir_in(&directory.path)
         .map_err(store(&directory.path))?;
     let key = scratch.path().join("key");
-    let mut command = Command::new("ssh-keygen");
+    let mut command = herdr_client::new_command("ssh-keygen");
     command
         .args(["-q", "-t", "ed25519", "-N", "", "-C", COMMENT])
         .arg("-f")

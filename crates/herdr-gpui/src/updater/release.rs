@@ -95,7 +95,11 @@ pub(super) fn parse_version(value: &str) -> Option<(u64, u64)> {
 }
 
 pub(super) fn target() -> Option<&'static str> {
-    if cfg!(target_os = "macos") {
+    if cfg!(all(windows, target_arch = "x86_64")) {
+        Some("x86_64-pc-windows-msvc")
+    } else if cfg!(all(windows, target_arch = "aarch64")) {
+        Some("aarch64-pc-windows-msvc")
+    } else if cfg!(target_os = "macos") {
         Some("universal-apple-darwin")
     } else if cfg!(all(
         target_os = "linux",
@@ -141,10 +145,16 @@ fn asset_name(version: &str, target: &str) -> Result<String> {
 }
 
 fn validate_manifest(manifest: &Manifest) -> Result<()> {
-    if !matches!(manifest.schema, 1 | 2) || parse_version(&manifest.version).is_none() {
+    // Each schema lists one family of formats, at most this many assets.
+    let (formats, maximum): (&[Format], usize) = match manifest.schema {
+        1 => (&[Format::Archive], 3),
+        2 => (&[Format::Deb, Format::Rpm, Format::Arch], 6),
+        3 => (&[Format::Installer], format::WINDOWS_TARGETS.len()),
+        _ => return Err(Error::ManifestSchema),
+    };
+    if parse_version(&manifest.version).is_none() {
         return Err(Error::ManifestSchema);
     }
-    let maximum = if manifest.schema == 1 { 3 } else { 6 };
     if manifest.assets.is_empty() || manifest.assets.len() > maximum {
         return Err(Error::ManifestAssetCount);
     }
@@ -152,17 +162,15 @@ fn validate_manifest(manifest: &Manifest) -> Result<()> {
         let valid_name = if manifest.schema == 1 {
             asset.name == asset_name(&manifest.version, &asset.target)?
         } else {
-            [Format::Deb, Format::Rpm, Format::Arch]
-                .into_iter()
-                .any(|format| {
-                    format
-                        .name(&manifest.version, &asset.target)
-                        .is_ok_and(|name| name == asset.name)
-                })
+            formats.iter().any(|format| {
+                format
+                    .name(&manifest.version, &asset.target)
+                    .is_ok_and(|name| name == asset.name)
+            })
         };
         if !valid_name
             || manifest.assets[..index].iter().any(|other| {
-                other.name == asset.name || (manifest.schema == 1 && other.target == asset.target)
+                other.name == asset.name || (manifest.schema != 2 && other.target == asset.target)
             })
         {
             return Err(Error::ManifestAsset);
@@ -242,9 +250,9 @@ fn allowed_url(value: &str) -> bool {
 #[derive(Clone, Copy)]
 enum RequestProfile {
     Metadata,
-    // Only the POSIX installer downloads a release archive; see
+    // Only the POSIX and Windows installers download a release asset; see
     // `updater::unsupported`.
-    #[cfg_attr(not(unix), allow(dead_code))]
+    #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
     Archive,
 }
 
@@ -499,10 +507,10 @@ fn check_with(
             .assets
             .iter()
             .find(|asset| asset.name == name)
-            .ok_or(if format == Format::Archive {
-                Error::MissingSignedMetadata
-            } else {
-                Error::MissingPackageMetadata
+            .ok_or(match format {
+                Format::Archive => Error::MissingSignedMetadata,
+                Format::Installer => Error::MissingInstallerMetadata,
+                Format::Deb | Format::Rpm | Format::Arch => Error::MissingPackageMetadata,
             })?;
         if asset.size > limit || (name == signature_name && asset.size != 64) {
             return Err(Error::SignedMetadataSize);
@@ -514,6 +522,10 @@ fn check_with(
     )?;
     let signature = fetch(&release_url(&release.version, signature_name), 64)?;
     let manifest = verify_manifest(&manifest_bytes, &signature, key_hex, &release.version)?;
+    // A manifest signed for one family must not answer for another.
+    if manifest.schema != format.schema() {
+        return Err(Error::ManifestSchema);
+    }
     let name = format.name(&release.version, target)?;
     let asset = manifest
         .assets
@@ -538,10 +550,10 @@ fn check_with(
     }))
 }
 
-// Only the POSIX installer downloads a release archive (see
+// Only the POSIX and Windows installers download a release asset (see
 // `updater::unsupported`). These stay compiled and tested everywhere because
 // they are portable; they are simply unreachable where the updater is disabled.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 pub(super) fn copy_archive(
     mut reader: impl Read,
     mut writer: impl Write,
@@ -578,10 +590,10 @@ pub(super) fn copy_archive(
     cancelled(cancel)
 }
 
-// Only the POSIX installer downloads a release archive (see
+// Only the POSIX and Windows installers download a release asset (see
 // `updater::unsupported`). These stay compiled and tested everywhere because
 // they are portable; they are simply unreachable where the updater is disabled.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 fn create_archive(destination: &Path) -> Result<File> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
@@ -594,10 +606,10 @@ fn create_archive(destination: &Path) -> Result<File> {
 /// caller owns cleanup of its private staging directory, including partial files.
 /// Cancellation is checked between reads; a stalled read can wait for the
 /// remaining ten-minute request deadline. Never wait for this worker on the UI thread.
-// Only the POSIX installer downloads a release archive (see
+// Only the POSIX and Windows installers download a release asset (see
 // `updater::unsupported`). These stay compiled and tested everywhere because
 // they are portable; they are simply unreachable where the updater is disabled.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 pub(super) fn download(
     offer: &Offer,
     destination: &Path,
@@ -631,9 +643,8 @@ pub(super) fn download(
 
 /// Recheck a staged archive against an authenticated asset immediately before
 /// extraction. The caller must keep the staging directory private throughout.
-// Only the POSIX installer downloads a release archive (see
-// `updater::unsupported`). These stay compiled and tested everywhere because
-// they are portable; they are simply unreachable where the updater is disabled.
+// Only the POSIX installer extracts a staged archive; Windows rechecks the
+// installer it holds open instead. This stays compiled and tested everywhere.
 #[cfg_attr(not(unix), allow(dead_code))]
 pub(super) fn verify_archive(path: &Path, asset: &Asset, cancel: &AtomicBool) -> Result<()> {
     cancelled(cancel)?;

@@ -5,10 +5,13 @@ use crate::Error;
 use core::prelude::v1::test;
 use serde_json::json;
 
+mod upstream;
+
 fn origin() -> Origin {
     Origin {
         owner: "penso".into(),
         repo: "herdr-gpui".into(),
+        ..Origin::default()
     }
 }
 

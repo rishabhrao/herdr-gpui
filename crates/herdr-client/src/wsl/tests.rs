@@ -1,5 +1,7 @@
 use super::*;
 
+mod shell;
+
 fn utf16(text: &str) -> Vec<u8> {
     text.encode_utf16().flat_map(u16::to_le_bytes).collect()
 }

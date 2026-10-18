@@ -1,15 +1,18 @@
 //! POSIX discovery/stdio bridge adapted from upstream remote/attach.rs.
 //! No installers, daemon restarts, or SSH config edits. A host key is trusted
 //! only after the user approves its fingerprint (see `host_key`).
-//! The remote host is POSIX or Windows; the local half needs a socket pair it can
-//! hand to the `ssh` child as its standard streams, which only Unix provides.
+//! The remote host is POSIX or Windows. On Unix the `ssh` child's standard
+//! streams are one end of a socket pair; on Windows they are private pipes,
+//! driven with the same read and write deadlines as the daemon's named pipe (see
+//! `transport`). Windows OpenSSH has no connection multiplexing, so there a
+//! configured `ControlPath` is never used and each connection authenticates.
 //! The bridge and probe scripts, and the handshake that reads them, are shared
 //! with WSL distributions, which run the same scripts through `wsl.exe`. A host
 //! that cannot run `/bin/sh`, such as Windows OpenSSH, is retried through
 //! PowerShell; see `powershell`.
-#[cfg(unix)]
-use crate::limits::POLL;
-use crate::{Error, Result, catalog::validate_target, session_socket, transport::Stream};
+use crate::{
+    Error, Result, catalog::validate_target, limits::POLL, session_socket, transport::Stream,
+};
 #[cfg(unix)]
 use std::os::fd::OwnedFd;
 use std::{
@@ -24,7 +27,6 @@ mod failure;
 mod host_key;
 pub use failure::SshFailure;
 pub use host_key::{HostKeyFingerprint, HostKeyScan, NewHostKey, scan_host_key, trust_host_key};
-#[cfg(unix)]
 mod powershell;
 
 const READY: &[u8] = b"herdr-remote-output-ready:1\n";
@@ -52,7 +54,6 @@ const PROBE_DONE: &str = "herdr-probe:done";
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const PROBE_OUTPUT_LIMIT: u64 = 64 * 1024;
 
-#[cfg(unix)]
 fn bridge_command(session: &str) -> String {
     format!("/bin/sh -c {}", quote(&bridge_script(session)))
 }
@@ -97,7 +98,6 @@ pub enum HostProbe {
 
 /// Every candidate reports its client and server status, one block each, so
 /// the choice between them stays with the same rules the bridge applies.
-#[cfg(unix)]
 fn probe_command(session: &str) -> String {
     format!("/bin/sh -c {}", quote(&probe_script(session)))
 }
@@ -170,7 +170,6 @@ fn lines(output: &[u8]) -> impl Iterator<Item = &[u8]> {
 }
 
 /// Blocks for at most `PROBE_TIMEOUT`: call it from a background thread.
-#[cfg(unix)]
 pub fn probe_host(target: &str, session: &str) -> Result<HostProbe> {
     validate_target(target)?;
     session_socket(Path::new(""), session)?;
@@ -211,7 +210,6 @@ pub fn probe_host(target: &str, session: &str) -> Result<HostProbe> {
 }
 
 /// [`probe_host`] for a host whose shell is `cmd.exe` or PowerShell.
-#[cfg(unix)]
 fn probe_powershell_host(target: &str, session: &str) -> Result<HostProbe> {
     let mut command = command(target, &powershell::probe_command(session));
     command.stderr(Stdio::piped());
@@ -231,7 +229,6 @@ fn probe_powershell_host(target: &str, session: &str) -> Result<HostProbe> {
 /// prompt. `git_dir` is the absolute Git directory the daemon reported for the
 /// workspace. `None` when the repository has no origin remote. Blocks for at
 /// most `timeout`: call it from a background thread.
-#[cfg(unix)]
 pub fn remote_origin_url(
     target: &str,
     git_dir: &str,
@@ -243,7 +240,6 @@ pub fn remote_origin_url(
 
 /// Read one Git configuration value on a saved host using bounded,
 /// noninteractive SSH. Call only from a background thread.
-#[cfg(unix)]
 pub fn remote_config_value(
     target: &str,
     git_dir: &str,
@@ -273,7 +269,6 @@ pub fn remote_config_value(
     Ok(Some(value.to_owned()))
 }
 
-#[cfg(unix)]
 fn config_command(git_dir: &str, key: &str) -> String {
     let script = format!(
         "exec git -c core.fsmonitor=false --git-dir {} config --get -- {}",
@@ -295,7 +290,6 @@ pub struct Destination {
 
 /// Resolve `target` with `ssh -G`, which reads configuration only and never
 /// connects. Blocks briefly: call it from a background thread.
-#[cfg(unix)]
 pub fn resolve_destination(target: &str) -> Result<Destination> {
     validate_target(target)?;
     let mut command = crate::environment::command("ssh");
@@ -314,13 +308,6 @@ pub fn resolve_destination(target: &str) -> Result<Destination> {
     destination.ok_or(Error::RemoteOutput)
 }
 
-#[cfg(windows)]
-pub fn resolve_destination(target: &str) -> Result<Destination> {
-    validate_target(target)?;
-    Err(Error::SshUnsupported)
-}
-
-#[cfg(unix)]
 fn parse_destination(output: &[u8]) -> Option<Destination> {
     let text = std::str::from_utf8(output).ok()?;
     let value = |key: &str| {
@@ -339,7 +326,6 @@ fn parse_destination(output: &[u8]) -> Option<Destination> {
 
 /// Runs one noninteractive SSH command, keeping at most `PROBE_OUTPUT_LIMIT`
 /// bytes of stdout and never stderr, which can carry banners or secrets.
-#[cfg(unix)]
 fn run_remote(
     target: &str,
     remote_command: &str,
@@ -413,36 +399,6 @@ fn run_with_stderr(
     Ok((status, output, stderr))
 }
 
-#[cfg(windows)]
-pub fn probe_host(target: &str, session: &str) -> Result<HostProbe> {
-    validate_target(target)?;
-    session_socket(Path::new(""), session)?;
-    Err(Error::SshUnsupported)
-}
-
-#[cfg(windows)]
-pub fn remote_origin_url(
-    target: &str,
-    _git_dir: &str,
-    _timeout: Duration,
-    _cancelled: impl Fn() -> bool,
-) -> Result<Option<String>> {
-    validate_target(target)?;
-    Err(Error::SshUnsupported)
-}
-
-#[cfg(windows)]
-pub fn remote_config_value(
-    target: &str,
-    _git_dir: &str,
-    _key: &str,
-    _timeout: Duration,
-    _cancelled: impl Fn() -> bool,
-) -> Result<Option<String>> {
-    validate_target(target)?;
-    Err(Error::SshUnsupported)
-}
-
 /// Agent forwarding and connection sharing follow the user's SSH config, as
 /// upstream's client does. `ForwardAgent yes` lets the remote bridge register
 /// the forwarded agent with the daemon, so remote panes keep a working
@@ -451,7 +407,11 @@ pub fn remote_config_value(
 /// noninteractive connections. `ControlMaster=no` still forbids this child from
 /// becoming a master: killing it must never end the user's other sessions, and
 /// it must not leave a persistent background process behind.
-#[cfg(unix)]
+///
+/// Windows OpenSSH has no connection multiplexing: with any `ControlPath` set
+/// it fails with "getsockname failed: Not a socket" and exits 127, which reads
+/// as a host without Herdr. There the policy sets `ControlPath=none`, so each
+/// connection authenticates on its own.
 pub(super) fn command(target: &str, remote_command: &str) -> Command {
     let mut command = noninteractive();
     command.args(["-o", "ClearAllForwardings=yes", "--", target]);
@@ -460,7 +420,6 @@ pub(super) fn command(target: &str, remote_command: &str) -> Command {
 }
 
 /// `ssh` with the bridge's connection policy and nothing to connect yet.
-#[cfg(unix)]
 fn noninteractive() -> Command {
     let mut command = crate::environment::command("ssh");
     command.args(POLICY);
@@ -469,8 +428,7 @@ fn noninteractive() -> Command {
 
 /// The bridge's connection policy. OpenSSH keeps the first value it reads for
 /// an option, so a caller that needs another value passes it before these.
-#[cfg(unix)]
-const POLICY: [&str; 20] = [
+const POLICY: &[&str] = &[
     "-T",
     "-C",
     "-o",
@@ -491,6 +449,10 @@ const POLICY: [&str; 20] = [
     "ForwardX11=no",
     "-o",
     "ControlMaster=no",
+    #[cfg(windows)]
+    "-o",
+    #[cfg(windows)]
+    "ControlPath=none",
 ];
 
 /// The line a [`forward_command`] child prints on stdout once its forward is
@@ -511,7 +473,6 @@ pub const FORWARD_READY: &str = "herdr-forward-ready";
 /// than in a shared master, so killing the child closes it; a host that needs
 /// an interactively authenticated master cannot be tunnelled. The caller owns
 /// the child: its streams, readiness, and reaping.
-#[cfg(unix)]
 pub fn forward_command(
     target: &str,
     local: u16,
@@ -543,28 +504,14 @@ pub fn forward_command(
     Ok(command)
 }
 
-/// Windows rejects SSH endpoints, so it has no host to forward from.
-#[cfg(windows)]
-pub fn forward_command(
-    target: &str,
-    _local: u16,
-    _address: Option<std::net::IpAddr>,
-    _remote: u16,
-) -> Result<Command> {
-    validate_target(target)?;
-    Err(Error::SshUnsupported)
-}
-
 /// A one-shot, noninteractive `ssh` child that runs `script` under the remote
 /// `/bin/sh`, whatever the login shell, with the bridge's connection policy.
 /// The caller owns the child: its streams, deadline, and reaping.
-#[cfg(unix)]
 pub fn script_command(target: &str, script: &str) -> Result<Command> {
     validate_target(target)?;
     Ok(command(target, &format!("/bin/sh -c {}", quote(script))))
 }
 
-#[cfg(unix)]
 pub(crate) fn connect(
     target: &str,
     session: &str,
@@ -586,7 +533,6 @@ pub(crate) fn connect(
 /// compatible `herdr.exe` over one connection, then bridge it over another.
 /// `posix` is why the POSIX bridge closed, kept for a host that turns out to
 /// have no PowerShell either.
-#[cfg(unix)]
 fn connect_powershell(
     target: &str,
     session: &str,
@@ -629,18 +575,11 @@ fn connect_powershell(
 /// `coder ssh -- <workspace>`: the discovery script is appended as its final
 /// argument, and the command's standard streams become the connection. The
 /// caller owns the program, its arguments, and any credential it needs.
-#[cfg(unix)]
 pub fn connect_command(mut command: Command, session: &str, stop: &AtomicBool) -> Result<Bridge> {
     session_socket(Path::new(""), session)?;
     command.arg(bridge_command(session));
     let (stream, child) = bridge(command, stop)?;
     Ok(Bridge { stream, child })
-}
-
-#[cfg(windows)]
-pub fn connect_command(_command: Command, session: &str, _stop: &AtomicBool) -> Result<Bridge> {
-    session_socket(Path::new(""), session)?;
-    Err(Error::SshUnsupported)
 }
 
 /// A spawned remote bridge that has answered discovery. Dropping it kills and
@@ -650,14 +589,12 @@ pub struct Bridge {
     pub(crate) child: ChildGuard,
 }
 
-#[cfg(unix)]
 fn bridge(command: Command, stop: &AtomicBool) -> Result<(Stream, ChildGuard)> {
     start_bridge(command, stop, handshake)?.map_err(|closed| Error::SshRefused(closed.failure))
 }
 
 /// A bridge whose child closed its stdout before answering, with the exit
 /// code that tells a failed `ssh` from a remote shell that could not run.
-#[cfg(unix)]
 struct Closed {
     code: Option<i32>,
     failure: SshFailure,
@@ -665,25 +602,14 @@ struct Closed {
 
 /// Spawn `command` as a bridge and let `answer` read its banner. The outer
 /// error is any failure but an early close, which is the inner one.
-#[cfg(unix)]
 fn start_bridge(
-    mut command: Command,
+    command: Command,
     stop: &AtomicBool,
     answer: impl FnOnce(&mut Stream, &AtomicBool) -> Result<()>,
 ) -> Result<std::result::Result<(Stream, ChildGuard), Closed>> {
-    let (mut stream, child_stream) = Stream::pair()?;
+    let (mut stream, mut child) = spawn_bridge(command)?;
     stream.set_read_timeout(Some(POLL))?;
     stream.set_write_timeout(Some(Duration::from_secs(1)))?;
-    command
-        .stdin(Stdio::from(OwnedFd::from(child_stream.try_clone()?)))
-        .stdout(Stdio::from(OwnedFd::from(child_stream)))
-        // Never inherit a GUI terminal. The tail is read only to classify a
-        // failed start, then dropped; see `failure`.
-        .stderr(Stdio::piped());
-    let mut child = ChildGuard(command.spawn()?);
-    // The command still owns the child's end of the socket; while it lives,
-    // a bridge that exits early never reads as closed, only as timed out.
-    drop(command);
     let stderr = match child.0.stderr.take() {
         Some(stderr) => failure::drain(stderr)?,
         None => return Err(Error::SshClosed),
@@ -697,6 +623,37 @@ fn start_bridge(
         }
         result => result.map(|()| Ok((stream, child))),
     }
+}
+
+/// Spawn `command` with one end of a socket pair as its stdin and stdout.
+/// Stderr is piped: never inherit a GUI terminal. Its tail is read only to
+/// classify a failed start, then dropped; see `failure`.
+#[cfg(unix)]
+fn spawn_bridge(mut command: Command) -> Result<(Stream, ChildGuard)> {
+    let (stream, child_stream) = Stream::pair()?;
+    command
+        .stdin(Stdio::from(OwnedFd::from(child_stream.try_clone()?)))
+        .stdout(Stdio::from(OwnedFd::from(child_stream)))
+        .stderr(Stdio::piped());
+    let child = ChildGuard(command.spawn()?);
+    // The command still owns the child's end of the socket; while it lives,
+    // a bridge that exits early never reads as closed, only as timed out.
+    drop(command);
+    Ok((stream, child))
+}
+
+/// Spawn `command` with a private pipe each way, which `Stream` drives with
+/// the same read and write deadlines as the daemon's named pipe. Stderr is
+/// piped as on Unix.
+#[cfg(windows)]
+fn spawn_bridge(mut command: Command) -> Result<(Stream, ChildGuard)> {
+    let (stream, stdin, stdout) = Stream::child()?;
+    command.stdin(stdin).stdout(stdout).stderr(Stdio::piped());
+    let child = ChildGuard(command.spawn()?);
+    // The command still owns the child's ends of the pipes; while it lives,
+    // a bridge that exits early never reads as closed, only as timed out.
+    drop(command);
+    Ok((stream, child))
 }
 
 /// Answer the bridge script: skip each incompatible candidate it reports and
@@ -740,21 +697,6 @@ fn incompatible(status: &serde_json::Value) -> Error {
             .and_then(|generation| u32::try_from(generation).ok()),
         version: status["version"].as_str().and_then(crate::compat::label),
     }
-}
-
-/// Windows rejects SSH endpoints before spawning anything: saved SSH hosts are
-/// not offered there yet (WSL distributions are, through `crate::wsl`).
-/// Validation still runs first so a malformed target reports the same error
-/// everywhere.
-#[cfg(windows)]
-pub(crate) fn connect(
-    target: &str,
-    session: &str,
-    _stop: &AtomicBool,
-) -> Result<(Stream, ChildGuard)> {
-    validate_target(target)?;
-    session_socket(Path::new(""), session)?;
-    Err(Error::SshUnsupported)
 }
 
 fn compatible_status(output: &[u8]) -> Option<bool> {
@@ -844,31 +786,8 @@ fn is_crlf(line: &[u8], expected: &[u8]) -> bool {
         .is_some_and(|(line, expected)| line == expected)
 }
 
-// The bridge is POSIX-only; its fixtures spawn real shells over a socket pair.
-#[cfg(all(test, unix))]
+// Fixtures that need `/bin/sh` or a socket pair are Unix-only; the rest, and
+// the Windows pipe transport, run everywhere.
+#[cfg(test)]
 #[allow(clippy::unwrap_used)] // Test fixtures only.
 mod tests;
-
-// Windows never spawns the bridge, but a rejected SSH endpoint must still be
-// rejected for the same reasons and in the same order as on POSIX.
-#[cfg(all(test, windows))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn invalid_targets_and_sessions_are_rejected_before_the_platform_refusal() {
-        let stop = AtomicBool::new(false);
-        assert!(matches!(
-            connect("-oProxyCommand=x", "default", &stop),
-            Err(Error::InvalidSshTarget)
-        ));
-        assert!(matches!(
-            connect("host", "../escape", &stop),
-            Err(Error::InvalidSession)
-        ));
-        assert!(matches!(
-            connect("host", "default", &stop),
-            Err(Error::SshUnsupported)
-        ));
-    }
-}

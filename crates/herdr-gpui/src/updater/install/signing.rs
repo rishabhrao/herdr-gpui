@@ -2,7 +2,7 @@
 //! requirement, carry the expected version, and keep its signing identity.
 use super::output;
 use crate::updater::error::{Result, UpdateError as Error};
-use std::{path::Path, process::Command, sync::atomic::AtomicBool};
+use std::{path::Path, sync::atomic::AtomicBool};
 
 // codesign and csreq read a bare `-R` argument as the path of a compiled
 // requirement file; the leading `=` is what marks the rest as source text.
@@ -16,13 +16,13 @@ pub(super) fn identity(
     cancel: &AtomicBool,
 ) -> Result<(String, String)> {
     output(
-        Command::new("/usr/bin/codesign")
+        herdr_client::new_command("/usr/bin/codesign")
             .args(["--verify", "--deep", "--strict", "-R", REQUIREMENT])
             .arg(bundle),
         cancel,
     )?;
     let text = output(
-        Command::new("/usr/bin/codesign")
+        herdr_client::new_command("/usr/bin/codesign")
             .args(["--display", "--verbose=4"])
             .arg(bundle),
         cancel,
@@ -30,7 +30,7 @@ pub(super) fn identity(
     let identity = signing_identity(&text)?;
     for key in ["CFBundleShortVersionString", "CFBundleVersion"] {
         let actual = output(
-            Command::new("/usr/bin/plutil")
+            herdr_client::new_command("/usr/bin/plutil")
                 .args(["-extract", key, "raw", "-o", "-"])
                 .arg(bundle.join("Contents/Info.plist")),
             cancel,

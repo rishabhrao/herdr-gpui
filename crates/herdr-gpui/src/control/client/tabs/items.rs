@@ -10,7 +10,6 @@ use serde::Serialize;
 use std::{
     fmt::Write as _,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 /// One synced issue or pull request, as `--json` prints it.
@@ -71,7 +70,7 @@ pub(super) fn describe(items: &[ItemInfo]) -> String {
 /// The repository's git common directory, resolved as the orchestrator
 /// keys its database.
 pub(super) fn git_common_dir(folder: &Path) -> crate::Result<PathBuf> {
-    let output = Command::new("git")
+    let output = herdr_client::new_command("git")
         .arg("-C")
         .arg(folder)
         .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])

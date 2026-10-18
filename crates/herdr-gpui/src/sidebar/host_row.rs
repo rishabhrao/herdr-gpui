@@ -67,9 +67,12 @@ impl HerdrWindow {
         let collapse_id = endpoint_id.clone();
         let select_id = endpoint_id.clone();
         let menu_id = endpoint_id.clone();
-        let removing = self.menu.removing_devices.contains(&endpoint.id);
-        // A cloud machine has no host to read its load from.
-        let host = crate::usage::Host::of(&endpoint.connection.target);
+        let removing = self.device_removing(endpoint);
+        let endpoint_collapsed = endpoint.collapsed;
+        let endpoint_label = endpoint.label.clone();
+        let connected = endpoint.live.status.is_connected();
+        // Of cloud machines, only Azure's load is read so far.
+        let host = crate::usage::Host::load_of(&endpoint.connection.target);
         let load = host
             .as_ref()
             .filter(|_| self.config.show_system_load)
@@ -122,6 +125,27 @@ impl HerdrWindow {
         div()
             .id(SharedString::from(format!("{prefix}host-{endpoint_id}")))
             .debug_selector(|| format!("{prefix}host-{endpoint_id}"))
+            // The pinned copy repeats the header it covers, which stays listed.
+            .when(!pinned, |row| {
+                let endpoint = endpoint_id.clone();
+                let row = row
+                    .role(Role::ListItem)
+                    .aria_label(super::accessibility::device_name(
+                        &endpoint_label,
+                        connected,
+                        working.as_deref(),
+                    ))
+                    .aria_selected(selected)
+                    .map(|control| {
+                        self.chrome_stop(crate::window::chrome_focus::Region::Sidebar, control)
+                    });
+                super::accessibility::expandable(
+                    row,
+                    !endpoint_collapsed,
+                    cx.entity().downgrade(),
+                    move |this, _, cx| this.toggle_device(&endpoint, cx),
+                )
+            })
             .h(px(lines * line_height(font)
                 + 2. * layout.host_padding()
                 + look.chrome_height()))
@@ -139,39 +163,42 @@ impl HerdrWindow {
                 row.bg(rgb(theme.sidebar_background()))
                     .block_mouse_except_scroll()
             })
-            // The host's colour wash sits under its highlight, on the pinned
+            // The host's colour wash goes with its highlight, on the pinned
             // copy too, so the header keeps its colour while it scrolls.
+            // Hosts mark selection only; they do not join the rows'
+            // hover group.
+            // A carried header is a card lifted over the headers it passes.
             .map(|row| {
-                wash::HostMark::resolve(
+                let mark = wash::HostMark::resolve(
                     &self.config.sidebar_style,
                     &endpoint.label,
                     selected,
                     theme,
-                )
-                .apply(row, &format!("{prefix}host-{endpoint_id}"), &look)
-            })
-            // Hosts mark selection only; they do not join the rows'
-            // hover group.
-            // A carried header is a card lifted over the headers it passes.
-            .child(
+                );
+                let key = format!("{prefix}host-{endpoint_id}");
                 if !pinned
                     && self
                         .device_drag
                         .as_ref()
                         .is_some_and(|drag| drag.carries(&endpoint.id))
                 {
-                    look.lifted(&format!("host-{endpoint_id}"), selected, theme)
+                    mark.apply(row, &key, &look).child(look.lifted(
+                        &format!("host-{endpoint_id}"),
+                        selected,
+                        theme,
+                    ))
                 } else {
-                    look.highlight(
-                        &format!("{prefix}host-{endpoint_id}"),
+                    let layer = look.highlight(
+                        &key,
                         RowState {
                             selected,
                             ..RowState::default()
                         },
                         theme,
-                    )
-                },
-            )
+                    );
+                    look.washed(row, &key, mark, layer)
+                }
+            })
             .text_color(rgb(if endpoint.enabled {
                 theme.foreground
             } else {
@@ -210,12 +237,7 @@ impl HerdrWindow {
                             }))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
-                                if let Some(endpoint) =
-                                    this.endpoints.iter_mut().find(|e| e.id == collapse_id)
-                                {
-                                    endpoint.collapsed = !endpoint.collapsed;
-                                }
-                                cx.notify();
+                                this.toggle_device(&collapse_id, cx);
                             })),
                     )
                     .when_some(origin, |row, origin| {
@@ -320,6 +342,34 @@ impl HerdrWindow {
             }))
     }
 
+    /// Folds or unfolds a device's header, from its arrow or a screen reader.
+    fn toggle_device(&mut self, endpoint_id: &str, cx: &mut Context<Self>) {
+        if let Some(endpoint) = self.endpoints.iter_mut().find(|e| e.id == endpoint_id) {
+            endpoint.collapsed = !endpoint.collapsed;
+        }
+        cx.notify();
+    }
+
+    /// Folds or unfolds a repository's linked worktrees on one device.
+    pub(super) fn toggle_repository(
+        &mut self,
+        endpoint_id: &str,
+        key: &String,
+        cx: &mut Context<Self>,
+    ) {
+        let collapsed = if endpoint_id == crate::endpoint::LOCAL {
+            &mut self.collapsed_repos
+        } else if let Some(endpoint) = self.endpoints.iter_mut().find(|e| e.id == endpoint_id) {
+            &mut endpoint.collapsed_repos
+        } else {
+            return;
+        };
+        if !collapsed.remove(key) {
+            collapsed.insert(key.clone());
+        }
+        cx.notify();
+    }
+
     /// `2/5`: a connected host's working agents of all its agents.
     fn working_summary(&self, endpoint: &Endpoint) -> Option<String> {
         let index = self.endpoints.iter().position(|e| e.id == endpoint.id)?;
@@ -393,4 +443,29 @@ impl HerdrWindow {
         scroll.set_offset(point(offset.x, (offset.y + px(down)).min(px(0.))));
         true
     }
+}
+
+impl HerdrWindow {
+    /// Whether `endpoint` is being removed: from the sidebar, or its machine
+    /// deleted at Azure from Settings or by auto-stop.
+    pub(crate) fn device_removing(&self, endpoint: &Endpoint) -> bool {
+        self.menu.removing_devices.contains(&endpoint.id)
+            || destroying_at_azure(&endpoint.connection.target)
+    }
+}
+
+/// Whether the machine behind `target` is being deleted at Azure, by Remove
+/// from here or Settings, or by auto-stop: its header pulses as for removal.
+fn destroying_at_azure(target: &herdr_client::ConnectTarget) -> bool {
+    #[cfg(feature = "azure")]
+    if let herdr_client::ConnectTarget::Cloud {
+        provider: herdr_client::CloudProvider::Azure,
+        id,
+        ..
+    } = target
+    {
+        return crate::azure::destroy::destroying(id);
+    }
+    let _ = target;
+    false
 }

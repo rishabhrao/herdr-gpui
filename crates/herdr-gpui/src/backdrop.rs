@@ -198,10 +198,14 @@ impl Fill {
 }
 
 /// The platform appearance for a backdrop: a picture covers the desktop, so
-/// the window stays opaque and the compositor has nothing to blend.
+/// the window stays opaque and the compositor has nothing to blend. Only
+/// Windows has Mica; elsewhere the material is ignored and blur is blur.
 pub(crate) fn appearance(backdrop: &config::Backdrop, picture: bool) -> WindowBackgroundAppearance {
     match (backdrop.translucent(), picture, backdrop.blur) {
         (false, ..) | (true, true, _) => WindowBackgroundAppearance::Opaque,
+        (true, false, true) if cfg!(windows) && backdrop.material == config::Material::Mica => {
+            WindowBackgroundAppearance::MicaBackdrop
+        }
         (true, false, true) => WindowBackgroundAppearance::Blurred,
         (true, false, false) => WindowBackgroundAppearance::Transparent,
     }

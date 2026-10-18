@@ -3,7 +3,7 @@ use super::*;
 use gpui::{ClipboardEntry, ExternalPaths};
 
 /// Finder publishes the copied files and, as text, only their names.
-fn file_copy(paths: &[PathBuf], name: &str) -> ClipboardItem {
+pub(super) fn file_copy(paths: &[PathBuf], name: &str) -> ClipboardItem {
     let mut entries = vec![ClipboardEntry::ExternalPaths(ExternalPaths(
         paths.iter().cloned().collect(),
     ))];
@@ -11,7 +11,7 @@ fn file_copy(paths: &[PathBuf], name: &str) -> ClipboardItem {
     ClipboardItem { entries }
 }
 
-fn cmd_v() -> gpui::KeyDownEvent {
+pub(super) fn cmd_v() -> gpui::KeyDownEvent {
     gpui::KeyDownEvent {
         keystroke: gpui::Keystroke::parse("cmd-v").unwrap(),
         is_held: false,

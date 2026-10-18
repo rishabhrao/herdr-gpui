@@ -80,9 +80,25 @@ impl Origins {
             .ok_or(Error::PrTimeout)?;
         // The daemon's branch is trusted as reported: this client cannot run
         // local Git against the host's checkout to re-verify it.
-        let remote = herdr_client::remote_origin_url(target, key, timeout, cancelled)?
-            .ok_or(Error::PrOrigin)?;
-        let repository = crate::avatars::github_repo(&remote).ok_or(Error::PrOrigin)?;
+        let repository = if let Ok(Some(upstream)) = herdr_client::remote_config_value(
+            target,
+            key,
+            "remote.upstream.url",
+            timeout,
+            cancelled,
+        ) && let Some(repo) = crate::avatars::github_repo(&upstream)
+        {
+            repo
+        } else {
+            // The upstream read may have used most of the budget; the
+            // fallback gets only what is left, never a fresh timeout.
+            let timeout = deadline
+                .checked_duration_since(Instant::now())
+                .ok_or(Error::PrTimeout)?;
+            let remote = herdr_client::remote_origin_url(target, key, timeout, cancelled)?
+                .ok_or(Error::PrOrigin)?;
+            crate::avatars::github_repo(&remote).ok_or(Error::PrOrigin)?
+        };
         if self.0.len() == ORIGIN_LIMIT {
             self.0.remove(0);
         }
@@ -140,7 +156,8 @@ pub(super) fn target(
     let ((owner, repo), head) = match origin {
         Origin::Local => {
             let checkout = local_checkout(input, deadline, cancelled)?;
-            let repository = origin_repository(&checkout, deadline, cancelled)?;
+            let base = super::remote::base_repository(&checkout, deadline, cancelled)?;
+            let repository = (base.owner, base.repo);
             let head = upstream_head(&input.branch, |key| {
                 let value = git(
                     &checkout,
@@ -150,6 +167,29 @@ pub(super) fn target(
                 )?;
                 Ok((!value.is_empty()).then_some(value))
             })?;
+            let head = if head.is_none()
+                && crate::repo_items::fork_branch_number(&input.branch).is_none()
+            {
+                git(
+                    &checkout,
+                    &["config", "--default", "", "--get", "remote.origin.url"],
+                    deadline,
+                    cancelled,
+                )
+                .ok()
+                .as_deref()
+                .and_then(crate::avatars::github_repo)
+                .filter(|(origin_owner, origin_repo)| {
+                    origin_owner != &repository.0 || origin_repo != &repository.1
+                })
+                .map(|(owner, repo)| Head {
+                    owner,
+                    repo,
+                    branch: input.branch.clone(),
+                })
+            } else {
+                head
+            };
             (repository, head)
         }
         Origin::Ssh(target) => {
@@ -163,6 +203,28 @@ pub(super) fn target(
                     target, key, name, timeout, cancelled,
                 )?)
             })?;
+            let head = if head.is_none()
+                && crate::repo_items::fork_branch_number(&input.branch).is_none()
+            {
+                let timeout = deadline
+                    .checked_duration_since(Instant::now())
+                    .ok_or(Error::PrTimeout)?;
+                herdr_client::remote_origin_url(target, key, timeout, cancelled)
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    .and_then(crate::avatars::github_repo)
+                    .filter(|(origin_owner, origin_repo)| {
+                        origin_owner != &repository.0 || origin_repo != &repository.1
+                    })
+                    .map(|(owner, repo)| Head {
+                        owner,
+                        repo,
+                        branch: input.branch.clone(),
+                    })
+            } else {
+                head
+            };
             (repository, head)
         }
     };
@@ -238,13 +300,13 @@ pub(crate) fn local_repository(
     input: &Input,
     deadline: Instant,
     cancelled: &impl Fn() -> bool,
-) -> crate::Result<(String, String)> {
+) -> crate::Result<super::Base> {
     let checkout = local_checkout(input, deadline, cancelled)?;
-    origin_repository(&checkout, deadline, cancelled)
+    super::remote::base_repository(&checkout, deadline, cancelled)
 }
 
 /// The GitHub owner and repository behind a verified checkout's origin remote.
-pub(crate) fn origin_repository(
+pub(super) fn origin_repository(
     checkout: &str,
     deadline: Instant,
     cancelled: &impl Fn() -> bool,
@@ -348,7 +410,7 @@ pub(crate) fn local_checkout(
             // metadata, use Git's own worktree registry, never pane cwd or the
             // new-workspace directory; that directory is read only when the
             // daemon has no metadata at all, and is verified like this one.
-            let mut command = Command::new("git");
+            let mut command = herdr_client::new_command("git");
             command.args([
                 "-c",
                 "core.fsmonitor=false",
@@ -395,13 +457,13 @@ pub(crate) fn local_checkout(
 }
 
 /// Read-only Git output from a checkout, with the shared process policy.
-fn git(
+pub(super) fn git(
     checkout: &str,
     args: &[&str],
     deadline: Instant,
     cancelled: &impl Fn() -> bool,
 ) -> crate::Result<String> {
-    let mut command = Command::new("git");
+    let mut command = herdr_client::new_command("git");
     command
         .args(["-c", "core.fsmonitor=false", "-C", checkout])
         .args(args);

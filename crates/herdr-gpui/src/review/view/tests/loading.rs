@@ -54,7 +54,7 @@ fn repository() -> (tempfile::TempDir, Input) {
 #[gpui::test]
 fn lines_are_read_after_the_files_and_large_ones_when_asked(cx: &mut gpui::TestAppContext) {
     let (_directory, input) = repository();
-    let listed = load(&input, Scope::Uncommitted, None, false).unwrap();
+    let listed = load(&input, Scope::Uncommitted, None, None, false).unwrap();
     assert_eq!(listed.diff.files[0].body, Body::Pending, "listed, not read");
     let (view, cx) = window(cx, None);
     cx.simulate_resize(gpui::size(gpui::px(1600.), gpui::px(900.)));
@@ -113,7 +113,7 @@ fn lines_are_read_after_the_files_and_large_ones_when_asked(cx: &mut gpui::TestA
 #[gpui::test]
 fn hidden_lines_above_a_hunk_show_on_request(cx: &mut gpui::TestAppContext) {
     let (_directory, input) = repository();
-    let mut listed = load(&input, Scope::Uncommitted, None, false).unwrap();
+    let mut listed = load(&input, Scope::Uncommitted, None, None, false).unwrap();
     listed.read_all();
     let (view, cx) = window(cx, None);
     cx.simulate_resize(gpui::size(gpui::px(1600.), gpui::px(900.)));
@@ -177,7 +177,7 @@ fn hidden_lines_come_from_the_file_git_named(cx: &mut gpui::TestAppContext) {
         repo_key: Some(path.join(".git").to_str().unwrap().to_owned()),
         branch: "main".into(),
     };
-    let mut listed = load(&input, Scope::Uncommitted, None, false).unwrap();
+    let mut listed = load(&input, Scope::Uncommitted, None, None, false).unwrap();
     listed.read_all();
     let file = listed
         .diff

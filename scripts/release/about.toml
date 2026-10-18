@@ -21,6 +21,7 @@ accepted = [
     "Unicode-3.0",
     "CC0-1.0",
     "Apache-2.0 WITH LLVM-exception", # ar_archive_writer 0.5.3
+    "BSL-1.0", # clipboard-win 5.4.1, error-code 3.4.0 (Windows clipboard images)
     # webpki-roots 1.0.9 trust-store data; section 2.1 requires this text with data.
     "CDLA-Permissive-2.0",
 ]

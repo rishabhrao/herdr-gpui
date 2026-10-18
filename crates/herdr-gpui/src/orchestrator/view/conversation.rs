@@ -214,7 +214,7 @@ impl OrchestratorView {
     }
 
     pub(super) fn render_conversation(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let (notice, comments) = if self.request.token.is_none() {
+        let (notice, comments) = if self.request().is_none_or(|request| request.token.is_none()) {
             (
                 Some("Sign in to GitHub to read the conversation.".to_owned()),
                 None,

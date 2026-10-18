@@ -18,7 +18,7 @@ impl SettingsWindow {
         let mut page = div()
             .flex()
             .flex_col()
-            .child(ui::section(theme, "Tab bar", Some(ui::Source::Shared)))
+            .child(ui::section(theme, "Tab bar", Some(ui::Source::Herdr)))
             .child(
                 self.gate_shared(ui::row(theme, "tabs-position", "Position"))
                     .control(ui::segmented(
@@ -37,7 +37,7 @@ impl SettingsWindow {
             )
             .child(
                 self.gate_shared(ui::row(theme, "tabs-hide-single", "Hide with a single tab"))
-                    .control(
+                    .switch(
                         ui::toggle(theme, "tabs-hide-single-toggle", hide, ready).when(
                             ready,
                             |toggle| {
@@ -50,7 +50,7 @@ impl SettingsWindow {
             )
             .child(ui::section(theme, "Closing", None))
             .child(
-                ui::row(theme, "tabs-confirm-tab", "Confirm before closing a tab").control(
+                ui::row(theme, "tabs-confirm-tab", "Confirm before closing a tab").switch(
                     self.preference_toggle(
                         "tabs-confirm-tab-toggle",
                         self.config.confirm_close_tab,
@@ -60,7 +60,7 @@ impl SettingsWindow {
                 ),
             )
             .child(
-                ui::row(theme, "tabs-confirm-pane", "Confirm before closing a pane").control(
+                ui::row(theme, "tabs-confirm-pane", "Confirm before closing a pane").switch(
                     self.preference_toggle(
                         "tabs-confirm-pane-toggle",
                         self.config.confirm_close_pane,
@@ -75,7 +75,7 @@ impl SettingsWindow {
                     "tabs-confirm-workspace",
                     "Confirm before closing a workspace",
                 )
-                .control(self.preference_toggle(
+                .switch(self.preference_toggle(
                     "tabs-confirm-workspace-toggle",
                     self.config.confirm_close_workspace,
                     Preference::ConfirmCloseWorkspace(!self.config.confirm_close_workspace),
@@ -86,7 +86,7 @@ impl SettingsWindow {
             .child(
                 ui::row(theme, "tabs-focus-follows-mouse", "Focus follows mouse")
                     .description("The pointer chooses the active pane within a split terminal tab.")
-                    .control(self.preference_toggle(
+                    .switch(self.preference_toggle(
                         "tabs-focus-follows-mouse-toggle",
                         self.config.focus_follows_mouse,
                         Preference::FocusFollowsMouse(!self.config.focus_follows_mouse),
@@ -101,13 +101,13 @@ impl SettingsWindow {
                         "tabs-pane-history",
                         "Restore scrollback after Herdr restarts",
                     )
-                    .tag(ui::Source::Shared)
+                    .tag(ui::Source::Herdr)
                     .description(
                         "Experimental. Herdr saves pane output to session-history.json and \
                          replays it when the daemon restarts.",
                     ),
                 )
-                .control(
+                .switch(
                     ui::toggle(theme, "tabs-pane-history-toggle", history, ready).when(
                         ready,
                         |toggle| {
@@ -139,7 +139,7 @@ impl SettingsWindow {
             page = page.child(
                 ui::row(theme, id.clone(), host.label.clone())
                     .description(note)
-                    .control(
+                    .switch(
                         ui::toggle(theme, format!("{id}-toggle"), checked, enabled).when(
                             enabled,
                             |toggle| {

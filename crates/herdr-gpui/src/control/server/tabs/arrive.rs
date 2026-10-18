@@ -267,9 +267,8 @@ pub(super) fn devices(
     );
 }
 
-/// The workspace's orchestrator, listing the repository of `repo`, or of the
-/// workspace's focused pane. A workspace has one orchestrator tab, which a
-/// second request brings back as it is.
+/// The workspace's issues in the activity bar's Issues section, listing the
+/// repository of `repo`, or of the workspace's focused pane.
 pub(super) fn orchestrator(
     caller: &Caller,
     repo: Option<String>,
@@ -292,15 +291,17 @@ pub(super) fn orchestrator(
         cx,
         |_| true,
         move |view, workspace, window, cx| {
-            match repo {
-                Some(repo) => {
-                    view.open_orchestrator_in(workspace.to_owned(), Some(repo), window, cx)
-                }
-                None => view.open_orchestrator(window, cx),
+            view.open_orchestrator_in(workspace.to_owned(), repo, window, cx);
+            if view.activity.panel == crate::sidebar::ActivityPanel::Issues
+                && view.activity_section().is_some()
+            {
+                Response::done(format!("Showing the issues of workspace {workspace}"))
+            } else {
+                Response::error(
+                    ErrorCode::Unsupported,
+                    "Issues show in the activity bar, which is turned off, or this host cannot list them",
+                )
             }
-            opened(view, workspace, "the orchestrator", cx, |location| {
-                matches!(location, Location::Orchestrator { .. })
-            })
         },
     );
 }

@@ -246,7 +246,7 @@ fn pane_keys_reach_the_keymap_as_written() -> anyhow::Result<()> {
     assert_eq!(sent("cmd-left"), None);
     assert_eq!(
         keymap.primary(crate::controls::Command::ClearPane),
-        if cfg!(target_os = "linux") {
+        if crate::controls::CTRL_SHORTCUTS {
             "ctrl-shift-k"
         } else {
             ""

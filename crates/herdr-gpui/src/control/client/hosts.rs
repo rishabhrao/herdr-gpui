@@ -75,6 +75,7 @@ pub(super) fn cloud(command: CloudCommand, context: &Context) -> crate::Result<O
     match command {
         CloudCommand::List => cloud::list(),
         CloudCommand::Add => context.act(Request::Host, HostOp::Cloud),
+        CloudCommand::Setup(id) => context.act(Request::Host, HostOp::CloudSetup { id }),
     }
 }
 

@@ -4,7 +4,7 @@
 //!
 //! Turns come from the daemon's agent status in each endpoint's snapshot,
 //! never from terminal output. Git runs in the checkout's own host (this
-//! machine or an SSH host) on one worker thread per host, so a slow host never
+//! machine, an SSH host, or a WSL distribution) on one worker thread per host, so a slow host never
 //! delays another and the UI thread only queues jobs and takes answers. Taking
 //! a checkpoint never touches the checkout's index or files; restoring one is
 //! an explicit, confirmed action that first checkpoints the current state.
@@ -14,7 +14,6 @@ mod script;
 #[cfg(test)]
 mod tests;
 
-#[cfg(any(unix, test))]
 pub(crate) use script::valid_id;
 
 use crate::{Error, Result, usage::Host};
@@ -45,17 +44,15 @@ const LIMITS: ScriptLimits = ScriptLimits {
 };
 
 /// The host whose checkouts an endpoint's snapshot names, when this client
-/// may run Git there: an SSH host, or this machine when the daemon is the
-/// user's own (the trust boundary local Git status uses). Host scripts need a
-/// POSIX client; see `herdr_client::run_script`.
+/// may run Git there: an SSH host, a WSL distribution, or this machine when
+/// the daemon is the user's own (the trust boundary local Git status uses).
+/// Host scripts need a POSIX client, except in a distribution, which a Windows
+/// client reaches through `wsl.exe`; see `herdr_client::run_script`.
 pub(crate) fn host_for(target: &ConnectTarget, live: &crate::LiveState) -> Option<Host> {
-    if !cfg!(any(target_os = "linux", target_os = "macos")) {
-        return None;
-    }
     match target {
+        ConnectTarget::Wsl { distro, .. } => cfg!(windows).then(|| Host::Wsl(distro.clone())),
+        _ if !cfg!(any(target_os = "linux", target_os = "macos")) => None,
         ConnectTarget::Ssh { target, .. } => Some(Host::Ssh(target.clone())),
-        // No script runs inside a distribution yet, so its checkouts are not snapshotted.
-        ConnectTarget::Wsl { .. } => None,
         ConnectTarget::Local | ConnectTarget::Session { .. } => {
             live.local_daemon_peer.then_some(Host::Local)
         }
@@ -177,7 +174,9 @@ fn run_bytes(checkout: &Checkout, body: &str, limits: ScriptLimits) -> Result<Ve
     let host = match &checkout.host {
         Host::Local => ScriptHost::Local,
         Host::Ssh(target) => ScriptHost::Ssh(target),
-        Host::Wsl(_) => return Err(Error::WslHostUnsupported),
+        Host::Wsl(distro) => ScriptHost::Wsl(distro),
+        #[cfg(feature = "azure")]
+        Host::Azure { .. } => return Err(Error::CloudHostUnsupported),
     };
     let mut output = Vec::new();
     run_script(
@@ -427,7 +426,6 @@ impl Checkpoints {
     }
 
     /// Select checkpoint `id` in the open dialog once its list has loaded.
-    #[cfg(any(unix, test))]
     pub fn want(&mut self, id: String) {
         if let Some(view) = &mut self.view {
             view.wanted = Some(id);

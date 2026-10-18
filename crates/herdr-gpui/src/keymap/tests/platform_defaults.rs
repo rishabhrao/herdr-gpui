@@ -35,7 +35,7 @@ fn platform_defaults_are_complete_unique_and_leave_edit_keys_available() {
                     .all(|edit| !typed_matches(&key, &keystroke(edit))),
                 "{shortcut}"
             );
-            if cfg!(target_os = "linux") {
+            if crate::controls::CTRL_SHORTCUTS {
                 assert!(!key.modifiers.platform, "{shortcut}");
             } else {
                 assert!(key.modifiers.platform, "{shortcut}");
@@ -81,6 +81,47 @@ fn linux_shortcuts_preserve_terminal_keys_and_shifted_actions() {
         );
     }
     assert!(keymap.triggers(Command::Keybinds, &keystroke("ctrl-shift-/->?"), false));
+    let configured = with(&[("new_tab", one("cmd-t"))]).unwrap();
+    assert_eq!(configured.primary(Command::Tab), "cmd-t");
+    assert!(!configured.triggers(Command::Tab, &keystroke("ctrl-shift-t"), false));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_shortcuts_preserve_terminal_and_system_keys() {
+    let keymap = Keymap::default();
+    for (command, key) in [
+        (Command::Tab, "ctrl-shift-t"),
+        (Command::NewWindow, "ctrl-alt-n"),
+        (Command::NewWorktree, "ctrl-shift-n"),
+        (Command::Palette, "ctrl-shift-p"),
+        (Command::SplitRight, "ctrl-shift-d"),
+        (Command::CopyMode, "ctrl-alt-shift-c"),
+        (Command::ResetFontSize, "ctrl-0"),
+        (Command::Quit, "ctrl-shift-q"),
+        (Command::ToggleFullScreen, "f11"),
+    ] {
+        assert_eq!(keymap.primary(command), key);
+    }
+    for key in [
+        "ctrl-c",
+        "ctrl-d",
+        "ctrl-z",
+        "ctrl-v",
+        "ctrl-shift-c",
+        "ctrl-shift-v",
+        "ctrl-shift-0", // Windows can take this for input-language switching.
+        "alt-f4",
+        "cmd-d",
+        "cmd-q",
+    ] {
+        assert!(
+            COMMANDS
+                .iter()
+                .all(|info| !keymap.triggers(info.command, &keystroke(key), false)),
+            "{key}"
+        );
+    }
     let configured = with(&[("new_tab", one("cmd-t"))]).unwrap();
     assert_eq!(configured.primary(Command::Tab), "cmd-t");
     assert!(!configured.triggers(Command::Tab, &keystroke("ctrl-shift-t"), false));

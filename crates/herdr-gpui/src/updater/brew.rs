@@ -118,7 +118,7 @@ fn owned_bundle(prefix: &Path, bundle: &Path) -> bool {
 }
 
 fn command(cask: &Cask) -> Command {
-    let mut command = Command::new(&cask.brew);
+    let mut command = herdr_client::new_command(&cask.brew);
     // Homebrew needs a usable environment, so it cannot be cleared entirely.
     // Pass only what it requires, and never inherit the user's PATH.
     command
@@ -450,7 +450,7 @@ fn schedule_relaunch(
     search_path: impl AsRef<OsStr>,
     limit: Duration,
 ) -> Result<()> {
-    let mut command = Command::new("/bin/sh");
+    let mut command = herdr_client::new_command("/bin/sh");
     command
         .arg("-c")
         .arg(RELAUNCH_SCRIPT)

@@ -53,7 +53,7 @@ impl HerdrWindow {
                 .iter()
                 .find(|e| e.id == *id && e.enabled)
                 .and_then(|e| e.connection.target.remote_host())
-                .filter(host_available)
+                .filter(|host| host_unavailable(host).is_none())
                 .map(|host| Target::Device {
                     id: id.clone(),
                     host,
@@ -70,10 +70,9 @@ impl HerdrWindow {
             Target::Local => {
                 (!self.local_management_available()).then_some("Unavailable with --socket or --dev")
             }
-            Target::Device { host, .. } if !host_available(host) => Some(match host {
-                RemoteHost::Ssh(_) => "SSH is unavailable on Windows",
-                RemoteHost::Wsl(_) => "WSL is only available on Windows",
-            }),
+            Target::Device { host, .. } if host_unavailable(host).is_some() => {
+                host_unavailable(host)
+            }
             Target::Device { id, host } => {
                 let Some(endpoint) = self.endpoints.iter().find(|e| {
                     e.id == *id
@@ -437,11 +436,11 @@ impl HerdrWindow {
 #[allow(clippy::unwrap_used)]
 mod tests;
 
-/// Whether this build can reach `host` to manage its sessions: SSH from a POSIX
-/// client, WSL from Windows.
-fn host_available(host: &RemoteHost) -> bool {
+/// Why this build cannot reach `host` to manage its sessions, if it cannot:
+/// every client has SSH, but only Windows has WSL.
+fn host_unavailable(host: &RemoteHost) -> Option<&'static str> {
     match host {
-        RemoteHost::Ssh(_) => !cfg!(windows),
-        RemoteHost::Wsl(_) => cfg!(windows),
+        RemoteHost::Ssh(_) => None,
+        RemoteHost::Wsl(_) => (!cfg!(windows)).then_some("WSL is only available on Windows"),
     }
 }

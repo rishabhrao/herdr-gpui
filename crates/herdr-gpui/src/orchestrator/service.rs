@@ -168,6 +168,9 @@ pub(crate) struct Snapshot {
     pub(crate) pull_request: Option<PullRequestLookup>,
     /// The repository's branches named for items, as each sync read them.
     pub(crate) branches: Arc<Vec<String>>,
+    /// Each open pull request's review and checks, by repository and number,
+    /// as the last sync of its source read them. Never stored.
+    pub(crate) pr_status: Arc<HashMap<(String, u64), super::PrStatus>>,
 }
 
 pub(crate) struct Service {
@@ -615,6 +618,38 @@ impl Worker {
                     &mut self.cooldown,
                 )?;
                 let count = listing.items.len();
+                // Reviews and checks change with every CI run, so they are
+                // read again each sync. Failing to read them keeps the last
+                // ones rather than failing the listing.
+                let statuses = super::review::fetch(&key.repository, |query, variables| {
+                    crate::github::graphql(
+                        "orchestrator",
+                        token,
+                        query,
+                        variables,
+                        super::review::timeout(),
+                        || cancelled.load(Ordering::Relaxed),
+                        &mut self.cooldown,
+                    )
+                    .map_err(|error| match error {
+                        crate::Error::PrCancelled => Error::Cancelled,
+                        error => Error::Github(Box::new(error)),
+                    })
+                });
+                match statuses {
+                    Ok(statuses) => {
+                        let mut all = (*self.snapshot.pr_status).clone();
+                        all.retain(|(repository, _), _| *repository != key.repository);
+                        all.extend(
+                            statuses
+                                .into_iter()
+                                .map(|(number, status)| ((key.repository.clone(), number), status)),
+                        );
+                        self.snapshot.pr_status = Arc::new(all);
+                    }
+                    Err(Error::Cancelled) => return Err(Error::Cancelled),
+                    Err(error) => tracing::warn!(%error, "Cannot read pull request checks"),
+                }
                 // A listing that is not stored is no place to resume from.
                 self.resume.remove(key);
                 if !listing.complete || !writable {

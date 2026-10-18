@@ -6,7 +6,7 @@
 
 use super::{
     super::{
-        agents::{status_style, status_symbol},
+        agents::{icon_mark, status_style},
         cell::{AgentRow, RowContext, RowLayout, RowState, WorkspaceRow},
         line_height,
         row::{
@@ -87,7 +87,7 @@ fn shell(key: &str, state: RowState, indent: f32, line: Line<'_>, cx: &RowContex
 }
 
 /// The icon slot, with the status as a dot pinned to its top right corner in
-/// `dot`'s color, bold where symbols allow. `None` draws no dot. The dot stays
+/// `dot`'s color. `None` draws no dot. The dot stays
 /// inside the slot: the slot sets the line's height and the line clips, so a
 /// dot that overhangs the slot loses its top.
 fn slot(
@@ -101,10 +101,12 @@ fn slot(
     // Tiles tint the whole slot instead of badging a corner: the slot is
     // already the tile, and the icon inside it stays readable.
     let tile = dot
-        .filter(|_| cx.indicators.icons == Some(StatusIcons::Tiles))
+        .filter(|_| cx.indicators.icons == StatusIcons::Tiles)
         .map(|(color, _)| color);
-    let dot = dot.filter(|_| tile.is_none()).map(|(color, bold)| {
-        if let Some(icons) = cx.indicators.icons {
+    // A configured weight has nothing to thicken on a badge.
+    let dot = dot.filter(|_| tile.is_none()).map(|(color, _bold)| {
+        let icons = cx.indicators.icons;
+        if icons != StatusIcons::Dots {
             let diameter = (m.icon * 0.55).round();
             return div()
                 .debug_selector(|| format!("dot-{key}"))
@@ -117,35 +119,34 @@ fn slot(
                 .justify_center()
                 .rounded_full()
                 .bg(rgb(theme.sidebar_background()))
-                .child(
-                    svg()
-                        .path(crate::icons::status_icon(icons, status))
-                        .size(px(diameter))
-                        .text_color(rgb(color)),
-                );
+                .child(icon_mark(
+                    icons,
+                    status,
+                    diameter,
+                    color,
+                    cx.status_indicators().fade(),
+                ));
         }
-        if cx.indicators.style == crate::herdr_settings::IndicatorStyle::Symbols {
-            // A full row-status slot masks the underlying icon. Symbols here
-            // are corner badges, leaving the icon's center unobscured.
-            let diameter = (m.icon * 0.45).round();
+        let (diameter, filled, _) = status_style(status, theme);
+        // A working dot turns in the dot's own place, so the badge stays clear
+        // of the icon's center.
+        if status == AgentStatus::Working {
             return div()
-                .size(px(diameter))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(diameter))
-                .line_height(px(diameter))
-                .text_color(rgb(color))
-                .when(bold, |badge| badge.font_weight(FontWeight::BOLD))
-                .child(status_symbol(status))
                 .debug_selector(|| format!("dot-{key}"))
                 .absolute()
                 .top_0()
                 .right_0()
+                .size(px(diameter))
                 .rounded_full()
-                .bg(rgb(theme.sidebar_background()));
+                .bg(rgb(theme.sidebar_background()))
+                .child(icon_mark(
+                    StatusIcons::Dots,
+                    status,
+                    diameter,
+                    color,
+                    cx.status_indicators().fade(),
+                ));
         }
-        let (diameter, filled, _) = status_style(status, theme);
         div()
             .debug_selector(|| format!("dot-{key}"))
             .absolute()
@@ -399,7 +400,13 @@ mod tests {
             weight: gpui::FontWeight::NORMAL,
         };
         let theme = Theme::default();
-        let indicators = Indicators::new(None, None, false, &theme);
+        let indicators = Indicators::new(
+            None,
+            crate::config::StatusIcons::default(),
+            false,
+            false,
+            &theme,
+        );
         let cx = RowContext {
             indicators,
             font: &font,

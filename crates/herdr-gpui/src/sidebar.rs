@@ -1,7 +1,10 @@
 //! The sidebar: spaces and agents, the rows that show them, and the hover
 //! menu a resting pointer opens.
 
+mod accessibility;
+mod activity;
 mod agents;
+mod animated;
 mod cell;
 mod device_drag;
 mod drawer;
@@ -33,11 +36,13 @@ pub(crate) mod layout_tests;
 pub(crate) mod native_tests;
 
 pub(crate) use {
+    activity::{Activity, ActivityPanel},
     agents::{Indicators, agent_name, state_label, status_indicator, status_text},
     device_drag::DeviceDrag,
     hover::{HoverMenu, HoverRest},
     metrics::{ARROW_RESERVE, HOST_ARROW_WIDTH, HOST_GAP, ICON_RESERVE, LABEL_GAP, STATUS_WIDTH},
     rail::SidebarMode,
+    render::NestedReveal,
     reorder::WorkspaceDrag,
     row::{compact, github_mark, label_text, styled as styled_token},
     search::SidebarSearch,

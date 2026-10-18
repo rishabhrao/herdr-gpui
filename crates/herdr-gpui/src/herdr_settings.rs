@@ -121,14 +121,6 @@ impl From<Error> for crate::Error {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum IndicatorStyle {
-    #[default]
-    Dots,
-    Symbols,
-}
-
 /// Whether interactive creation asks for a name first, as Herdr's
 /// `ui.prompt_new_tab_name` and `ui.prompt_new_workspace_name` decide.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -246,7 +238,6 @@ impl Default for Sound {
 #[derive(Clone, Debug)]
 pub(crate) enum Edit {
     Theme(String),
-    Indicators(IndicatorStyle),
     Sound(bool),
     Toasts(ToastDelivery),
     CopyOnSelect(bool),
@@ -274,7 +265,6 @@ pub(crate) struct Settings {
     /// selection stays highlighted until Cmd-C or Ctrl-C copies it.
     pub copy_on_select: bool,
     pub hide_tab_bar_when_single_tab: bool,
-    pub indicators: IndicatorStyle,
     /// Lines one wheel notch scrolls, Herdr's `ui.mouse_scroll_lines`.
     pub mouse_scroll_lines: NonZeroU16,
     pub name_prompts: NamePrompts,
@@ -320,8 +310,6 @@ struct Experimental {
 struct Ui {
     #[serde(deserialize_with = "crate::lenient::or_default")]
     agent_panel_sort: crate::preferences::AgentSort,
-    #[serde(deserialize_with = "crate::lenient::or_default")]
-    status_indicators: IndicatorStyle,
     #[serde(deserialize_with = "crate::lenient::or_default")]
     sound: Sound,
     #[serde(deserialize_with = "crate::lenient::or_default")]
@@ -473,7 +461,6 @@ impl Settings {
             clipboard: toast.clipboard,
             copy_on_select: parsed.ui.copy_on_select.unwrap_or(true),
             hide_tab_bar_when_single_tab: parsed.ui.hide_tab_bar_when_single_tab,
-            indicators: parsed.ui.status_indicators,
             mouse_scroll_lines: parsed
                 .ui
                 .mouse_scroll_lines
@@ -518,15 +505,6 @@ impl Settings {
                     set(&mut document, &["theme", "name"], name.into())?;
                     set(&mut document, &["theme", "auto_switch"], false.into())?;
                 }
-                Edit::Indicators(style) => set(
-                    &mut document,
-                    &["ui", "status_indicators"],
-                    match style {
-                        IndicatorStyle::Dots => "dots",
-                        IndicatorStyle::Symbols => "symbols",
-                    }
-                    .into(),
-                )?,
                 Edit::Sound(enabled) => {
                     set(&mut document, &["ui", "sound", "enabled"], enabled.into())?
                 }

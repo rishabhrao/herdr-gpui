@@ -39,10 +39,6 @@ fn open_menu<'a>(
 
 #[gpui::test]
 fn host_menu_shows_every_label_in_full(cx: &mut TestAppContext) {
-    // Saved SSH devices are unavailable on Windows, so there is no menu.
-    if cfg!(windows) {
-        return;
-    }
     let (view, cx) = open_menu("m5max-ms", 800., cx);
     let font_size = view.read_with(cx, |v, _| px(v.config.ui.size));
     let panel = cx.debug_bounds("menu-panel").unwrap();
@@ -77,9 +73,6 @@ fn host_menu_shows_every_label_in_full(cx: &mut TestAppContext) {
 /// menu past its actions.
 #[gpui::test]
 fn host_menu_header_does_not_widen_the_menu(cx: &mut TestAppContext) {
-    if cfg!(windows) {
-        return;
-    }
     let short = {
         let (_, cx) = open_menu("m5max-ms", 800., cx);
         cx.debug_bounds("menu-panel").unwrap().size.width

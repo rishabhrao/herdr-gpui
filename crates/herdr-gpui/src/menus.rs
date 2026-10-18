@@ -1,4 +1,5 @@
-//! Shared definitions for the macOS native and Linux in-window menu bars.
+//! Shared definitions for the macOS native and the Linux and Windows
+//! in-window menu bars.
 //! Every item dispatches the same action the palette and the keymap use.
 
 pub(crate) mod in_window;
@@ -22,7 +23,10 @@ use gpui::{App, Menu, MenuItem, OsAction};
 #[cfg(feature = "qa-menu")]
 use herdr_client::protocol::SemanticNotificationKind;
 
-/// Only headings are needed while the Linux menus are closed.
+/// Linux and Windows have no global menu bar, so each window draws its own.
+pub(crate) const IN_WINDOW: bool = cfg!(any(target_os = "linux", windows));
+
+/// Only headings are needed while the in-window menus are closed.
 struct Headings(Vec<(gpui::SharedString, bool)>);
 impl gpui::Global for Headings {}
 
@@ -386,12 +390,12 @@ pub(crate) fn menus(layout: Layout) -> Vec<Menu> {
                 MenuItem::action("Show Homebrew update progress", ShowUpdateHomebrewPreview),
                 MenuItem::action("Play Sound", PlaySound),
                 MenuItem::action("Ring Bell in 3 Seconds", RingBellPreview),
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", windows))]
                 MenuItem::action(
                     "Enable badge",
                     crate::actions::SetBadgePreview { enabled: true },
                 ),
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", windows))]
                 MenuItem::action(
                     "Disable badge preview",
                     crate::actions::SetBadgePreview { enabled: false },

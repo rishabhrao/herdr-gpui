@@ -98,6 +98,14 @@ impl HerdrWindow {
                     div()
                         .id("usage-refresh")
                         .debug_selector(|| "usage-refresh".into())
+                        .role(Role::Button)
+                        .aria_label("Refresh usage")
+                        .map(|control| {
+                            self.chrome_stop(
+                                crate::window::chrome_focus::Region::StatusBar,
+                                control,
+                            )
+                        })
                         .size(px(18.))
                         .flex_none()
                         .flex()
@@ -141,9 +149,18 @@ impl HerdrWindow {
         let bounds = Rc::new(Cell::new(Bounds::<Pixels>::default()));
         let painted = bounds.clone();
         let open = self.menu.page == Some(crate::menu::Page::Usage(provider));
+        let spoken = match reading.report.as_ref().and_then(|report| report.tightest()) {
+            Some(tightest) => format!("{} usage {}% used", provider.name(), tightest.percent()),
+            None => format!("{} usage", provider.name()),
+        };
         let mut segment = div()
             .id(SharedString::from(format!("usage-{key}")))
             .debug_selector(move || format!("usage-{key}"))
+            .role(Role::Button)
+            .aria_label(spoken)
+            .map(|control| {
+                self.chrome_stop(crate::window::chrome_focus::Region::StatusBar, control)
+            })
             .relative()
             .flex()
             // A wrapped segment occupies a whole second line and is clipped
@@ -307,6 +324,7 @@ pub(crate) struct Hint {
 impl Render for Hint {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
+            .debug_selector(|| "hint".into())
             .px(px(8.))
             .py(px(4.))
             .rounded(px(crate::config::corners::CONTROL))

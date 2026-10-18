@@ -3,10 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 /// How long a pull request's comments may take to load.
-#[cfg(any(unix, test))]
 pub(crate) const COMMENTS_WAIT_SECONDS: u64 = 20;
 /// How long `ports open` may wait for a new forward to listen.
-#[cfg(any(unix, test))]
 pub(crate) const FORWARD_WAIT_SECONDS: u64 = 20;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,10 +40,14 @@ pub(crate) enum HostOp {
     System,
     /// Open the settings that add cloud machines.
     Cloud,
+    /// Run the configured setup script again on the cloud device `id`, in a
+    /// new tab, showing the device first.
+    CloudSetup {
+        id: String,
+    },
 }
 
 impl HostOp {
-    #[cfg(any(unix, test))]
     pub(crate) fn wait_seconds(&self) -> u64 {
         match self {
             Self::PrComments => COMMENTS_WAIT_SECONDS,

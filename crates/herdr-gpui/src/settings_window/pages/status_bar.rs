@@ -5,11 +5,15 @@ use super::{SettingsWindow, on_value, ui};
 use crate::config::{
     Config,
     preferences::Preference,
-    status_bar::{Button, Detail, Edit},
+    status_bar::{AwakeScope, Button, Detail, Edit},
 };
 use gpui::{prelude::*, *};
 
 const DETAILS: [(Detail, &str); 2] = [(Detail::Detailed, "Detailed"), (Detail::Compact, "Compact")];
+const SCOPES: [(AwakeScope, &str); 2] = [
+    (AwakeScope::Display, "Display and system"),
+    (AwakeScope::System, "System only"),
+];
 const STYLES: [(Button, &str); 2] = [(Button::Label, "With label"), (Button::Icon, "Icon only")];
 
 /// A status bar button row: its id, title, current value and edit.
@@ -59,7 +63,7 @@ impl SettingsWindow {
         div()
             .flex()
             .flex_col()
-            .child(ui::section(theme, "Items", Some(ui::Source::Local)))
+            .child(ui::section(theme, "Items", Some(ui::Source::HerdrUi)))
             .child(
                 ui::row(theme, "status-usage", "Usage")
                     .description(
@@ -74,7 +78,7 @@ impl SettingsWindow {
                         Edit::Usage,
                         cx,
                     ))
-                    .control(
+                    .switch(
                         ui::toggle(theme, "status-usage-toggle", usage, true).on_click(
                             cx.listener(move |this, _, _, cx| {
                                 this.save_native(move || Config::save_usage_visibility(!usage), cx);
@@ -92,7 +96,7 @@ impl SettingsWindow {
                         Edit::SystemLoad,
                         cx,
                     ))
-                    .control(self.preference_toggle(
+                    .switch(self.preference_toggle(
                         "status-system-load-toggle",
                         system_load,
                         Preference::ShowSystemLoad(!system_load),
@@ -105,7 +109,7 @@ impl SettingsWindow {
                         "Times one TCP connect to 1.1.1.1:443 every 15 seconds from this \
                          machine, about a megabyte a day.",
                     )
-                    .control(self.preference_toggle(
+                    .switch(self.preference_toggle(
                         "status-network-quality-toggle",
                         network_quality,
                         Preference::ShowNetworkQuality(!network_quality),
@@ -113,14 +117,31 @@ impl SettingsWindow {
                     )),
             )
             .child(
-                ui::row(theme, "status-keep-awake", "Keep display awake").control(
-                    self.preference_toggle(
+                ui::row(theme, "status-keep-awake", "Keep awake")
+                    .description(
+                        "The cup keeps the machine from sleeping. System only lets the display \
+                         sleep and lock, like caffeinate -i. A cup already on keeps its scope \
+                         until it is turned off and on again.",
+                    )
+                    .control(ui::segmented(
+                        theme,
+                        "status-keep-awake-scope",
+                        &SCOPES,
+                        Some(items.keep_awake_scope),
+                        true,
+                        on_value(cx, |this, scope, _, cx| {
+                            this.save_preference(
+                                Preference::StatusBar(Edit::KeepAwakeScope(scope)),
+                                cx,
+                            )
+                        }),
+                    ))
+                    .switch(self.preference_toggle(
                         "status-keep-awake-toggle",
                         keep_awake,
                         Preference::StatusBar(Edit::KeepAwake(!keep_awake)),
                         cx,
-                    ),
-                ),
+                    )),
             )
             .children(buttons.map(|button| self.button_row(button, cx)))
             .child(
@@ -177,12 +198,7 @@ impl SettingsWindow {
                     this.save_preference(Preference::StatusBar(edit(choice)), cx)
                 }),
             ))
-            .control(self.preference_toggle(
-                toggle,
-                shown,
-                Preference::StatusBar(edit(toggled)),
-                cx,
-            ))
+            .switch(self.preference_toggle(toggle, shown, Preference::StatusBar(edit(toggled)), cx))
     }
 }
 

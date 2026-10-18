@@ -215,7 +215,7 @@ impl SettingsWindow {
                 Ok(shared) => {
                     config.apply_shared_notifications(&shared);
                     let theme = if config.theme == "Follow Herdr" {
-                        shared.theme(light)?.with_contrast(config.contrast)
+                        shared.theme(light)?.styled_for(&config)
                     } else {
                         config.theme(light)?
                     };
@@ -224,7 +224,7 @@ impl SettingsWindow {
                 Err(error) if config.theme == "Follow Herdr" => return Err(error),
                 Err(error) => (
                     None,
-                    Some(format!("Load shared settings: {error}")),
+                    Some(format!("Load Herdr settings: {error}")),
                     config.theme(light)?,
                 ),
             };
@@ -250,6 +250,7 @@ impl SettingsWindow {
                     .theme_intent
                     .as_ref()
                     .map(|_| (self.config.theme.clone(), self.theme.clone()));
+                crate::caffeine::set_scope(loaded.config.status_bar.keep_awake_scope, cx);
                 self.config = loaded.config;
                 if let Some(mode) = self.layout_intent {
                     self.config.layout.mode = mode;

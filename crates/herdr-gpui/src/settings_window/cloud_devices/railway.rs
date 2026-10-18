@@ -37,6 +37,8 @@ pub(in crate::settings_window) struct RailwayCard {
     source: KeySource,
     /// The user's approval to install Herdr on VMs set up from here.
     install: bool,
+    /// Run the setup script on the next device made here, when one is set.
+    setup: bool,
     /// `None` until the first read finishes.
     overview: Option<Overview>,
     message: Option<String>,
@@ -60,6 +62,7 @@ impl RailwayCard {
             name: input("herdr-railway", "herdr-railway", config, theme, cx),
             source: KeySource::Generate,
             install: true,
+            setup: true,
             overview: None,
             message: None,
             job: None,
@@ -286,10 +289,13 @@ impl SettingsWindow {
             name: name.clone(),
             install: card.install,
         };
+        let run = card.setup;
+        let script = self.cloud_setup_script(CloudProvider::Railway, run);
         let started = self.source.update(cx, |window, cx| {
             window.start_cloud_job(
                 CloudProvider::Railway,
                 name.clone(),
+                script,
                 move |cancelled, report| setup::add_device(request, cancelled, report),
                 cx,
             )
@@ -409,6 +415,17 @@ impl SettingsWindow {
                     }))
                 }),
             )
+            .children(self.cloud_setup_switch(
+                CloudProvider::Railway,
+                card.setup,
+                ready,
+                |this| {
+                    if let Some(card) = &mut this.railway_card {
+                        card.setup = !card.setup;
+                    }
+                },
+                cx,
+            ))
             .child(div().flex().justify_end().child(self.railway_button(
                 "cloud-railway-create",
                 "Connect and set up",

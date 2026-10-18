@@ -6,6 +6,11 @@ use std::time::Duration;
 pub(crate) const COMMAND_CAPACITY: usize = 64;
 pub(crate) const EVENT_CAPACITY: usize = 8;
 pub(crate) const POLL: Duration = Duration::from_millis(10);
+/// Longest an idle worker blocks. Deadlines and wakes end it sooner; this only
+/// bounds the cost of a wake that was lost.
+pub(crate) const IDLE_WAIT: Duration = Duration::from_secs(5);
+/// How long an SSH link may stay silent before a health ping.
+pub(crate) const QUIET_PING: Duration = Duration::from_secs(5);
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a quiet SSH link may leave a health ping unanswered.
 pub(crate) const PING_TIMEOUT: Duration = Duration::from_secs(10);

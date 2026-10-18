@@ -169,8 +169,6 @@ fn live_herdr_status_overrides_the_stored_state() {
             status: Status::NeedsInput
         })
     );
-    // Both runs need the user: one waits for input, one failed.
-    assert_eq!(attention(&runs), 2);
     // An agent on another host with the same pane id is not this run's.
     let elsewhere = vec![LiveAgent {
         host: Some("devbox".into()),
@@ -180,32 +178,6 @@ fn live_herdr_status_overrides_the_stored_state() {
     assert!(runs.live(1).is_none());
     // Without its agent in view, the run shows the state its owner stored.
     assert_eq!(runs.status(1), Some(Status::Working));
-}
-
-#[test]
-fn runs_group_by_what_needs_the_user_first() {
-    let items = beads();
-    let done = run("a", &items[0], RunState::Completed, "2026-10-04T03:00:00Z");
-    let working = run("b", &items[1], RunState::Running, "2026-10-04T02:00:00Z");
-    let waiting = run("c", &items[2], RunState::NeedsInput, "2026-10-04T01:00:00Z");
-    let list = vec![done, working, waiting];
-    let runs = Runs::new(&list, &[], &[]);
-    let lines = run_lines(&runs, &items, "", false);
-    let groups: Vec<_> = lines
-        .iter()
-        .map(|line| match line {
-            RunLine::Group { group, count } => format!("{}:{count}", group.label()),
-            RunLine::Run(row) => list[row.run].id.clone(),
-        })
-        .collect();
-    assert_eq!(
-        groups,
-        ["NEEDS YOU:1", "c", "WORKING:1", "b", "FINISHED:1", "a"]
-    );
-    let active = run_lines(&runs, &items, "", true);
-    assert_eq!(active.len(), 4);
-    let searched = run_lines(&runs, &items, "store", false);
-    assert_eq!(searched.len(), 2);
 }
 
 #[test]

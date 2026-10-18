@@ -3,12 +3,7 @@
 //! makes the terminal its controlling one, which `ssh` needs to ask for a
 //! password or a host key, then becomes the setup command. Doing this here
 //! rather than between fork and exec in the app keeps it free of `unsafe`.
-use std::{
-    ffi::OsString,
-    io,
-    os::unix::process::CommandExt,
-    process::{Command, ExitCode},
-};
+use std::{ffi::OsString, io, os::unix::process::CommandExt, process::ExitCode};
 
 /// Exit status when the setup command could not start, as a shell uses.
 const NOT_STARTED: u8 = 127;
@@ -19,7 +14,7 @@ pub(crate) fn run(program: &OsString, args: &[OsString]) -> ExitCode {
         return ExitCode::from(NOT_STARTED);
     }
     // Only returns when the command could not be started.
-    let error = Command::new(program).args(args).exec();
+    let error = herdr_client::new_command(program).args(args).exec();
     eprintln!(
         "Herdr could not start {}: {error}",
         program.to_string_lossy()

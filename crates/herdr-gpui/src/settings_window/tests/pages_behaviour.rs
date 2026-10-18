@@ -219,11 +219,7 @@ fn shared_rows_say_why_they_are_disabled(cx: &mut TestAppContext) {
         ),
         (
             Section::Notifications,
-            &[
-                "notif-delivery-reason",
-                "notif-sound-reason",
-                "notif-indicators-reason",
-            ],
+            &["notif-delivery-reason", "notif-sound-reason"],
         ),
     ] {
         show(&view, section, cx);

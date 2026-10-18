@@ -6,9 +6,12 @@ use herdr_client::{ConnectTarget, ScriptHost, ScriptLimits, run_script, shell_qu
 use serde::de::DeserializeOwned;
 use std::{
     io::{Read, Write},
+    path::PathBuf,
     sync::atomic::AtomicBool,
     time::Duration,
 };
+
+mod local;
 
 /// Output bound for queries; bulk transfers pass their own limits.
 const QUERY_OUTPUT: u64 = 32 * 1024 * 1024;
@@ -47,6 +50,9 @@ pub(crate) struct Host {
 }
 
 impl Host {
+    /// How long a query may go without output.
+    pub(crate) const QUERY_IDLE: Duration = QUERY_IDLE;
+
     /// A host for `target`. Custom sockets are refused: the CLI could not be
     /// pointed at them without also trusting that socket's daemon identity.
     pub(crate) fn new(target: &ConnectTarget) -> Result<Self> {
@@ -222,6 +228,131 @@ export PATH
         Ok(output)
     }
 
+    /// Run `program` with `args` and collect its bounded stdout. On this
+    /// machine the program starts directly, found where a script's prelude
+    /// would find it, so no shell is needed and every client platform runs
+    /// it; elsewhere it is one script line. A failing exit is
+    /// [`herdr_client::Error::ScriptExit`] either way.
+    pub(crate) fn exec(
+        &self,
+        program: &str,
+        args: &[&str],
+        idle: Duration,
+        cancelled: &AtomicBool,
+    ) -> herdr_client::Result<Vec<u8>> {
+        if !self.is_local() {
+            let line = std::iter::once(program)
+                .chain(args.iter().copied())
+                .map(shell_quote)
+                .collect::<Vec<_>>()
+                .join(" ");
+            return self.capture_within(&format!("{line}\n"), idle, cancelled);
+        }
+        let mut command = self.local_command(program);
+        command.args(args);
+        Self::capture_command(command, idle, cancelled)
+    }
+
+    /// Whether this host is this machine, where [`Host::local_command`]
+    /// starts programs without a shell.
+    pub(crate) fn is_local(&self) -> bool {
+        matches!(self.route, Route::Local)
+    }
+
+    /// `program` on this machine, found as [`Host::exec`] finds it, with the
+    /// user's login environment. Only meaningful when [`Host::is_local`].
+    pub(crate) fn local_command(&self, program: &str) -> std::process::Command {
+        let dirs = self.local_search_path();
+        let program = local::find(program, &dirs).unwrap_or_else(|| PathBuf::from(program));
+        let mut command = herdr_client::new_command(program);
+        crate::login_env::apply(&mut command);
+        #[cfg(test)]
+        command.envs(self.env.iter().map(|(key, value)| (key, value)));
+        // What the program was found on, as the prelude exports it, so a
+        // wrapper's interpreter or helper resolves there too.
+        if let Ok(path) = std::env::join_paths(&dirs) {
+            command.env("PATH", path);
+        }
+        command
+    }
+
+    /// Run a [`Host::local_command`] under the query bounds and collect its
+    /// stdout.
+    pub(crate) fn capture_command(
+        command: std::process::Command,
+        idle: Duration,
+        cancelled: &AtomicBool,
+    ) -> herdr_client::Result<Vec<u8>> {
+        let mut output = Vec::new();
+        herdr_client::run_script_command(
+            command,
+            &[][..],
+            &mut output,
+            ScriptLimits {
+                output: QUERY_OUTPUT,
+                idle: idle.min(QUERY_IDLE),
+            },
+            cancelled,
+        )?;
+        Ok(output)
+    }
+
+    /// Whether this machine has `program`, as [`Host::exec`] finds it.
+    pub(crate) fn has_local(&self, program: &str) -> bool {
+        self.local_program(program).is_some()
+    }
+
+    /// [`Host::exec`] of this host's `herdr` CLI, bound to its session as
+    /// `herdr_cli` is.
+    pub(crate) fn herdr_exec(
+        &self,
+        args: &[&str],
+        idle: Duration,
+        cancelled: &AtomicBool,
+    ) -> herdr_client::Result<Vec<u8>> {
+        if !self.is_local() {
+            return self.capture_within(&Self::herdr_line(args), idle, cancelled);
+        }
+        if self.development {
+            return Err(herdr_client::Error::ScriptSpawn(std::io::Error::other(
+                "a development (--dev) session cannot be scripted",
+            )));
+        }
+        let args: Vec<&str> = self
+            .session
+            .iter()
+            .flat_map(|session| ["--session", session.as_str()])
+            .chain(args.iter().copied())
+            .collect();
+        self.exec("herdr", &args, idle, cancelled)
+    }
+
+    /// Where `program` is on this machine, looked up as [`Host::exec`] does.
+    fn local_program(&self, program: &str) -> Option<PathBuf> {
+        local::find(program, &self.local_search_path())
+    }
+
+    /// Where this machine's programs are looked up, and the `PATH` they get.
+    fn local_search_path(&self) -> Vec<PathBuf> {
+        // Tests point a "remote" host's home and `PATH` at their fixtures.
+        #[cfg(test)]
+        let var = |name: &str| {
+            self.env
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        };
+        #[cfg(not(test))]
+        let var = |_: &str| None::<String>;
+        let home = var("HOME")
+            .map(PathBuf::from)
+            .or_else(|| crate::config::home().ok());
+        let path = var("PATH")
+            .map(std::ffi::OsString::from)
+            .or_else(crate::login_env::path);
+        local::search_path(home.as_deref(), path.as_deref())
+    }
+
     /// The script line running `herdr_cli` with `args`, each quoted.
     pub(crate) fn herdr_line(args: &[&str]) -> String {
         let command = args
@@ -295,6 +426,13 @@ export PATH
     ) -> herdr_client::Result<Vec<String>> {
         if programs.is_empty() {
             return Ok(Vec::new());
+        }
+        if self.is_local() {
+            return Ok(programs
+                .iter()
+                .filter(|program| self.has_local(program))
+                .map(|program| (*program).to_owned())
+                .collect());
         }
         let names = programs
             .iter()
@@ -430,5 +568,34 @@ mod tests {
             .unwrap(),
             ["sh"]
         );
+    }
+
+    /// A local program gets the directories it was looked up in as its
+    /// `PATH`, tool directories first, as the script prelude exports them.
+    #[test]
+    fn local_programs_get_the_path_they_were_found_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let bin = dir.path().join("bin");
+        let mut host = Host::new(&ConnectTarget::Local).unwrap();
+        host.env = vec![
+            ("HOME".into(), home.to_string_lossy().into_owned()),
+            (
+                "PATH".into(),
+                std::env::join_paths([&bin])
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        ];
+        let command = host.local_command("git");
+        let path = command
+            .get_envs()
+            .find(|(key, _)| *key == "PATH")
+            .and_then(|(_, value)| value)
+            .unwrap();
+        let dirs: Vec<_> = std::env::split_paths(path).collect();
+        assert_eq!(dirs.first(), Some(&home.join(".local/bin")));
+        assert_eq!(dirs.last(), Some(&bin));
     }
 }

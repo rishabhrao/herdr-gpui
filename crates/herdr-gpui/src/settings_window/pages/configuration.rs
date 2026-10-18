@@ -11,7 +11,7 @@ pub(in crate::settings_window) fn open_path(reveal: bool, path: PathBuf, cx: &mu
         .spawn(async move {
             #[cfg(target_os = "macos")]
             let mut command = {
-                let mut command = std::process::Command::new("open");
+                let mut command = herdr_client::new_command("open");
                 if reveal {
                     command.arg("-R");
                 }
@@ -20,7 +20,7 @@ pub(in crate::settings_window) fn open_path(reveal: bool, path: PathBuf, cx: &mu
             };
             #[cfg(target_os = "linux")]
             let mut command = {
-                let mut command = std::process::Command::new("xdg-open");
+                let mut command = herdr_client::new_command("xdg-open");
                 command.arg(if reveal {
                     path.parent().unwrap_or(&path)
                 } else {
@@ -45,15 +45,15 @@ impl SettingsWindow {
             .child(ui::section(theme, "Files", None))
             .child(self.file_row(
                 "config-local",
-                "GUI overrides",
-                ui::Source::Local,
+                "Herdr UI settings",
+                ui::Source::HerdrUi,
                 self.controls.local_path.clone(),
                 self.controls.local_file.clone(),
             ))
             .child(self.gate_shared(self.file_row(
                 "config-shared",
                 "Herdr configuration",
-                ui::Source::Shared,
+                ui::Source::Herdr,
                 shared_path.as_ref().map_or_else(
                     || "Unavailable".to_owned(),
                     |path| path.display().to_string(),

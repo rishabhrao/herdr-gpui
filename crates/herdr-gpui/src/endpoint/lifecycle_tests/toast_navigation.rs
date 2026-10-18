@@ -84,6 +84,24 @@ fn wire_completion_waits_for_evidence_then_command_uses_original_pane(
         MAX_GRAPHICS_FRAME_SIZE,
     )
     .unwrap();
+    wait_until(|| {
+        endpoint.poll(Instant::now());
+        endpoint.live.pending_snapshot.is_some()
+    });
+    endpoint
+        .connection
+        .inbox
+        .lock()
+        .unwrap()
+        .apply(ClientEvent::Surface(surface(&projection)));
+    wait_until(|| {
+        endpoint.poll(Instant::now());
+        endpoint
+            .live
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| s.revision == projection.revision)
+    });
     let mut event = crate::notifications::tests::notification("wire completion");
     event.kind = SemanticNotificationKind::Finished;
     event.workspace_id = None;
@@ -123,10 +141,11 @@ fn wire_completion_waits_for_evidence_then_command_uses_original_pane(
                 view.endpoints[1].poll(Instant::now());
                 view.endpoints[1]
                     .live
-                    .snapshot
+                    .pending_snapshot
                     .as_ref()
                     .is_some_and(|s| s.revision == projection.revision)
             });
+            // Staged metadata is evidence before its surface arrives.
             view.tick_toasts(false, now + Duration::from_millis(50));
             assert!(view.endpoints[1].toasts.entries[0].1.visible);
             view.endpoints[1]
@@ -137,8 +156,14 @@ fn wire_completion_waits_for_evidence_then_command_uses_original_pane(
                 .apply(ClientEvent::Surface(surface(&projection)));
             wait_until(|| {
                 view.endpoints[1].poll(Instant::now());
-                view.endpoints[1].live.surface.is_some()
+                view.endpoints[1]
+                    .live
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|s| s.revision == projection.revision)
             });
+            view.tick_toasts(false, now + Duration::from_millis(100));
+            assert!(view.endpoints[1].toasts.entries[0].1.visible);
             // Select the already-active fixture surface without issuing unrelated activation requests.
             view.selected_endpoint = 1;
             view.reset_selected(cx);

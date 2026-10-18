@@ -61,7 +61,7 @@ pub(crate) fn apply_theme_draft(config: &mut Config, theme: &mut Theme, cx: &App
         .and_then(|draft| draft.appearance.as_ref())
     {
         config.theme = name.clone();
-        *theme = raw.clone().with_contrast(config.contrast);
+        *theme = raw.clone().styled_for(config);
     }
 }
 
@@ -81,7 +81,7 @@ pub(crate) fn apply_loaded_theme(config: &mut Config, theme: &mut Theme, revisio
         // This read began before the final draft was committed. Its other
         // fields remain usable, but its older theme must not replace the commit.
         config.theme = name.clone();
-        *theme = raw.clone().with_contrast(config.contrast);
+        *theme = raw.clone().styled_for(config);
     }
 }
 
@@ -341,6 +341,8 @@ impl SettingsWindow {
                         None => herdr_settings::Settings::load()?,
                     };
                     let theme = shared.preview_theme(&config.theme, light)?;
+                    // Raw, as the other branches return it: the draft is
+                    // styled once, in `apply_theme_draft`.
                     Ok((theme.with_contrast(config.contrast), Some(shared)))
                 }
                 (Scope::App, Some(shared)) if ThemeName::side(&config.theme, light) == FOLLOW => {
@@ -356,7 +358,7 @@ impl SettingsWindow {
             return;
         }
         if !choice.scope.editable() {
-            self.status = Some("Shared Herdr themes are read-only on this platform. Choose This app or Follow Herdr instead.".into());
+            self.status = Some("Herdr's themes are read-only on this platform. Choose This app or Follow Herdr instead.".into());
             cx.notify();
             return;
         }
@@ -494,12 +496,12 @@ impl SettingsWindow {
                 self.config.theme = intent.choice.name.clone();
                 cx.default_global::<ThemeDraft>().appearance =
                     Some((self.config.theme.clone(), theme.clone()));
-                self.theme = theme.with_contrast(self.config.contrast);
+                self.theme = theme.styled_for(&self.config);
                 self.broadcast_theme(cx);
             } else if self.config.theme == FOLLOW {
                 cx.default_global::<ThemeDraft>().appearance =
                     Some((self.config.theme.clone(), theme.clone()));
-                self.theme = theme.with_contrast(self.config.contrast);
+                self.theme = theme.styled_for(&self.config);
                 self.broadcast_theme(cx);
             }
         }
@@ -693,7 +695,7 @@ impl SettingsWindow {
                 Scope::Herdr => shared
                     .map_or_else(herdr_settings::Settings::load, Ok)?
                     .preview_theme(&config.theme, light)
-                    .map(|theme| theme.with_contrast(contrast)),
+                    .map(|theme| theme.styled_for(&config)),
                 Scope::App => config.theme(light),
             }
         })

@@ -411,6 +411,8 @@ impl HerdrWindow {
                     .border_color(rgb(theme.active))
                     .child(
                         button("dialog-cancel")
+                            .role(Role::Button)
+                            .aria_label("Cancel")
                             .border_color(rgb(theme.active))
                             .hover(|button| button.bg(rgb(theme.active)))
                             .child("Cancel")
@@ -423,8 +425,19 @@ impl HerdrWindow {
                     .when(
                         !listing || action == WorkspaceAction::OpenWorktree,
                         |footer| {
-                            footer.child(
+                            let spoken = if creating {
+                                SharedString::from("Waiting")
+                            } else {
+                                submit.clone()
+                            };
+                            let submit_button = crate::accessibility::disabled(
                                 button("dialog-submit")
+                                    .role(Role::DefaultButton)
+                                    .aria_label(spoken),
+                                !armed,
+                            );
+                            footer.child(
+                                submit_button
                                     // The primary action carries the fill; a
                                     // destructive one also carries the warning hue.
                                     .border_color(if !armed {

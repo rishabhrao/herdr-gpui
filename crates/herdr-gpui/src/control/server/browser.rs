@@ -1,6 +1,6 @@
 //! Browser tabs, page notes, and the agents waiting for them.
 use super::super::{
-    Opening, Placed, Placement, Target, main_windows, plain,
+    Opening, Placed, Placement, Target, main_windows, plain, plain_path,
     protocol::{
         BrowserOpen, Caller, ErrorCode, FeedbackRequest, MAX_WAIT_SECONDS, NotesRequest, NotesTo,
         OpenedIn, Page, Response,
@@ -216,7 +216,7 @@ pub(super) fn feedback(
     let Some(daemon) = request
         .daemon_socket
         .as_deref()
-        .filter(|path| plain(path, 4096))
+        .filter(|path| plain_path(path))
     else {
         incoming.respond(Response::error(
             ErrorCode::InvalidRequest,

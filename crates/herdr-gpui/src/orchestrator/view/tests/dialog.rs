@@ -26,13 +26,13 @@ fn the_dispatch_dialog_stays_within_a_short_window(cx: &mut TestAppContext) {
         ui,
         mono: config.terminal.clone(),
     };
-    let (view, cx) = cx.add_window_view(|_, cx| OrchestratorView::new(request, look, cx));
+    let (view, cx) = cx.add_window_view(|_, cx| OrchestratorView::with_repo(request, look, cx));
     cx.simulate_resize(size(px(640.), px(400.)));
     let issue = item(Provider::Github, "377", "Icons", "2026-10-04T00:00:00Z");
     let key = issue.key.canonical();
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            view.snapshot.items = Arc::new(vec![issue]);
+            view.repo_mut().snapshot.items = Arc::new(vec![issue]);
             view.refresh_rows();
             view.open_dispatch(key, window, cx);
         })

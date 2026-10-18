@@ -92,7 +92,7 @@ impl SettingsWindow {
             .child(self.plugins.search.clone());
         let Some(source) = self.source.upgrade() else {
             return body.child(self.control_note(
-                "Open a session window to see what your plugins report. Local preferences remain available.",
+                "Open a session window to see what your plugins report. Herdr UI settings remain available.",
             ));
         };
         let reports = source.read(cx).plugin_reports();
@@ -117,9 +117,9 @@ impl SettingsWindow {
             .child(self.control_note(CONFIG_NOTE));
         if !ready {
             card = card.child(self.control_note(if !cfg!(unix) {
-                "Shared Herdr settings are read-only on this platform."
+                "Herdr's settings are read-only on this platform."
             } else {
-                "Shared settings are unavailable. Reload to retry."
+                "Herdr's settings are unavailable. Reload to retry."
             }));
         }
         card = card.child(self.rows_mode(cx));

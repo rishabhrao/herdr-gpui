@@ -20,7 +20,7 @@ case "$*" in
         ;;
     *) fail "$usage" ;;
 esac
-for command in git gh jq openssl; do
+for command in git gh jq openssl python3; do
     command -v "$command" >/dev/null || fail "Required command: $command"
 done
 
@@ -37,6 +37,9 @@ repo=penso/herdr-gpui
 [[ "$(gh api user --jq .login)" == penso ]] || fail 'Only penso may dispatch a release'
 sha=$(git rev-parse HEAD)
 [[ "$(gh api "repos/$repo/git/ref/heads/main" --jq .object.sha)" == "$sha" ]] || fail 'HEAD does not match origin main on GitHub; no fetch or checkout was performed'
+
+# No CI wait here: the release builds while CI runs, and its ci-gate job
+# holds signing and publishing until CI has passed on this commit.
 
 # A nonce avoids confusing this dispatch with another run for the same SHA.
 request_id=$(openssl rand -hex 16)

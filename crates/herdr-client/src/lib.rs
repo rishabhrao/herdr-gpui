@@ -2,6 +2,8 @@
 //! No reconnect/replay: commands carry the boot ID of the snapshot they act on.
 //! Drain `Client::events` on a GUI background task, never block the UI thread.
 #![doc = include_str!("../README.md")]
+// Tests start real processes; production code builds them with `new_command`.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 mod catalog;
 mod clipboard;
@@ -19,6 +21,7 @@ mod limits;
 mod local_network;
 mod method;
 mod options;
+mod process;
 mod queue;
 mod remote_host;
 mod script;
@@ -62,15 +65,16 @@ pub use host_theme::HostTheme;
 pub use local_network::{LocalNetworkAccess, local_network_access, wait_for_local_network};
 pub use method::Method;
 pub use options::ConnectOptions;
+#[cfg(windows)]
+pub use process::CREATE_NO_WINDOW;
+pub use process::new_command;
 pub use remote_host::RemoteHost;
 pub use script::{ScriptHost, ScriptLimits, run_script, run_script_command, shell_quote};
 pub use sessions::{
     LocalSession, RemoteSession, SessionState, delete_local_session, delete_remote_session,
     list_local_sessions, list_remote_sessions,
 };
-#[cfg(unix)]
-pub use ssh::script_command;
-pub use ssh::{Bridge, connect_command};
+pub use ssh::{Bridge, connect_command, script_command};
 pub use ssh::{
     Destination, FORWARD_READY, HostKeyFingerprint, HostKeyScan, HostProbe, NewHostKey, SshFailure,
     forward_command, probe_host, remote_config_value, remote_origin_url, resolve_destination,
@@ -81,8 +85,11 @@ pub use surface_images::{
     valid_asset,
 };
 pub use transport::Stream;
+#[cfg(windows)]
+pub use transport::pipe_available;
 pub use upload::{remove_uploaded_files, upload_files};
 pub use wsl::{
     WslHost, WslHosts, add_wsl_host, delete_distro_session, list_distro_sessions, list_distros,
-    load_wsl_hosts, probe_distro, remove_wsl_host, store_wsl_selection, valid_distro,
+    load_wsl_hosts, probe_distro, remove_wsl_host, store_wsl_selection, valid_distro, wsl_paths,
+    wsl_shell_command,
 };

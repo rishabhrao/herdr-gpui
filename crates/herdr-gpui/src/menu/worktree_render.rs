@@ -16,7 +16,8 @@ impl HerdrWindow {
     /// The search every tab shares, then the tab strip. Each listed tab counts
     /// what the search kept in it, so a match elsewhere is visible from any
     /// tab. The GitHub tabs are inert until an account is connected, because
-    /// neither listing can be fetched without one, and look it.
+    /// neither listing can be fetched without one, and look it; hovering one
+    /// says where to sign in.
     pub(super) fn render_worktree_tabs(&self, cx: &mut Context<Self>) -> Div {
         let theme = &self.theme;
         let connected = self.menu.github.connected();
@@ -24,6 +25,7 @@ impl HerdrWindow {
             return div();
         };
         let busy = source.busy();
+        let (foreground, surface) = (theme.foreground, theme.surface);
         let mut strip = div()
             .debug_selector(|| "worktree-tabs".into())
             .flex()
@@ -64,6 +66,16 @@ impl HerdrWindow {
                     }))
                     .when(inert, |button| {
                         button.opacity(0.4).cursor(CursorStyle::OperationNotAllowed)
+                    })
+                    .when_some(tab.kind().filter(|_| !enabled), |button, kind| {
+                        button.tooltip(move |_, cx| {
+                            cx.new(|_| crate::usage::Hint {
+                                text: kind.signed_out_hint().into(),
+                                foreground,
+                                surface,
+                            })
+                            .into()
+                        })
                     })
                     .when(enabled && !busy, |button| {
                         button

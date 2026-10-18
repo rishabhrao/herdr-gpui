@@ -4,13 +4,17 @@
 use gpui::{Image, ImageFormat};
 #[cfg(unix)]
 use rustix::fs::{AtFlags, FlockOperation, Mode, OFlags, flock, open, openat, renameat, unlinkat};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use sha2::{Digest, Sha256};
 #[cfg(unix)]
 use std::{
-    fs::{DirBuilder, File},
-    io::{Read, Write},
+    fs::DirBuilder,
     os::unix::fs::{DirBuilderExt, MetadataExt},
+};
+#[cfg(any(unix, windows))]
+use std::{
+    fs::File,
+    io::{Read, Write},
     time::{Duration, UNIX_EPOCH},
 };
 use std::{
@@ -20,10 +24,15 @@ use std::{
     time::SystemTime,
 };
 
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub(super) use windows::{read, root, write};
+
 pub(super) const LIMIT: usize = 1_000_000;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const TTL: Duration = Duration::from_secs(24 * 60 * 60);
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const SLOTS: u8 = 128;
 
 #[cfg(unix)]
@@ -36,21 +45,21 @@ pub(super) fn root() -> Option<PathBuf> {
         .then(|| base.join("herdr-gpui/avatars-v1"))
 }
 
-/// The disk cache relies on `openat`, `flock`, and POSIX ownership and mode
-/// checks to keep a shared cache directory safe. Off POSIX there is no root, so
-/// avatars stay in memory for the life of the process and the two accessors
-/// below are unreachable.
-#[cfg(not(unix))]
+/// The disk cache needs a private per-user directory and file locking, which
+/// this crate only implements for POSIX and Windows. Elsewhere there is no
+/// root, so avatars stay in memory for the life of the process and the two
+/// accessors below are unreachable.
+#[cfg(not(any(unix, windows)))]
 pub(super) fn root() -> Option<PathBuf> {
     None
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(super) fn read(_path: &Path, _url: &str, _now: SystemTime) -> Option<(Arc<Image>, bool)> {
     None
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(super) fn write(_path: &Path, _url: &str, _bytes: &[u8], _now: SystemTime) -> Option<()> {
     None
 }
@@ -161,11 +170,45 @@ fn private_file(file: &File) -> bool {
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn key(url: &str) -> ([u8; 32], String) {
     let hash: [u8; 32] = Sha256::digest(url.as_bytes()).into();
     // Fixed slots bound disk usage without walking or deleting arbitrary paths.
     (hash, format!("{:02x}.avatar", hash[0] % SLOTS))
+}
+
+/// An entry is the URL's SHA-256, its write time in seconds since the epoch
+/// (little-endian), then the image. `None` means the entry is unusable and
+/// should be removed; `Some((false, ..))` is another URL sharing the slot.
+#[cfg(any(unix, windows))]
+fn entry(file: impl Read, hash: &[u8; 32], now: SystemTime) -> Option<(bool, Arc<Image>, bool)> {
+    let mut bytes = Vec::new();
+    file.take((LIMIT + 41) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > LIMIT + 40 || bytes.len() < 40 {
+        return None;
+    }
+    let image = decode(&bytes[40..])?;
+    let timestamp = u64::from_le_bytes(bytes[32..40].try_into().ok()?);
+    let age = now
+        .duration_since(UNIX_EPOCH.checked_add(Duration::from_secs(timestamp))?)
+        .ok();
+    Some((
+        bytes[..32] == *hash,
+        image,
+        age.is_some_and(|age| age < TTL),
+    ))
+}
+
+/// Writes and flushes the entry `entry` reads back.
+#[cfg(any(unix, windows))]
+fn record(file: &mut File, hash: &[u8; 32], now: SystemTime, image: &[u8]) -> Option<()> {
+    let timestamp = now.duration_since(UNIX_EPOCH).ok()?.as_secs();
+    file.write_all(hash).ok()?;
+    file.write_all(&timestamp.to_le_bytes()).ok()?;
+    file.write_all(image).ok()?;
+    file.sync_all().ok()
 }
 
 #[cfg(unix)]
@@ -184,22 +227,7 @@ pub(super) fn read(path: &Path, url: &str, now: SystemTime) -> Option<(Arc<Image
     if !private_file(&file) {
         return None;
     }
-    let result = (|| {
-        let mut bytes = Vec::new();
-        file.take((LIMIT + 41) as u64)
-            .read_to_end(&mut bytes)
-            .ok()?;
-        if bytes.len() > LIMIT + 40 || bytes.len() < 40 {
-            return None;
-        }
-        let image = decode(&bytes[40..])?;
-        let timestamp = u64::from_le_bytes(bytes[32..40].try_into().ok()?);
-        let age = now
-            .duration_since(UNIX_EPOCH.checked_add(Duration::from_secs(timestamp))?)
-            .ok();
-        Some((bytes[..32] == hash, image, age.is_some_and(|age| age < TTL)))
-    })();
-    match result {
+    match entry(file, &hash, now) {
         Some((true, image, fresh)) => Some((image, fresh)),
         Some((false, _, _)) => None,
         None => {
@@ -214,7 +242,6 @@ pub(super) fn write(path: &Path, url: &str, bytes: &[u8], now: SystemTime) -> Op
     decode(bytes)?;
     let directory = Directory::open(path)?;
     let (hash, name) = key(url);
-    let timestamp = now.duration_since(UNIX_EPOCH).ok()?.as_secs();
     // One temporary entry, recovered under the lock after an interrupted write.
     let _ = unlinkat(&directory.dir, "pending", AtFlags::empty());
     let mut file = File::from(
@@ -226,18 +253,11 @@ pub(super) fn write(path: &Path, url: &str, bytes: &[u8], now: SystemTime) -> Op
         )
         .ok()?,
     );
-    let result = (|| {
-        file.write_all(&hash).ok()?;
-        file.write_all(&timestamp.to_le_bytes()).ok()?;
-        file.write_all(bytes).ok()?;
-        file.sync_all().ok()?;
-        renameat(&directory.dir, "pending", &directory.dir, name.as_str()).ok()?;
-        Some(())
-    })();
+    let result = record(&mut file, &hash, now, bytes)
+        .and_then(|()| renameat(&directory.dir, "pending", &directory.dir, name.as_str()).ok());
     let _ = unlinkat(&directory.dir, "pending", AtFlags::empty());
     result
 }
 
-// The fixtures build a POSIX cache directory with modes and hard links.
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(unix, windows)))]
 pub(super) mod tests;

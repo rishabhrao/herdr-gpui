@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 /// Betas are GitHub prereleases, published from `main` like any release and
 /// later promoted to stable in place. Only the stable channel reaches
-/// Homebrew; the beta channel offers the newest of both.
+/// Homebrew; the beta channel offers the newest of both, installed in place.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum UpdateChannel {

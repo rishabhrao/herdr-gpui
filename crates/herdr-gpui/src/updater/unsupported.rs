@@ -1,7 +1,8 @@
-//! Stand-ins for the POSIX installer on platforms that ship no standalone
-//! updater. `release::target()` returns `None` there, so `Updater::start` stays
-//! in `State::Disabled` and none of this is ever reached; it exists so the
-//! service, its states, and the update panel keep one definition across targets.
+//! Stand-ins for Homebrew off Unix, and for the installer on platforms that
+//! ship no standalone updater. `release::target()` returns `None` there, so
+//! `Updater::start` stays in `State::Disabled` and none of this is ever
+//! reached; it exists so the service, its states, and the update panel keep
+//! one definition across targets. Windows has its own installer (`windows`).
 
 /// Homebrew is macOS-only, so no cask can own this installation.
 pub(super) mod brew {
@@ -31,6 +32,7 @@ pub(super) mod brew {
 }
 
 /// Staging, replacement, and restart all require the POSIX installer.
+#[cfg(not(windows))]
 pub(super) mod install {
     use super::super::{Error, Result, release};
     use std::{

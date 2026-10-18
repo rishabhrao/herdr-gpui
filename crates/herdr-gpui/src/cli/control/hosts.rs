@@ -15,13 +15,15 @@ pub enum HostCommand {
     Select(String),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CloudCommand {
     /// Saved cloud machines, read from this machine's settings.
     List,
     /// Open the settings that add one; creating a machine costs money, so
     /// the user chooses there.
     Add,
+    /// Run the configured setup script on a saved machine again.
+    Setup(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +65,7 @@ pub(super) fn cloud(args: &mut Args) -> Result<CloudCommand, CliError> {
     Ok(match verb.to_str() {
         Some("list") => CloudCommand::List,
         Some("add") => CloudCommand::Add,
+        Some("setup") => CloudCommand::Setup(args.required_text("ID")?),
         _ => return Err(unknown("cloud", verb)),
     })
 }

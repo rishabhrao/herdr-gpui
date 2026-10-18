@@ -14,7 +14,7 @@ fn holds_then_releases_on_one_worker_thread(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         toggle_with(
             cx,
-            || -> keepawake::Result<Held> { unreachable!() },
+            |_| -> keepawake::Result<Held> { unreachable!() },
             reports.sink(),
         )
     });
@@ -34,7 +34,7 @@ fn holds_then_releases_on_one_worker_thread(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 fn a_failed_hold_stays_off_and_keeps_its_source(cx: &mut gpui::TestAppContext) {
     let reports = Reports::default();
-    let failing = || -> keepawake::Result<Held> {
+    let failing = |_| -> keepawake::Result<Held> {
         Err(keepawake::BuilderError::ValidationError("no power".into()).into())
     };
     cx.update(|cx| toggle_with(cx, failing, reports.sink()));
@@ -55,7 +55,7 @@ fn a_failed_hold_stays_off_and_keeps_its_source(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         toggle_with(
             cx,
-            || -> keepawake::Result<Held> { unreachable!() },
+            |_| -> keepawake::Result<Held> { unreachable!() },
             reports.sink(),
         )
     });
@@ -100,7 +100,7 @@ impl Drop for PanicsOnRelease {
 #[gpui::test]
 fn a_worker_that_dies_releasing_reads_off_and_is_replaced(cx: &mut gpui::TestAppContext) {
     let (log, reports) = (Log::default(), Reports::default());
-    cx.update(|cx| toggle_with(cx, || Ok(PanicsOnRelease), reports.sink()));
+    cx.update(|cx| toggle_with(cx, |_| Ok(PanicsOnRelease), reports.sink()));
     cx.run_until_parked();
     assert_eq!(cup_of(cx), Cup::On(Mode::Indefinite));
 

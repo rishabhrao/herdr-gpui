@@ -14,6 +14,5 @@ mod spread;
 mod state;
 mod ui;
 
-#[cfg(any(unix, test))]
 pub(crate) use plan::MAX_LANES;
 pub(crate) use state::{FanOut, Origin};

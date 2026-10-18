@@ -212,24 +212,22 @@ fn the_stderr_tail_is_bounded_to_the_latest_output() {
 
 #[test]
 fn a_closed_child_is_diagnosed_from_its_real_exit_and_stderr() {
-    let mut child = Command::new("/bin/sh")
-        .args([
-            "-c",
-            "printf 'me@host: Permission denied (publickey).\\n' >&2; exit 255",
-        ])
+    let mut child = failing_child()
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let stderr = drain(child.stderr.take().unwrap()).unwrap();
+    // A loaded runner can take longer than `DIAGNOSE_TIMEOUT` to start the
+    // shell; the exit is what is diagnosed, not how soon it came.
+    child.wait().unwrap();
     let stop = AtomicBool::new(false);
     assert_eq!(diagnose(&mut child, &stderr, &stop).1, SshFailure::Auth);
 }
 
 #[test]
 fn a_child_that_will_not_exit_is_not_waited_on_past_cancellation() {
-    let mut child = Command::new("/bin/sh")
-        .args(["-c", "exec sleep 30"])
+    let mut child = idle_child()
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -254,4 +252,41 @@ fn a_refused_bridge_reports_its_class_through_the_error() {
     );
     let source = std::error::Error::source(&error).unwrap();
     assert_eq!(source.downcast_ref::<SshFailure>(), Some(&SshFailure::Auth));
+}
+
+/// A child that reports what `ssh` prints for a refused key, then exits 255.
+#[cfg(unix)]
+fn failing_child() -> Command {
+    let mut command = Command::new("/bin/sh");
+    command.args([
+        "-c",
+        "printf 'me@host: Permission denied (publickey).\n' >&2; exit 255",
+    ]);
+    command
+}
+
+#[cfg(windows)]
+fn failing_child() -> Command {
+    let mut command = Command::new("cmd.exe");
+    command.args([
+        "/d",
+        "/c",
+        "echo me@host: Permission denied (publickey).1>&2& exit 255",
+    ]);
+    command
+}
+
+/// A child that outlives the test unless it is killed.
+#[cfg(unix)]
+fn idle_child() -> Command {
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "exec sleep 30"]);
+    command
+}
+
+#[cfg(windows)]
+fn idle_child() -> Command {
+    let mut command = Command::new("ping.exe");
+    command.args(["-n", "31", "127.0.0.1"]);
+    command
 }

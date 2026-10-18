@@ -115,8 +115,7 @@ impl OrchestratorView {
         cx: &mut Context<Self>,
     ) {
         if !self
-            .service
-            .as_ref()
+            .service()
             .is_some_and(|service| service.load_agents(endpoint, target))
         {
             self.report(crate::orchestrator::Error::Busy, cx);
@@ -126,8 +125,12 @@ impl OrchestratorView {
     pub(super) fn select_agent_host(&mut self, cx: &mut Context<Self>) {
         if let Some(dialog) = &mut self.dialog {
             dialog.kind = None;
-            self.snapshot.installed = None;
-            self.snapshot.installed_error = None;
+            if let Some(repo) = self.repos.get_mut(self.active) {
+                repo.snapshot.installed = None;
+            }
+            if let Some(repo) = self.repos.get_mut(self.active) {
+                repo.snapshot.installed_error = None;
+            }
             cx.emit(super::Event::LoadAgents {
                 endpoint: dialog.host.clone(),
             });
@@ -135,9 +138,13 @@ impl OrchestratorView {
     }
 
     pub(super) fn reconcile_agents(&mut self) {
+        let Some(repo) = self.repos.get(self.active) else {
+            return;
+        };
+        let snapshot = &repo.snapshot;
         if let Some(dialog) = &mut self.dialog
-            && dialog.host == self.snapshot.installed_endpoint
-            && let Some(installed) = &self.snapshot.installed
+            && dialog.host == snapshot.installed_endpoint
+            && let Some(installed) = &snapshot.installed
             && !dialog.kind.is_some_and(|kind| installed.contains(&kind))
         {
             dialog.kind = installed.first().copied();
@@ -171,6 +178,7 @@ impl OrchestratorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.activate(&item);
         let Some(found) = self.item(&item) else {
             return;
         };
@@ -194,7 +202,7 @@ impl OrchestratorView {
         let extra = field("Extra instructions, appended verbatim (optional)", "", cx);
         let model = field("Agent default", "", cx);
         let kind = self
-            .snapshot
+            .snapshot()
             .installed
             .as_ref()
             .and_then(|installed| installed.first().copied());
@@ -225,13 +233,18 @@ impl OrchestratorView {
     }
 
     fn submit_dispatch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The dialog's item is in the active repository, which the dialog
+        // made active when it opened.
+        let (snapshot, workspace_id) = match self.repos.get(self.active) {
+            Some(repo) => (&repo.snapshot, repo.request.workspace_id.clone()),
+            None => (&self.blank, String::new()),
+        };
         let Some(dialog) = &mut self.dialog else {
             return;
         };
         let Some(kind) = dialog.kind.filter(|kind| {
-            dialog.host == self.snapshot.installed_endpoint
-                && self
-                    .snapshot
+            dialog.host == snapshot.installed_endpoint
+                && snapshot
                     .installed
                     .as_ref()
                     .is_some_and(|agents| agents.contains(kind))
@@ -259,8 +272,7 @@ impl OrchestratorView {
             return;
         }
         let host = dialog.host.clone();
-        let Some(item) = self
-            .snapshot
+        let Some(item) = snapshot
             .items
             .iter()
             .find(|item| item.key.canonical() == dialog.item)
@@ -269,9 +281,8 @@ impl OrchestratorView {
         };
         let profile = dialog
             .profile
-            .and_then(|index| self.snapshot.profiles.get(index));
-        let remote = self
-            .snapshot
+            .and_then(|index| snapshot.profiles.get(index));
+        let remote = snapshot
             .repo
             .as_ref()
             .and_then(|info| info.remote.as_ref())
@@ -286,7 +297,7 @@ impl OrchestratorView {
             model: (!model.is_empty()).then_some(model),
             prompt: text,
             branch,
-            workspace_id: self.request.workspace_id.clone(),
+            workspace_id,
             base: None,
             elsewhere: None,
         };
@@ -305,10 +316,7 @@ impl OrchestratorView {
 
     /// Hands `action` to the worker, or says why it could not take it.
     pub(super) fn act(&mut self, action: Action) {
-        let taken = self
-            .service
-            .as_ref()
-            .is_some_and(|service| service.act(action));
+        let taken = self.service().is_some_and(|service| service.act(action));
         if !taken {
             self.notice = Some(Notice {
                 outcome: Err(std::sync::Arc::new(crate::orchestrator::Error::Busy)),
@@ -322,7 +330,8 @@ impl OrchestratorView {
         let Some(detail) = &self.detail else {
             return;
         };
-        let runs = super::rows::Runs::new(&self.snapshot.runs, &self.snapshot.sessions, &self.live);
+        let runs =
+            super::rows::Runs::new(&self.snapshot().runs, &self.snapshot().sessions, &self.live);
         let Some(run) = runs
             .of_item(&detail.key)
             .first()
@@ -366,7 +375,7 @@ impl OrchestratorView {
                 .child(look.dot(look.hue(hue), 7.))
                 .child(div().flex_1().min_w_0().text_size(look.small()).child(text))
                 .child(
-                    look.icon_button("orchestrator-notice-close", "icons/close.svg")
+                    look.icon_button("orchestrator-notice-close", "icons/close.svg", "Dismiss")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.notice = None;
                             cx.notify();
@@ -460,11 +469,15 @@ impl OrchestratorView {
         let look = &self.look;
         let theme = &look.theme;
         let item = self
-            .snapshot
+            .snapshot()
             .items
             .iter()
             .find(|item| item.key.canonical() == dialog.item);
-        let host = match &self.request.target {
+        let host = match self
+            .target()
+            .cloned()
+            .unwrap_or(herdr_client::ConnectTarget::Local)
+        {
             herdr_client::ConnectTarget::Ssh { target, .. } => target.clone(),
             _ => "this machine".into(),
         };
@@ -487,7 +500,7 @@ impl OrchestratorView {
                 .child(input.clone())
         };
         let profiles = std::iter::once((None, "built-in".to_owned())).chain(
-            self.snapshot
+            self.snapshot()
                 .profiles
                 .iter()
                 .enumerate()
@@ -520,20 +533,20 @@ impl OrchestratorView {
                     }))
             }));
         let agents: Vec<AgentKind> = self
-            .snapshot
+            .snapshot()
             .installed
             .as_ref()
-            .filter(|_| dialog.host == self.snapshot.installed_endpoint)
+            .filter(|_| dialog.host == self.snapshot().installed_endpoint)
             .map(|installed| installed.iter().copied().take(8).collect())
             .unwrap_or_default();
         let tiles = if agents.is_empty() {
             look.muted(
-                if dialog.host == self.snapshot.installed_endpoint
-                    && self.snapshot.installed_error.is_some()
+                if dialog.host == self.snapshot().installed_endpoint
+                    && self.snapshot().installed_error.is_some()
                 {
                     "Could not discover agents. Select the host to retry."
-                } else if self.snapshot.installed.is_none()
-                    || dialog.host != self.snapshot.installed_endpoint
+                } else if self.snapshot().installed.is_none()
+                    || dialog.host != self.snapshot().installed_endpoint
                 {
                     "Looking for installed agents\u{2026}"
                 } else {
@@ -595,7 +608,7 @@ impl OrchestratorView {
                     )
                     .child(look.chip(format!("on {host}")))
                     .child(
-                        look.icon_button("orchestrator-dialog-close", "icons/close.svg")
+                        look.icon_button("orchestrator-dialog-close", "icons/close.svg", "Close")
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.close_overlays(window, cx);
                             })),

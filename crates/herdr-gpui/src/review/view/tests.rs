@@ -100,17 +100,8 @@ fn kept(view: &Entity<HerdrWindow>, cx: &mut gpui::VisualTestContext) -> Option<
         pane_id: "w0:p1".into(),
     });
     cx.update(|_, cx| {
-        if cfg!(unix) {
-            cx.default_global::<crate::browser::Feedback>()
-                .take(&target)
-        } else {
-            let text = cx
-                .read_from_clipboard()
-                .and_then(|item| item.text())
-                .filter(|text| !text.is_empty());
-            cx.write_to_clipboard(gpui::ClipboardItem::new_string(String::new()));
-            text
-        }
+        cx.default_global::<crate::browser::Feedback>()
+            .take(&target)
     })
 }
 
@@ -237,6 +228,7 @@ fn notes_go_to_the_focused_agent_or_the_workspace_s_first() {
     assert!(pick_agent(&snapshot(base(None, vec![agent("w0:p1", "w0", None)]))).is_none());
 }
 
+mod base;
 mod colours;
 mod editor;
 mod files;

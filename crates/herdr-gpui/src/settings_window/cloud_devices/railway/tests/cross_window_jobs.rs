@@ -26,6 +26,7 @@ fn another_windows_setup_blocks_removal_and_duplicate_setup_after_retargeting(
                 main.start_cloud_job(
                     CloudProvider::Railway,
                     "still-setting-up".into(),
+                    None,
                     move |stop, _| {
                         while !stop() {
                             match wait.recv_timeout(Duration::from_millis(20)) {

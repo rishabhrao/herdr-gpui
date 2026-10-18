@@ -1,5 +1,7 @@
 use super::*;
 
+// Hangs up a raw Unix stream; `socket` covers the pipe's hang-up.
+#[cfg(unix)]
 mod cancellation;
 
 fn queued_feedback(
@@ -17,11 +19,8 @@ fn queued_feedback(
 
 #[gpui::test]
 fn scoped_feedback_requests_keep_same_named_waiters_separate(cx: &mut gpui::TestAppContext) {
-    let directory = tempfile::Builder::new()
-        .prefix("hgc")
-        .tempdir_in("/tmp")
-        .unwrap();
-    let server = socket::Server::bind(&directory.path().join("control.sock")).unwrap();
+    let address = socket::test_address();
+    let server = socket::Server::bind(&address.path).unwrap();
     let first = FeedbackRequest {
         pane_id: "p1".into(),
         daemon_socket: Some("/first.sock".into()),

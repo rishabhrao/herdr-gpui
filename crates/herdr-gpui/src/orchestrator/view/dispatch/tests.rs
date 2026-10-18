@@ -23,7 +23,7 @@ fn destination_inventory_reconciles_selection_and_ignores_other_hosts(cx: &mut T
         ui: config.ui,
         mono: config.terminal,
     };
-    let (view, cx) = cx.add_window_view(|_, cx| OrchestratorView::new(request, look, cx));
+    let (view, cx) = cx.add_window_view(|_, cx| OrchestratorView::with_repo(request, look, cx));
     cx.update(|_, cx| {
         view.update(cx, |view, cx| {
             let field = cx.new(SearchInput::new);
@@ -40,14 +40,14 @@ fn destination_inventory_reconciles_selection_and_ignores_other_hosts(cx: &mut T
             });
             view.select_agent_host(cx);
             assert!(view.dialog.as_ref().unwrap().kind.is_none());
-            view.snapshot.installed_endpoint = None;
-            view.snapshot.installed = Some(Arc::new(vec![AgentKind::Claude]));
+            view.repo_mut().snapshot.installed_endpoint = None;
+            view.repo_mut().snapshot.installed = Some(Arc::new(vec![AgentKind::Claude]));
             view.reconcile_agents();
             assert!(view.dialog.as_ref().unwrap().kind.is_none());
-            view.snapshot.installed_endpoint = Some("remote".into());
+            view.repo_mut().snapshot.installed_endpoint = Some("remote".into());
             view.reconcile_agents();
             assert_eq!(view.dialog.as_ref().unwrap().kind, Some(AgentKind::Claude));
-            view.snapshot.installed = Some(Arc::new(vec![]));
+            view.repo_mut().snapshot.installed = Some(Arc::new(vec![]));
             view.reconcile_agents();
             assert!(view.dialog.as_ref().unwrap().kind.is_none());
         })

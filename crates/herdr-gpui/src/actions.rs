@@ -4,7 +4,7 @@
 //! items are the exception: they are not catalog commands, and keep the
 //! keystrokes macOS gives every app unless the keymap binds a command to one.
 
-use crate::controls::Command;
+use crate::controls::{CTRL_SHORTCUTS, Command};
 use gpui::{Action, App, KeyBinding, KeyDownEvent, Keystroke, Modifiers, actions};
 
 actions!(
@@ -42,9 +42,9 @@ pub(crate) fn edit_key(key: &str) -> KeyDownEvent {
     KeyDownEvent {
         keystroke: Keystroke {
             modifiers: Modifiers {
-                platform: !cfg!(target_os = "linux"),
-                control: cfg!(target_os = "linux"),
-                shift: cfg!(target_os = "linux"),
+                platform: !CTRL_SHORTCUTS,
+                control: CTRL_SHORTCUTS,
+                shift: CTRL_SHORTCUTS,
                 ..Modifiers::default()
             },
             key: key.into(),
@@ -79,7 +79,7 @@ pub(crate) struct ShowToastPreview {
 #[action(no_json)]
 pub(crate) struct ShowSystemNotificationPreview;
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", windows, test))]
 #[derive(Clone, PartialEq, serde::Deserialize, Action)]
 #[action(no_json)]
 pub(crate) struct SetBadgePreview {
@@ -98,6 +98,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
                 .map(|appearance| appearance.config.keybindings.clone())
         })
         .unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    crate::browser::bind_page_keys(&keymap);
     cx.bind_keys(keymap.bindings().map(|(command, keystroke)| {
         if command == Command::Quit {
             KeyBinding::new(keystroke, Quit, None)
@@ -136,7 +138,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
 }
 
 /// The Edit menu's keystrokes: cut, copy, paste, and select all.
-pub(crate) const EDIT_KEYS: [&str; 4] = if cfg!(target_os = "linux") {
+pub(crate) const EDIT_KEYS: [&str; 4] = if CTRL_SHORTCUTS {
     [
         "ctrl-shift-x",
         "ctrl-shift-c",
@@ -147,14 +149,26 @@ pub(crate) const EDIT_KEYS: [&str; 4] = if cfg!(target_os = "linux") {
     ["cmd-x", "cmd-c", "cmd-v", "cmd-a"]
 };
 
-/// Fields also accept plain Ctrl on Linux, where there is no terminal
-/// program to receive it. Keep the terminal's Ctrl-Shift aliases working in
-/// fields so Edit menu clicks and keyboard shortcuts share the same path.
+/// Fields also accept plain Ctrl on Linux and Windows, where there is no
+/// terminal program to receive it. Keep the terminal's Ctrl-Shift aliases
+/// working in fields so Edit menu clicks and keyboard shortcuts share the
+/// same path.
 pub(crate) fn edit_modifiers(modifiers: Modifiers) -> bool {
     !modifiers.alt
         && !modifiers.function
         && ((modifiers.platform && !modifiers.control && !modifiers.shift)
-            || (cfg!(target_os = "linux") && modifiers.control && !modifiers.platform))
+            || (CTRL_SHORTCUTS && modifiers.control && !modifiers.platform))
+}
+
+/// Whether a field moves or deletes by word on an arrow, Backspace, or
+/// Delete: Option on macOS, Ctrl on the other desktops. Shift extends.
+pub(crate) fn word_modifiers(modifiers: Modifiers) -> bool {
+    let (word, other) = if cfg!(target_os = "macos") {
+        (modifiers.alt, modifiers.control)
+    } else {
+        (modifiers.control, modifiers.alt)
+    };
+    word && !other && !modifiers.platform && !modifiers.function
 }
 
 /// macOS's Hide, Hide Others, and Minimize, bound there alone.

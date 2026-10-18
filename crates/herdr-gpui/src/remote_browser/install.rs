@@ -91,9 +91,9 @@ fn apply(target: &str, choice: Choice) -> crate::Result<()> {
 
 impl HerdrWindow {
     /// Applies the user's skill choice to each connected saved SSH host not
-    /// tried with it yet. Windows has no saved SSH hosts to connect to.
+    /// tried with it yet. Other clients cannot run host scripts.
     pub(super) fn install_remote_agent_tools(&mut self, cx: &mut Context<Self>) {
-        if !cfg!(any(target_os = "linux", target_os = "macos")) {
+        if !cfg!(any(target_os = "linux", target_os = "macos", windows)) {
             return;
         }
         let Some(choice) = AgentSkill::choice(cx) else {

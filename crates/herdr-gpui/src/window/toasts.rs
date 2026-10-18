@@ -40,7 +40,7 @@ impl HerdrWindow {
                 // The displayed target can start a handoff, but only a fresh
                 // inbox validation may queue navigation after contention ends.
                 let endpoint = &self.endpoints[index];
-                endpoint.live.snapshot.as_deref().and_then(|snapshot| {
+                endpoint.live.latest_snapshot().and_then(|snapshot| {
                     endpoint
                         .toasts
                         .entries
@@ -105,8 +105,7 @@ impl HerdrWindow {
         }
         Poll::Ready(
             state
-                .snapshot
-                .as_deref()
+                .latest_snapshot()
                 .and_then(|snapshot| notice.target(snapshot))
                 .map(|target| (&target).into()),
         )

@@ -132,7 +132,7 @@ fn a_press_that_cannot_be_sent_leaves_the_landing_step_alone(cx: &mut TestAppCon
     });
     // A second press the window cannot send (no connection here) must not
     // replace or cancel it.
-    cx.update(|_, cx| view.update(cx, |view, cx| view.travel(Step::Back, cx)));
+    cx.update(|window, cx| view.update(cx, |view, cx| view.travel(Step::Back, window, cx)));
     visit(&view, cx, &["b"]);
     // "b" landed as a step back, so Forward still returns to "c".
     assert_eq!(can(&view, cx), (true, true));

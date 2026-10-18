@@ -36,6 +36,7 @@ fn only_a_remote_shell_failure_retries_through_powershell() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_shell_that_cannot_run_the_bridge_reports_its_exit_code() {
     let mut command = Command::new("/bin/sh");

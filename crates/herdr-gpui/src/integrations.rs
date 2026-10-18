@@ -145,7 +145,6 @@ enum Operation {
 impl Integrations {
     /// The listed integrations as `(target, label, state)`; the state is
     /// "not_installed", "current", "outdated", or "unavailable".
-    #[cfg(unix)]
     pub(crate) fn listed(&self) -> impl Iterator<Item = (&str, &str, &'static str)> {
         self.rows.iter().map(|row| {
             let state = match row.state {

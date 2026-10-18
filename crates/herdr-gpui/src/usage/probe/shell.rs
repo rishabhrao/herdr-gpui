@@ -1,29 +1,23 @@
-//! The remote side of a probe: one `/bin/sh` per host over SSH, holding
-//! secrets as shell variables and running requests with `curl` there.
+//! The remote side of a probe: one `/bin/sh` per host, over SSH or inside a
+//! WSL distribution, holding secrets as shell variables and running requests
+//! with `curl` there.
 use super::{Held, LIMIT, Method, Output, Part, Request, Response, STEP_TIMEOUT, Secret, quote};
 use crate::{Error, Result};
-#[cfg(unix)]
 use std::{
-    io::Read,
-    process::{Command, Stdio},
-    thread,
-};
-use std::{
-    io::Write,
-    process::{Child, ChildStdin},
+    io::{Read, Write},
+    process::{Child, ChildStdin, Command, Stdio},
     sync::mpsc,
+    thread,
     time::{Duration, Instant},
 };
 
-#[cfg(unix)]
+/// Long enough for `wsl.exe` to boot a stopped distribution.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Helpers defined once per remote session. `herdr_field` prints the string
 /// or number at a JSON path from stdin. A real parser is required: matching
-/// only the last key can select another provider's credentials. Remote
-/// sessions need an `ssh` child, which only Unix clients start.
-#[cfg(unix)]
-const PRELUDE: &str = r#"PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+/// only the last key can select another provider's credentials.
+const PRELUDE: &str = r#"PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$PATH"
 export PATH
 herdr_field() {
     if command -v python3 >/dev/null 2>&1; then
@@ -68,7 +62,6 @@ impl Drop for Shell {
 }
 
 impl Shell {
-    #[cfg(unix)]
     pub fn connect(target: &str) -> Result<Self> {
         let mut command = herdr_client::script_command(target, "exec /bin/sh -s")?;
         command
@@ -78,14 +71,21 @@ impl Shell {
         Self::start(command)
     }
 
-    #[cfg(windows)]
-    pub fn connect(_target: &str) -> Result<Self> {
-        Err(Error::UsageUnsupported)
+    /// `/bin/sh` inside a WSL distribution, through `wsl.exe`.
+    pub fn connect_wsl(distro: &str) -> Result<Self> {
+        if !cfg!(windows) {
+            return Err(Error::WslHostUnsupported);
+        }
+        let mut command = herdr_client::wsl_shell_command(distro)?;
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        Self::start(command)
     }
 
-    /// Any `sh` reading steps from stdin; SSH in production, a local shell
-    /// in tests.
-    #[cfg(unix)]
+    /// Any `sh` reading steps from stdin: SSH or `wsl.exe` in production, a
+    /// local shell in tests.
     pub fn start(mut command: Command) -> Result<Self> {
         let process = |source| Error::UsageProcess {
             operation: "start the remote usage shell",

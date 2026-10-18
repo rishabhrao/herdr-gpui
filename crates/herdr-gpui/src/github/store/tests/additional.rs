@@ -13,7 +13,7 @@ fn additional_accounts_accept_only_config_ids_and_use_their_own_entries() {
     );
     // A device and an additional account with the same ID never share one.
     assert_ne!(account.file_name(), Account::host(id).unwrap().file_name());
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     assert_eq!(
         account.keyring_account(),
         format!("github.com/account/{id}")

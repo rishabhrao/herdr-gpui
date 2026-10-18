@@ -116,3 +116,35 @@ fn nested_layout_menu_preserves_checked_state_and_back_navigation(cx: &mut TestA
         vec![2]
     );
 }
+
+#[gpui::test]
+fn app_wide_actions_such_as_quit_stay_enabled(cx: &mut TestAppContext) {
+    let quits = Rc::new(Cell::new(0));
+    cx.update(|cx| {
+        let quits = quits.clone();
+        cx.on_action(move |_: &crate::Quit, _| quits.set(quits.get() + 1));
+    });
+    let (view, cx) = window(cx);
+    draw(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.open_application_menu(Some(0), window, cx);
+        })
+    });
+    draw(cx);
+    view.read_with(cx, |view, _| {
+        let menu = view.menu.application.as_ref().unwrap();
+        let quit = menu.menus[0]
+            .items
+            .iter()
+            .position(
+                |item| matches!(item, OwnedMenuItem::Action { name, .. } if name == "Quit Herdr"),
+            )
+            .unwrap();
+        assert!(menu.selectable().contains(&quit));
+    });
+    let item = cx.debug_bounds("application-item-Quit Herdr").unwrap();
+    cx.simulate_click(item.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(quits.get(), 1);
+}

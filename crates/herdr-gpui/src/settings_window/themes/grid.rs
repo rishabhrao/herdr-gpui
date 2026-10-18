@@ -141,7 +141,7 @@ impl SettingsWindow {
                         Scope::Herdr => shared.as_ref().and_then(|shared| {
                             shared
                                 .preview_theme(&choice.name, light)
-                                .map(|theme| theme.with_contrast(config.contrast))
+                                .map(|theme| theme.styled_for(&config))
                                 .ok()
                         }),
                         Scope::App => config.theme(light).ok(),

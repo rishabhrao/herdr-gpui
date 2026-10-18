@@ -42,9 +42,14 @@ mod windows {
 
     /// Starts the GUI with this launcher's arguments and returns once it has
     /// started; the GUI is never waited on and keeps running after we exit.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the launcher sets CREATE_NO_WINDOW itself and links no herdr-client"
+    )]
     pub fn launch() -> Result<()> {
         let launcher = std::env::current_exe().map_err(Error::CurrentExe)?;
         let gui = gui_path(&launcher)?;
+        allow_foreground();
         Command::new(&gui)
             .args(std::env::args_os().skip(1))
             .stdin(Stdio::null())
@@ -54,6 +59,20 @@ mod windows {
             .spawn()
             .map_err(|source| Error::Spawn { gui, source })?;
         Ok(())
+    }
+
+    /// The shell lets the process it starts for a click (a jump list entry, a
+    /// notification, a `herdr-gpui://` link) take the foreground. The GUI
+    /// started here may hand the click to the app already running, so this
+    /// lets whichever process asks next take it, and the app's window comes
+    /// forward instead of flashing in the taskbar. It does nothing for a
+    /// launcher that has no foreground right to pass on.
+    #[allow(unsafe_code)]
+    fn allow_foreground() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow};
+        // SAFETY: takes a process ID constant and returns whether it applied;
+        // no pointers.
+        let _ = unsafe { AllowSetForegroundWindow(ASFW_ANY) };
     }
 
     /// The error and each of its causes, for the message box.

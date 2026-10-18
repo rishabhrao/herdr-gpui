@@ -3,6 +3,7 @@
 mod configuration;
 mod fonts;
 mod general;
+mod indicators;
 pub(in crate::settings_window) mod notifications;
 mod sidebar;
 mod status_bar;
@@ -24,8 +25,8 @@ pub(super) use window::padding_ids;
 pub(in crate::settings_window) use configuration::open_path;
 
 pub(in crate::settings_window) const SHARED_READ_ONLY: &str =
-    "Shared Herdr settings are read-only on this platform.";
-const SHARED_UNAVAILABLE: &str = "Shared settings are unavailable. Reload to retry.";
+    "Herdr's settings are read-only on this platform.";
+const SHARED_UNAVAILABLE: &str = "Herdr's settings are unavailable. Reload to retry.";
 
 /// The text on an override dropdown: the local choice, or what Herdr says.
 pub(super) fn override_label(shared_value: &str, local: Option<&str>) -> String {

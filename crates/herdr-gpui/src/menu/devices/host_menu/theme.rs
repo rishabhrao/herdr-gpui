@@ -181,7 +181,6 @@ impl HerdrWindow {
 
     /// Previews the selected row: a built-in at once, a file once read.
     pub(super) fn preview_device_theme(&mut self, cx: &mut Context<Self>) {
-        let contrast = self.config.contrast;
         let config = self.config.clone();
         let light = crate::app::light_appearance(cx);
         let Some(picker) = self.device_theme_picker_mut() else {
@@ -201,7 +200,7 @@ impl HerdrWindow {
             return;
         }
         if let Some(theme) = Theme::builtin(&name) {
-            picker.preview = Some((name, theme.with_contrast(contrast)));
+            picker.preview = Some((name, theme.styled_for(&config)));
             picker.preview_load = None;
             cx.notify();
             return;
@@ -269,9 +268,7 @@ impl HerdrWindow {
                     .and_then(|picker| picker.preview.as_ref())
                     .filter(|(previewed, _)| previewed == name)
                     .map(|(_, theme)| theme.clone())
-                    .or_else(|| {
-                        Theme::builtin(name).map(|theme| theme.with_contrast(self.config.contrast))
-                    });
+                    .or_else(|| Theme::builtin(name).map(|theme| theme.styled_for(&self.config)));
                 let Some(theme) = loaded else {
                     self.read_then_choose(name.clone(), window, cx);
                     return;

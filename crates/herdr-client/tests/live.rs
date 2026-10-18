@@ -2,7 +2,7 @@
 //! The daemon under test is a POSIX process with a POSIX sandbox, so the whole
 //! harness compiles on Unix only.
 #![cfg(unix)]
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::disallowed_methods)]
 #[path = "../../test-support/sandbox.rs"]
 mod sandbox;
 

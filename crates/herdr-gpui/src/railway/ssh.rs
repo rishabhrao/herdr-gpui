@@ -82,7 +82,7 @@ fn base() -> Command {
     if let Some(command) = stand_in::base() {
         return command;
     }
-    Command::new("ssh")
+    herdr_client::new_command("ssh")
 }
 
 /// A stand-in for `ssh` that lets the setup and reconnect flows run end to end

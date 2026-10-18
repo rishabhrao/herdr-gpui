@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn snapshot_change_invalidates_cells_until_matching_surface() {
+fn focus_snapshot_change_invalidates_cells_until_matching_surface() {
     let mut state = LiveState::default();
     let mut snapshot = snapshot();
     let old = surface(&snapshot);
@@ -9,6 +9,7 @@ fn snapshot_change_invalidates_cells_until_matching_surface() {
     state.apply(ClientEvent::Surface(old.clone()));
     assert!(state.surface.is_some());
     Arc::make_mut(&mut snapshot).revision += 1;
+    Arc::make_mut(&mut snapshot).focused_pane_id = Some("different".into());
     state.apply(ClientEvent::Snapshot(snapshot.clone()));
     assert!(state.surface.is_none());
     state.apply(ClientEvent::Surface(old));

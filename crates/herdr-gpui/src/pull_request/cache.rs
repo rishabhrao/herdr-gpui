@@ -469,7 +469,6 @@ impl Cache {
     /// Pure cache read of one checkout's lookup, local checkouts included:
     /// `None` until it was looked up once, else its pull request (if any)
     /// and why its latest refresh failed (if it did).
-    #[cfg(any(test, unix))]
     pub fn lookup(&self, input: &Input) -> Option<(Option<PullRequest>, Option<String>)> {
         let store = self.store.try_borrow().ok()?;
         store

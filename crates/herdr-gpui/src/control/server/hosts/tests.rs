@@ -3,10 +3,13 @@ use super::*;
 use crate::sidebar::layout_tests::fixture_window;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 
+#[cfg(feature = "cloud")]
+mod cloud_setup;
 mod info;
 mod ports;
 mod pr;
 mod strict;
+mod wsl_forwards;
 
 fn caller(workspace: Option<&str>) -> Caller {
     Caller {

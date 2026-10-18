@@ -19,18 +19,24 @@ enum Action {
     /// Toggles `[devices.<id>] keybindings` between local and server.
     ServerKeybindings,
     /// Forwards one of the host's listening ports to this computer.
+    #[cfg(unix)]
     ForwardPort,
     /// Picks `[devices.<id>] theme`, the terminal's colors on this device.
     Theme,
     /// Opens Settings > Cloud devices on the device's provider.
     #[cfg(feature = "cloud")]
     ProviderSettings,
+    /// Runs the configured setup script on the cloud device again.
+    #[cfg(feature = "cloud")]
+    RunSetup,
     Remove,
 }
 
 const SSH_ACTIONS: &[(Action, &str)] = &[
     (Action::Rename, "Rename…"),
     (Action::ServerKeybindings, "Use server keybindings"),
+    // Port forwards need an `ssh` control master, which Windows OpenSSH lacks.
+    #[cfg(unix)]
     (Action::ForwardPort, "Forward port…"),
     (Action::Theme, "Terminal theme…"),
     (Action::Remove, "Remove device…"),
@@ -42,6 +48,7 @@ const SSH_ACTIONS: &[(Action, &str)] = &[
 const CLOUD_ACTIONS: &[(Action, &str)] = &[
     (Action::Rename, "Rename…"),
     (Action::ProviderSettings, "Cloud device settings…"),
+    (Action::RunSetup, "Run setup script"),
     (Action::Remove, "Remove device…"),
 ];
 
@@ -71,6 +78,11 @@ pub(crate) struct HostMenu {
     /// Also delete the device's own GitHub sign-in. Offered only when it has
     /// one, since its account panel disappears with the device.
     forget_github: bool,
+    /// Delete an Azure device's machine at Azure, with everything it bills
+    /// for, before forgetting it: what Remove does for Azure unless Remove
+    /// from Herdr only is chosen, since a forgotten machine keeps billing.
+    #[cfg(feature = "azure")]
+    destroy: bool,
     /// The new name while renaming, or the port to forward.
     input: Option<Entity<SearchInput>>,
     renaming: bool,
@@ -141,7 +153,7 @@ impl HerdrWindow {
         let (saved, target, session) = match endpoint.saved_target() {
             ConnectTarget::Ssh { target, session } => {
                 // The CLI edits the default catalog, the one device setup also uses.
-                if let Some(reason) = self.ssh_setup_unavailable() {
+                if let Some(reason) = self.device_setup_unavailable() {
                     tracing::info!(
                         category = "device_remove",
                         id,
@@ -198,6 +210,8 @@ impl HerdrWindow {
             session: session.to_owned(),
             selected: None,
             forget_github: true,
+            #[cfg(feature = "azure")]
+            destroy: true,
             input: None,
             renaming: false,
             error: None,
@@ -264,6 +278,18 @@ impl HerdrWindow {
                 }
                 return;
             }
+            #[cfg(feature = "cloud")]
+            Action::RunSetup => {
+                let Some(id) = self.menu.host.as_ref().map(|host| host.id.clone()) else {
+                    return;
+                };
+                self.dismiss_menu(window, cx);
+                if let Err(error) = self.rerun_cloud_setup(&id, cx) {
+                    self.show_flash(crate::window::Flash::warning(error.to_string()), cx);
+                }
+                return;
+            }
+            #[cfg(unix)]
             Action::ForwardPort => {
                 let input = cx.new(SearchInput::new);
                 input.update(cx, |input, cx| {
@@ -371,6 +397,8 @@ impl HerdrWindow {
             return;
         };
         let forget = host.forget_github && self.host_has_github(&host.id);
+        #[cfg(feature = "azure")]
+        let destroy = host.destroy && host.is_azure();
         let store = self.menu.github_hosts.get(&host.id).map_or_else(
             || crate::github::Store::select(&self.config),
             |auth| auth.store(),
@@ -396,9 +424,19 @@ impl HerdrWindow {
                         None => Ok(()),
                     })
                 }
-                // The machine itself is left as it is at the provider.
+                // The machine itself is left as it is at the provider, unless
+                // an Azure one was asked to go too: then it goes first, and a
+                // failure keeps the device listed rather than billing unseen.
                 #[cfg(feature = "cloud")]
                 Saved::Cloud { provider, id } => {
+                    #[cfg(feature = "azure")]
+                    if provider == herdr_client::CloudProvider::Azure {
+                        if destroy {
+                            crate::azure::destroy::destroy_saved(&id)?;
+                            return Ok(Ok(()));
+                        }
+                        crate::azure::forget_activity(&id);
+                    }
                     crate::cloud::remove(provider, &id)?;
                     Ok(Ok(()))
                 }
@@ -705,6 +743,7 @@ impl HerdrWindow {
                     .flex()
                     .justify_end()
                     .gap(px(8.))
+                    .children(self.remove_only_button(host, cx))
                     .child(
                         div()
                             .id("remove-device-cancel")
@@ -725,7 +764,7 @@ impl HerdrWindow {
                             .bg(rgb(theme.active))
                             .text_color(crate::menu::danger(theme))
                             .cursor_pointer()
-                            .child("Remove")
+                            .child(remove_label(host))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.confirm_remove_device(window, cx)
                             })),
@@ -842,6 +881,10 @@ fn rename(saved: &Saved, label: &str) -> crate::Result<()> {
 /// What removal does, as the confirmation says it: an SSH device leaves its
 /// host's Herdr running, a cloud device leaves its machine at the provider.
 fn removal_note(host: &HostMenu) -> String {
+    #[cfg(feature = "azure")]
+    if let Some(note) = destroy::removal_note(host) {
+        return note;
+    }
     match host.saved {
         Saved::Ssh { .. } => format!(
             "Remove {} ({} · {}) from this computer? Herdr keeps running on that host.",
@@ -858,8 +901,24 @@ fn removal_note(host: &HostMenu) -> String {
     }
 }
 
+#[cfg(feature = "azure")]
+mod destroy;
+#[cfg(feature = "azure")]
+use destroy::remove_label;
 mod forwards;
 mod theme;
+
+#[cfg(not(feature = "azure"))]
+impl HerdrWindow {
+    fn remove_only_button(&self, _: &HostMenu, _: &mut Context<Self>) -> Option<Div> {
+        None
+    }
+}
+
+#[cfg(not(feature = "azure"))]
+fn remove_label(_: &HostMenu) -> String {
+    "Remove".to_owned()
+}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

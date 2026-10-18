@@ -5,7 +5,7 @@ use crate::limits::{LIVENESS_TIMEOUT, PING_TIMEOUT};
 fn a_liveness_probe_pings_at_once_and_fails_sooner_than_a_routine_ping() {
     let now = Instant::now();
     let mut health = Health::new(now);
-    assert!(health.probe(now));
+    assert!(health.probe(now, LIVENESS_TIMEOUT));
     assert!(!health.tick(now + LIVENESS_TIMEOUT - POLL).unwrap());
     assert!(matches!(
         health.tick(now + LIVENESS_TIMEOUT),
@@ -16,15 +16,15 @@ fn a_liveness_probe_pings_at_once_and_fails_sooner_than_a_routine_ping() {
     let mut health = Health::new(now);
     assert!(health.tick(now + Duration::from_secs(5)).unwrap());
     let probed = now + Duration::from_secs(6);
-    assert!(!health.probe(probed));
+    assert!(!health.probe(probed, LIVENESS_TIMEOUT));
     assert!(health.tick(probed + LIVENESS_TIMEOUT).is_err());
 
     // An answer clears it, and a later probe sends a new ping.
     let mut health = Health::new(now);
-    assert!(health.probe(now));
+    assert!(health.probe(now, LIVENESS_TIMEOUT));
     health.received(now + POLL);
     assert!(!health.tick(now + LIVENESS_TIMEOUT).unwrap());
-    assert!(health.probe(now + LIVENESS_TIMEOUT));
+    assert!(health.probe(now + LIVENESS_TIMEOUT, LIVENESS_TIMEOUT));
 }
 
 #[test]

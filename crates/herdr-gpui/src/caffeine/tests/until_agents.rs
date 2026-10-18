@@ -137,7 +137,6 @@ fn a_window_reports_its_working_agents(cx: &mut gpui::TestAppContext) {
         .unwrap();
 }
 
-#[cfg(unix)]
 #[gpui::test]
 fn asking_for_on_keeps_the_hold_after_the_agents_finish(cx: &mut gpui::TestAppContext) {
     let (log, reports) = (Log::default(), Reports::default());

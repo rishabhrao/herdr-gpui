@@ -22,11 +22,30 @@ pub(crate) use {
 #[cfg(test)]
 pub(crate) use model::issue_branch;
 
-/// The GitHub repository a workspace's `origin` remote points at.
+use crate::pull_request::Remote;
+
+/// The GitHub repository a workspace's pull requests are opened against: its
+/// `upstream` remote in a fork checkout, otherwise `origin`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Origin {
     pub owner: String,
     pub repo: String,
+    /// The remote that reaches this repository.
+    pub remote: Remote,
+    /// For an `upstream` listing, the owner of the fork behind `origin`, whose
+    /// pull request heads are already this checkout's own branches.
+    pub fork_owner: Option<String>,
+}
+
+impl From<crate::pull_request::Base> for Origin {
+    fn from(base: crate::pull_request::Base) -> Self {
+        Self {
+            owner: base.owner,
+            repo: base.repo,
+            remote: base.remote,
+            fork_owner: base.fork_owner,
+        }
+    }
 }
 
 impl Origin {

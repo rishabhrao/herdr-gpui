@@ -57,6 +57,8 @@ pub(in crate::settings_window) struct BoatCard {
     key: Entity<SearchInput>,
     account: Account,
     install: bool,
+    /// Run the setup script on the next device made here, when one is set.
+    setup: bool,
     message: Option<String>,
     job: Option<Worker>,
     confirm_forget: bool,
@@ -80,6 +82,7 @@ impl BoatCard {
             key,
             account: Account::Checking,
             install: true,
+            setup: true,
             message: None,
             job: None,
             confirm_forget: false,
@@ -121,6 +124,15 @@ fn texts(values: &BoatFields) -> [&str; 5] {
         &values.environment,
         &values.auto_stop,
     ]
+}
+
+/// The setup script a Boat job carries. Only a new sandbox runs it: Finish
+/// setup on a saved device, used to extend its auto-stop, would otherwise
+/// run it again; the device's menu does that when asked.
+fn job_script(target: &Target, script: Option<String>) -> Option<String> {
+    matches!(target, Target::Create(_))
+        .then_some(script)
+        .flatten()
 }
 
 fn setup_running(cx: &App) -> bool {
@@ -303,15 +315,18 @@ impl SettingsWindow {
             Target::Create(name) => name.clone(),
             Target::Saved(device) => device.label.clone(),
         };
+        let (install, run) = (card.install, card.setup);
+        let script = job_script(&target, self.cloud_setup_script(CloudProvider::Boat, run));
         let request = AddRequest {
             settings,
             target,
-            install: card.install,
+            install,
         };
         let started = self.source.update(cx, |window, cx| {
             window.start_cloud_job(
                 CloudProvider::Boat,
                 name.clone(),
+                script,
                 move |cancelled, report| setup::add_device(request, cancelled, report),
                 cx,
             )
@@ -458,6 +473,17 @@ impl SettingsWindow {
                     }))
                 }),
             )
+            .children(self.cloud_setup_switch(
+                CloudProvider::Boat,
+                card.setup,
+                ready,
+                |this| {
+                    if let Some(card) = &mut this.boat_card {
+                        card.setup = !card.setup;
+                    }
+                },
+                cx,
+            ))
             .child(
                 div().flex().justify_end().child(
                     self.cloud_button("cloud-boat-create", create_label, create)
@@ -501,7 +527,7 @@ impl SettingsWindow {
             .control_card("Boat devices")
             .debug_selector(|| "cloud-boat-devices".into())
             .child(self.control_note(
-                "Finish setup reuses the sandbox and applies Auto-stop after from now, extending a timed deadline or disabling it. The installation switch above also applies here.",
+                "Finish setup reuses the sandbox and applies Auto-stop after from now, extending a timed deadline or disabling it. The installation switch above also applies here; the setup script does not run again.",
             ));
         if card.devices().is_empty() {
             devices = devices.child(self.control_note("None yet."));

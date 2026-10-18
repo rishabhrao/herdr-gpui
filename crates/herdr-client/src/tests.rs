@@ -11,7 +11,7 @@ use crate::{
     method::Method,
     options::validate_options,
     protocol::{endpoint::*, *},
-    session::{Health, Pending, Session, Signals, SurfaceEncodings, run_connection},
+    session::{Health, Pace, Pending, Session, Signals, SurfaceEncodings, run_connection},
     transport::Stream,
 };
 use crossbeam_channel::bounded;
@@ -20,7 +20,7 @@ use std::{
     io::{self, Read, Write},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize},
     },
     thread,
     time::{Duration, Instant},
@@ -33,7 +33,13 @@ mod handshake;
 mod health;
 mod host_theme_order;
 mod host_themes;
+mod idle_wait;
+mod input_pane;
 mod liveness;
+#[cfg(unix)]
+mod partial_input;
+#[cfg(windows)]
+mod partial_input_windows;
 mod session_state;
 mod surface_encoding;
 mod surfaces;
@@ -86,6 +92,35 @@ fn handshake(stream: &mut Stream) {
     );
 }
 
+/// The handshake of an SSH link, whose welcome must offer health checks.
+fn ssh_handshake(stream: &mut Stream) {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(8)))
+        .unwrap();
+    receive(stream);
+    let mut welcome: Value = serde_json::from_str(WELCOME).unwrap();
+    welcome["methods"] = json!(["client_shell.surface.set"]);
+    welcome["capabilities"] = json!([
+        "surface_interest",
+        "presentation_effects_fence",
+        "health_check"
+    ]);
+    send(
+        stream,
+        ServerMessage::EndpointControl {
+            kind: ENDPOINT_WELCOME_KIND.into(),
+            data: welcome.to_string(),
+        },
+    );
+    send(
+        stream,
+        ServerMessage::EndpointControl {
+            kind: ENDPOINT_SNAPSHOT_KIND.into(),
+            data: SNAPSHOT.into(),
+        },
+    );
+}
+
 fn baseline() -> PaneSurfaceFrame {
     PaneSurfaceFrame {
         boot_id: "boot-v1".into(),
@@ -121,8 +156,24 @@ fn test_client_mode(
     active: bool,
     remote: bool,
 ) -> (Client, Stream, thread::JoinHandle<Result<()>>) {
+    let (client, server, worker, _) = test_client_paced(active, remote, Pace::default());
+    (client, server, worker)
+}
+
+/// Also returns the worker's wait count, odd while it is waiting.
+fn test_client_paced(
+    active: bool,
+    remote: bool,
+    pace: Pace,
+) -> (
+    Client,
+    Stream,
+    thread::JoinHandle<Result<()>>,
+    Arc<AtomicUsize>,
+) {
     let (stream, server) = Stream::pair().unwrap();
     let (commands, rx) = queue::channel(COMMAND_CAPACITY).unwrap();
+    let waits = rx.waits.clone();
     let (tx, events) = bounded(EVENT_CAPACITY);
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = stop.clone();
@@ -139,6 +190,7 @@ fn test_client_mode(
             Signals {
                 stop: &worker_stop,
                 liveness: &worker_liveness,
+                pace,
             },
         )
     });
@@ -158,6 +210,7 @@ fn test_client_mode(
         },
         server,
         worker,
+        waits,
     )
 }
 

@@ -41,21 +41,21 @@ pub(super) struct Prepared {
 fn query(format: Format, executable: &Path) -> Command {
     let mut command = match format {
         Format::Deb => {
-            let mut command = Command::new("/usr/bin/dpkg-query");
+            let mut command = herdr_client::new_command("/usr/bin/dpkg-query");
             command.arg("--search");
             command
         }
         Format::Rpm => {
-            let mut command = Command::new("/usr/bin/rpm");
+            let mut command = herdr_client::new_command("/usr/bin/rpm");
             command.args(["-qf", "--queryformat", "%{NAME}\n"]);
             command
         }
         Format::Arch => {
-            let mut command = Command::new("/usr/bin/pacman");
+            let mut command = herdr_client::new_command("/usr/bin/pacman");
             command.arg("-Qoq");
             command
         }
-        Format::Archive => unreachable!(),
+        Format::Archive | Format::Installer => unreachable!(),
     };
     command.arg(executable);
     command
@@ -152,21 +152,21 @@ pub(super) fn prepare(
 fn install_command(format: Format, path: &Path) -> Command {
     let mut command = match format {
         Format::Deb => {
-            let mut command = Command::new("/usr/bin/apt-get");
+            let mut command = herdr_client::new_command("/usr/bin/apt-get");
             command.args(["install", "--yes", "--no-remove", "--"]);
             command
         }
         Format::Rpm => {
-            let mut command = Command::new("/usr/bin/dnf");
+            let mut command = herdr_client::new_command("/usr/bin/dnf");
             command.args(["install", "--assumeyes", "--"]);
             command
         }
         Format::Arch => {
-            let mut command = Command::new("/usr/bin/pacman");
+            let mut command = herdr_client::new_command("/usr/bin/pacman");
             command.args(["-U", "--noconfirm", "--"]);
             command
         }
-        Format::Archive => unreachable!(),
+        Format::Archive | Format::Installer => unreachable!(),
     };
     command
         .arg(path)
@@ -252,21 +252,21 @@ fn transaction_result(status: std::process::ExitStatus, detail: String) -> Resul
 fn installed_version(format: Format, cancel: &AtomicBool) -> Result<String> {
     let mut command = match format {
         Format::Deb => {
-            let mut command = Command::new("/usr/bin/dpkg-query");
+            let mut command = herdr_client::new_command("/usr/bin/dpkg-query");
             command.args(["-W", "-f=${Version}", "herdr-gpui"]);
             command
         }
         Format::Rpm => {
-            let mut command = Command::new("/usr/bin/rpm");
+            let mut command = herdr_client::new_command("/usr/bin/rpm");
             command.args(["-q", "--queryformat", "%{VERSION}-%{RELEASE}", "herdr-gpui"]);
             command
         }
         Format::Arch => {
-            let mut command = Command::new("/usr/bin/pacman");
+            let mut command = herdr_client::new_command("/usr/bin/pacman");
             command.args(["-Q", "herdr-gpui"]);
             command
         }
-        Format::Archive => unreachable!(),
+        Format::Archive | Format::Installer => unreachable!(),
     };
     let output = install::output(&mut command, cancel)?;
     Ok(output
@@ -292,7 +292,7 @@ pub(super) fn install(
     // retains the package even if this GUI exits during authorization/install.
     // Once spawned, only that helper removes its staging directory.
     prepared.stage.disable_cleanup(true);
-    let mut command = Command::new(&prepared.package.executable);
+    let mut command = herdr_client::new_command(&prepared.package.executable);
     command
         .arg(helper::FLAG)
         .arg(prepared.stage.path())

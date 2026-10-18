@@ -24,14 +24,12 @@ impl TabId {
 
 /// An ID a control request names, as `tab list` printed it. Only ever
 /// compared with the store's own IDs.
-#[cfg(unix)]
 impl From<u64> for TabId {
     fn from(id: u64) -> Self {
         Self(id)
     }
 }
 
-#[cfg(unix)]
 impl From<TabId> for u64 {
     fn from(id: TabId) -> Self {
         id.0
@@ -62,7 +60,6 @@ impl Scope {
     }
 
     /// The scope as `tab list` reports a tab's host.
-    #[cfg(unix)]
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
@@ -193,7 +190,10 @@ impl Store {
         Self::with_tabs(tabs, writer)
     }
 
-    fn with_tabs(tabs: Vec<Tab>, writer: Option<state_file::Writer<Saved>>) -> Self {
+    fn with_tabs(mut tabs: Vec<Tab>, writer: Option<state_file::Writer<Saved>>) -> Self {
+        // Earlier builds hosted the orchestrator in a tab; its sections now
+        // own it, so such tabs are dropped rather than restored.
+        tabs.retain(|tab| !matches!(tab.location, Some(Location::Orchestrator { .. })));
         let next = tabs.iter().map(|tab| tab.id.0 + 1).max().unwrap_or(0);
         Self {
             tabs,
@@ -240,7 +240,6 @@ impl Store {
     }
 
     /// Every tab of every workspace, in the order they were opened.
-    #[cfg(any(unix, test))]
     pub(crate) fn tabs(&self) -> impl Iterator<Item = &Tab> {
         self.tabs.iter()
     }

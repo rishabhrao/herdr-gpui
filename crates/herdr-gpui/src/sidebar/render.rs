@@ -19,13 +19,16 @@ use super::{
 };
 use crate::{
     Command, HerdrWindow, NavigationTarget,
-    config::{FontConfig, Theme},
+    config::{AgentsPlacement, FontConfig, Theme},
     fonts::StyledFont,
 };
 use gpui::{prelude::*, *};
 
 mod agent_rows;
 mod device_tree;
+mod nested_agents;
+
+pub(crate) use nested_agents::NestedReveal;
 
 impl HerdrWindow {
     pub(crate) fn render_sidebar(
@@ -71,6 +74,8 @@ impl HerdrWindow {
         let mut spaces = div()
             .id("spaces-scroll")
             .debug_selector(|| "spaces-scroll".into())
+            .role(Role::List)
+            .aria_label(if devices { "Devices" } else { "Workspaces" })
             .flex()
             .flex_col()
             .flex_1()
@@ -79,6 +84,8 @@ impl HerdrWindow {
         let mut agents = div()
             .id("agents-scroll")
             .debug_selector(|| "agents-scroll".into())
+            .role(Role::List)
+            .aria_label("Agents")
             .flex()
             .flex_col()
             .flex_1()
@@ -88,13 +95,20 @@ impl HerdrWindow {
         agents = agents.track_scroll(&self.sidebar_scroll[1]);
         let multi = self.endpoints.len() > 1;
         let headed = multi || devices;
-        let agents_panel = self.config.show_agents && !devices;
+        let placement = self
+            .config
+            .show_agents
+            .then_some(self.config.agents_placement);
+        let agents_panel = placement == Some(AgentsPlacement::Panel) && !devices;
+        let nested_agents = placement == Some(AgentsPlacement::Nested) && !devices;
         let query = if tree_search {
             self.device_tree_query(cx)
         } else {
             String::new()
         };
         let mut agent_count = 0;
+        // The focused agent's row when agents nest under their workspaces.
+        let mut nested_focus = None;
         // A plugin view hid every agent, rather than there being none.
         let mut filtered = false;
         // Child positions of the highlighted rows, for the one-time reveal below.
@@ -256,28 +270,16 @@ impl HerdrWindow {
                     (true, false) => RowTree::Child,
                     (true, true) => RowTree::LastChild,
                 };
+                let fold_toggle = group.clone().map(|key| (endpoint_id.clone(), key));
                 let fold = group.map(|key| Fold {
                     id: SharedString::from(format!("collapse-{endpoint_id}-{id}")).into(),
                     index,
                     collapsed: collapsed_repos.contains(&key),
                     toggle: Box::new(cx.listener(move |this, _, _, cx| {
-                        let collapsed = if collapse_endpoint == crate::endpoint::LOCAL {
-                            &mut this.collapsed_repos
-                        } else if let Some(endpoint) = this
-                            .endpoints
-                            .iter_mut()
-                            .find(|e| e.id == collapse_endpoint)
-                        {
-                            &mut endpoint.collapsed_repos
-                        } else {
-                            return;
-                        };
-                        if !collapsed.remove(&key) {
-                            collapsed.insert(key.clone());
-                        }
-                        cx.notify();
+                        this.toggle_repository(&collapse_endpoint, &key, cx);
                     })),
                 });
+                let folds = fold.as_ref().map(|fold| fold.collapsed).zip(fold_toggle);
                 let label = workspace_label(workspace, indented);
                 let shown_status = if self.config.usage.inline {
                     displayed_workspace_status(&snapshot.workspaces, workspace, collapsed_repos)
@@ -491,6 +493,11 @@ impl HerdrWindow {
                     },
                 )
                 .id(SharedString::from(format!("workspace-{endpoint_id}-{id}")))
+                .map(|row| {
+                    let name =
+                        super::accessibility::workspace_name(label, shown_status, row_cx.host);
+                    self.workspace_item(row, name, selected && workspace.focused, folds, cx)
+                })
                 .when(multi, |row| {
                     row.debug_selector(|| format!("workspace-{endpoint_id}-{id}"))
                 })
@@ -517,6 +524,9 @@ impl HerdrWindow {
                     row.on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            if this.config.features.sidebar_hover_menu {
+                                this.press_hovered_workspace(&press_id, event.position);
+                            }
                             if event.click_count == 1 {
                                 this.press_workspace(&press_id, event.position, cx);
                             }
@@ -524,9 +534,24 @@ impl HerdrWindow {
                     )
                 })
                 .when(carried, |row| row.cursor_grabbing());
-                // The note and ports ride under their row as one list item, so
-                // the drop preview still measures one height per workspace.
-                let element = if note_line.is_none() && ports.is_none() {
+                let indent = layout.child_indent() * if indented { 2. } else { 1. };
+                let agent_rows = if nested_agents {
+                    let (rows, focused) = self.nested_agent_rows(
+                        endpoint_index,
+                        snapshot,
+                        &workspace.workspace_id,
+                        (&row_cx, indent),
+                        cx,
+                    );
+                    nested_focus = nested_focus.or(focused);
+                    rows
+                } else {
+                    Vec::new()
+                };
+                // The note, ports and nested agents ride under their row as one
+                // list item, so the drop preview still measures one height per
+                // workspace.
+                let element = if note_line.is_none() && ports.is_none() && agent_rows.is_empty() {
                     element
                         .when(gap > 0., |row| row.mt(px(gap)))
                         .when(shift != px(0.), |row| row.top(shift))
@@ -547,9 +572,13 @@ impl HerdrWindow {
                                 .flex_col()
                                 .w_full()
                                 .relative()
-                                .children(trunk)
                                 .children(note_line)
-                                .children(ports),
+                                .children(ports)
+                                .children(agent_rows)
+                                // Last, so a selected nested agent's fill does
+                                // not hide it, as a row draws its guide over
+                                // its own fill.
+                                .children(trunk),
                         )
                         .into_any_element()
                 };
@@ -586,6 +615,8 @@ impl HerdrWindow {
         }
         // Rows under the pinned header are hidden, so a reveal must clear it.
         let cover = px(sticky::cover(&headers));
+        // Search results stand in for the spaces list, so no nested row paints.
+        self.reveal_nested_agent(nested_focus.filter(|_| search.is_none()), cover, window);
         // Folded headers slide under a pinned one, so none is pinned then,
         // nor in the frame that unfolds, whose header places are the folded
         // list's; the frame after pins from the unfolded one.
@@ -644,6 +675,8 @@ impl HerdrWindow {
         div()
             .id("sidebar")
             .debug_selector(|| "sidebar".into())
+            .role(Role::Navigation)
+            .aria_label("Sidebar")
             .relative()
             .w(px(width))
             .flex_none()
@@ -699,7 +732,9 @@ impl HerdrWindow {
                             .overflow_hidden()
                             .map(|list| match search {
                                 Some(results) => list.child(results),
-                                None => list.child(spaces).children(pinned_host),
+                                None => list
+                                    .child(spaces)
+                                    .children(pinned_host.map(crate::mark_layer::covering)),
                             }),
                     )
                     .child(
@@ -716,6 +751,7 @@ impl HerdrWindow {
                             .child(
                                 div()
                                     .id("new-workspace")
+                                    .map(|button| self.sidebar_button(button, "New workspace"))
                                     .cursor_pointer()
                                     .hover(|s| s.text_color(rgb(theme.foreground)))
                                     .child("new")
@@ -727,6 +763,7 @@ impl HerdrWindow {
                                 div()
                                     .id("sidebar-menu")
                                     .debug_selector(|| "sidebar-menu".into())
+                                    .map(|button| self.sidebar_button(button, "Menu"))
                                     .cursor_pointer()
                                     .hover(|s| s.text_color(rgb(theme.foreground)))
                                     .child(label_text("menu"))
@@ -779,11 +816,15 @@ impl HerdrWindow {
                             })
                             .min_h_0()
                             .overflow_hidden()
-                            .child(
-                                header("agents", font, theme, look)
-                                    .justify_between()
-                                    .child(agents_sort(self, cx)),
-                            )
+                            // A plugin view on any listed host filters the
+                            // rows, so the header stays to say so.
+                            .when(self.config.show_agents_header || filtered, |section| {
+                                section.child(
+                                    header("agents", font, theme, look)
+                                        .justify_between()
+                                        .child(agents_sort(self, cx)),
+                                )
+                            })
                             .child(agents),
                     )
             })

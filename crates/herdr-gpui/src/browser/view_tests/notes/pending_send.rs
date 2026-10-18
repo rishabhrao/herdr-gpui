@@ -16,10 +16,8 @@ fn page_notes_wait_for_busy_delivery_and_feedback_before_resend(cx: &mut gpui::T
     cx.update(|_, cx| {
         view.update(cx, |view, cx| {
             view.poll_deliveries(cx);
-            if cfg!(unix) {
-                view.send_notes(&tab, cx);
-                assert_eq!(view.deliveries.len(), 0, "feedback still owns the batch");
-            }
+            view.send_notes(&tab, cx);
+            assert_eq!(view.deliveries.len(), 0, "feedback still owns the batch");
         });
     });
     assert_eq!(

@@ -764,7 +764,9 @@ impl TerminalPainter {
             total.paths += counts.paths;
             total.decorations += counts.decorations;
             total.paint_errors += counts.paint_errors;
-            total.paints += 1;
+            // A region paints its three layers as three calls; count the
+            // region once, on its backgrounds, so `paints` stays a grid paint.
+            total.paints += usize::from(draws(Layer::Backgrounds));
         }
         #[cfg(not(feature = "integration-test"))]
         let _ = cx;

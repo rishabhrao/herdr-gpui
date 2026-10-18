@@ -425,13 +425,13 @@ fn shortcuts_focus_search_and_close_only_log_window(cx: &mut TestAppContext) {
         window.draw(cx).clear(cx);
         assert!(!view.read(cx).search.read(cx).focus.is_focused(window));
     });
-    cx.simulate_keystrokes(if cfg!(target_os = "linux") {
+    cx.simulate_keystrokes(if crate::controls::CTRL_SHORTCUTS {
         "ctrl-f"
     } else {
         "cmd-f"
     });
     cx.update(|window, cx| assert!(view.read(cx).search.read(cx).focus.is_focused(window)));
-    cx.simulate_keystrokes(if cfg!(target_os = "linux") {
+    cx.simulate_keystrokes(if crate::controls::CTRL_SHORTCUTS {
         "ctrl-w"
     } else {
         "cmd-w"
@@ -522,7 +522,7 @@ fn level_dropdown_keyboard_dismissal_focus_and_input_isolation(cx: &mut TestAppC
     let (view, cx) = cx.add_window_view(LogWindow::new);
     cx.simulate_resize(size(px(620.), px(360.)));
     cx.run_until_parked();
-    cx.simulate_keystrokes(if cfg!(target_os = "linux") {
+    cx.simulate_keystrokes(if crate::controls::CTRL_SHORTCUTS {
         "ctrl-l enter"
     } else {
         "cmd-l enter"

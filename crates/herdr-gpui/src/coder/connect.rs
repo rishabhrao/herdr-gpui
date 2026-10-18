@@ -68,7 +68,7 @@ pub(crate) fn ssh_command(
     {
         return Err(Error::Field("Coder workspace"));
     }
-    let mut command = Command::new(cli);
+    let mut command = herdr_client::new_command(cli);
     command
         .env("CODER_URL", &settings.base)
         .env("CODER_SESSION_TOKEN", token.expose_secret())

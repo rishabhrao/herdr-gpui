@@ -14,7 +14,6 @@ use crate::{
 };
 use std::{
     path::{Path, PathBuf},
-    process::Command,
     time::{Duration, Instant},
 };
 
@@ -52,7 +51,7 @@ fn git_directory(checkout: &Path, deadline: Instant) -> crate::Result<PathBuf> {
     else {
         return Err(Error::PrAbsolutePath);
     };
-    let mut command = Command::new("git");
+    let mut command = herdr_client::new_command("git");
     command
         .args(["-c", "core.fsmonitor=false", "-C", checkout])
         .args(["rev-parse", "--absolute-git-dir"]);

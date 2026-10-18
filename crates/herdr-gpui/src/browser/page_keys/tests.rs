@@ -5,7 +5,11 @@ const COMMAND: Held = Held {
     shift: false,
     option: false,
     control: false,
+    function: false,
 };
+
+/// Tab and workspace keys leave a page to the app.
+mod leaving;
 
 #[test]
 fn a_focused_page_takes_its_keys_but_not_the_app_s() {

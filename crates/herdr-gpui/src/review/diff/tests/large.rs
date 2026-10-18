@@ -94,7 +94,7 @@ fn huge_and_binary_files_are_listed_while_the_rest_is_read() {
         repo_key: Some(path.join(".git").to_str().unwrap().to_owned()),
         branch: "main".into(),
     };
-    let mut loaded = load(&input, Scope::Uncommitted, None, false).unwrap();
+    let mut loaded = load(&input, Scope::Uncommitted, None, None, false).unwrap();
     let names: Vec<&str> = loaded
         .diff
         .files
@@ -196,7 +196,7 @@ fn a_change_of_a_hundred_thousand_lines_reads_in_batches() {
         repo_key: Some(path.join(".git").to_str().unwrap().to_owned()),
         branch: "main".into(),
     };
-    let mut loaded = load(&input, Scope::Uncommitted, None, false).unwrap();
+    let mut loaded = load(&input, Scope::Uncommitted, None, None, false).unwrap();
     assert_eq!(loaded.diff.files.len(), 10);
     let weights: Vec<(usize, u64)> = loaded
         .diff
@@ -244,7 +244,7 @@ fn files_with_odd_names_are_read() {
         repo_key: Some(path.join(".git").to_str().unwrap().to_owned()),
         branch: "main".into(),
     };
-    let mut loaded = load(&input, Scope::Uncommitted, None, false).unwrap();
+    let mut loaded = load(&input, Scope::Uncommitted, None, None, false).unwrap();
     assert_eq!(loaded.diff.files.len(), names.len());
     loaded.read_all();
     for file in &loaded.diff.files {

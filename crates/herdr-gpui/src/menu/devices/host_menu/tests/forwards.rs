@@ -1,8 +1,21 @@
 //! Forwarding a device's ports from its menu.
 use super::*;
 
+/// Windows OpenSSH has no control master to forward through, so its menu
+/// never offers a forward.
+#[cfg(windows)]
+#[test]
+fn windows_offers_no_port_forward() {
+    assert!(
+        !SSH_ACTIONS
+            .iter()
+            .any(|(_, label)| label.starts_with("Forward port"))
+    );
+}
+
 /// The dialog takes typing, refuses what is not a port, and closes on
 /// Escape. A port already forwarded is refused without starting SSH.
+#[cfg(unix)]
 #[gpui::test]
 fn forwarding_a_port_asks_for_one_and_refuses_bad_or_repeated_ports(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|window, cx| {
@@ -17,10 +30,6 @@ fn forwarding_a_port_asks_for_one_and_refuses_bad_or_repeated_ports(cx: &mut Tes
     view.update_in(cx, |view, window, cx| {
         view.open_host_menu(HOST, point(px(10.), px(10.)), window, cx)
     });
-    if cfg!(windows) {
-        assert!(view.read_with(cx, |view, _| view.menu.page.is_none()));
-        return;
-    }
     assert_eq!(SSH_ACTIONS[2].0, Action::ForwardPort);
     cx.simulate_keystrokes("down down down enter");
     let input = view.read_with(cx, |view, _| {
@@ -59,6 +68,8 @@ fn forwarding_a_port_asks_for_one_and_refuses_bad_or_repeated_ports(cx: &mut Tes
 
 /// The menu lists only its own host's forwards, offers Open only once a
 /// forward listens, and Stop ends one.
+// Windows starts no forwards, so its menu never lists one.
+#[cfg(unix)]
 #[gpui::test]
 fn the_menu_lists_the_host_forwards_and_stops_one(cx: &mut TestAppContext) {
     use crate::port_forward::State;
@@ -79,9 +90,6 @@ fn the_menu_lists_the_host_forwards_and_stops_one(cx: &mut TestAppContext) {
     view.update_in(cx, |view, window, cx| {
         view.open_host_menu(HOST, point(px(10.), px(10.)), window, cx)
     });
-    if cfg!(windows) {
-        return;
-    }
     let draw = |cx: &mut VisualTestContext| {
         cx.update(|window, cx| crate::sidebar::layout_tests::full_draw(window, cx).clear(cx));
     };

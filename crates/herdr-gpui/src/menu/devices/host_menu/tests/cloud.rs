@@ -1,6 +1,6 @@
-//! A cloud device's header menu: rename, its provider's settings, and removal
-//! from this computer. Port forwards and server keybindings go through an SSH
-//! profile, so a cloud device does not offer them.
+//! A cloud device's header menu: rename, its provider's settings, its setup
+//! script, and removal from this computer. Port forwards and server
+//! keybindings go through an SSH profile, so a cloud device does not offer them.
 
 use super::super::CLOUD_ACTIONS;
 use super::*;
@@ -29,7 +29,7 @@ fn add_cloud(view: &mut crate::HerdrWindow) -> String {
 }
 
 #[gpui::test]
-fn right_clicking_a_cloud_device_offers_rename_settings_and_removal(cx: &mut TestAppContext) {
+fn right_clicking_a_cloud_device_offers_rename_settings_setup_and_removal(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|window, cx| {
         crate::bind_keys(cx);
         let mut view = fixture_window(window, cx);
@@ -39,6 +39,8 @@ fn right_clicking_a_cloud_device_offers_rename_settings_and_removal(cx: &mut Tes
     cx.simulate_resize(size(px(800.), px(600.)));
     cx.update(|window, cx| crate::sidebar::layout_tests::full_draw(window, cx).clear(cx));
     let header = match provider() {
+        #[cfg(feature = "azure")]
+        CloudProvider::Azure => "host-azure:w1",
         #[cfg(feature = "boat")]
         CloudProvider::Boat => "host-boat:w1",
         #[cfg(feature = "coder")]
@@ -67,10 +69,19 @@ fn right_clicking_a_cloud_device_offers_rename_settings_and_removal(cx: &mut Tes
         assert!(!view.host_menu_lists_forwards());
     });
     cx.update(|window, cx| crate::sidebar::layout_tests::full_draw(window, cx).clear(cx));
-    for row in ["host-menu-0", "host-menu-1", "host-menu-2"] {
+    let rows = [
+        "host-menu-0",
+        "host-menu-1",
+        "host-menu-2",
+        "host-menu-3",
+        "host-menu-4",
+        "host-menu-5",
+    ];
+    let (shown, past) = rows.split_at(CLOUD_ACTIONS.len());
+    for row in shown {
         assert!(cx.debug_bounds(row).is_some(), "{row}");
     }
-    assert!(cx.debug_bounds("host-menu-3").is_none());
+    assert!(cx.debug_bounds(past[0]).is_none());
 
     // Removal is last, and says the machine itself stays at the provider.
     cx.simulate_keystrokes("up enter");

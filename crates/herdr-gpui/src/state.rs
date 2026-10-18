@@ -5,6 +5,7 @@ use herdr_client::{
 use std::sync::Arc;
 
 mod agent_recency;
+mod projection;
 
 use agent_recency::AgentRecency;
 
@@ -61,6 +62,8 @@ pub struct LiveState {
     pub(crate) sound_cancel: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) sound_connection_cancel: Arc<std::sync::atomic::AtomicBool>,
     pub snapshot: Option<Arc<ClientShellSnapshot>>,
+    /// One newer metadata projection, waiting for its matching cells.
+    pub(crate) pending_snapshot: Option<Arc<ClientShellSnapshot>>,
     /// When each of `snapshot`'s agents last changed, on a clock shared with
     /// every other connection, so the agents panel can merge hosts by recency.
     pub(crate) agent_recency: AgentRecency,
@@ -70,11 +73,14 @@ pub struct LiveState {
     pub surface: Option<Arc<PaneSurfaceFrame>>,
     /// Pixels for the images the connection's surfaces place, by asset key.
     pub(crate) surface_images: Arc<SurfaceImages>,
+    pub(crate) pending_surface_images: Option<Arc<SurfaceImages>>,
     pub status: ConnectionStatus,
     pub error: Option<String>,
     /// Why `ssh` refused the bridge, when that is how the connection ended.
     pub(crate) ssh_failure: Option<herdr_client::SshFailure>,
     pub missing_installation: bool,
+    /// The daemon's reported version, from an accepted handshake or mismatch notice.
+    pub daemon_version: Option<String>,
     /// Why the last handshake was refused, when updating one side fixes it.
     /// Cleared by the next accepted handshake.
     pub version_mismatch: Option<herdr_client::VersionMismatch>,
@@ -188,14 +194,17 @@ impl Default for LiveState {
             sound_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             sound_connection_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             snapshot: None,
+            pending_snapshot: None,
             agent_recency: AgentRecency::default(),
             previous_pane: None,
             surface: None,
             surface_images: Default::default(),
+            pending_surface_images: None,
             status: ConnectionStatus::Connecting,
             error: None,
             ssh_failure: None,
             missing_installation: false,
+            daemon_version: None,
             version_mismatch: None,
             local_daemon_peer: false,
             #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -245,15 +254,18 @@ impl LiveState {
             sound_cancel,
             sound_connection_cancel,
             snapshot,
+            pending_snapshot: _,
             // Changes only with `snapshot`, which is compared below.
             agent_recency: _,
             previous_pane,
             surface: _,
             surface_images: _,
+            pending_surface_images: _,
             status,
             error,
             ssh_failure,
             missing_installation,
+            daemon_version,
             version_mismatch,
             local_daemon_peer,
             #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -314,6 +326,7 @@ impl LiveState {
             && *error == self.error
             && *ssh_failure == self.ssh_failure
             && *missing_installation == self.missing_installation
+            && *daemon_version == self.daemon_version
             && *version_mismatch == self.version_mismatch
             && *local_daemon_peer == self.local_daemon_peer
             && *supports_pane_clear == self.supports_pane_clear
@@ -458,6 +471,15 @@ impl LiveState {
         }
     }
 
+    /// The daemon's reported version from an active connection or mismatch notice.
+    pub fn daemon_version(&self) -> Option<&str> {
+        self.daemon_version.as_deref().or_else(|| {
+            self.version_mismatch
+                .as_ref()
+                .and_then(|m| m.server_version())
+        })
+    }
+
     /// Track activation without treating receipt or focus gain as presentation.
     pub fn set_outer_focus(&mut self, focused: bool) {
         // A focus report retried after inbox contention must still cause a draw.
@@ -469,6 +491,7 @@ impl LiveState {
         match event {
             ClientEvent::Connected(welcome) => {
                 self.settings_reload = false;
+                self.daemon_version = sanitize_daemon_version(&welcome.server_version);
                 self.supports_pane_clear = Method::PaneClear.advertised_in(&welcome.methods);
                 self.supports_tab_move = Method::TabMove.advertised_in(&welcome.methods);
                 self.supports_workspace_move =
@@ -501,72 +524,16 @@ impl LiveState {
                 self.status = ConnectionStatus::AwaitingSnapshot;
                 self.error = None;
             }
-            ClientEvent::Snapshot(snapshot) => {
-                if self
-                    .snapshot
-                    .as_ref()
-                    .is_some_and(|old| old.boot_id != snapshot.boot_id)
-                {
-                    self.notifications.clear();
-                    self.cancel_sounds();
-                    self.sound_cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                    // A restarted daemon pushes its own title; the old one's
-                    // must not outlive it.
-                    self.bells = 0;
-                    self.window_title = None;
-                }
-                if let Some(activation) = &mut self.activation
-                    && activation.boot != snapshot.boot_id
-                {
-                    activation.failed = true;
-                }
-                self.missing_installation = false;
-                if self
-                    .surface
-                    .as_ref()
-                    .is_some_and(|s| !coherent(&snapshot, s))
-                {
-                    self.surface = None;
-                }
-                // Once the daemon drops or replaces the announcement there is
-                // nothing left to hide.
-                if self
-                    .announcement_dismissal
-                    .as_ref()
-                    .is_some_and(|dismissal| !dismissal.covers(&snapshot))
-                {
-                    self.announcement_dismissal = None;
-                }
-                self.status = ConnectionStatus::Connected;
-                // Pane IDs are only meaningful within one daemon boot.
-                self.previous_pane = match &self.snapshot {
-                    Some(old) if old.boot_id == snapshot.boot_id => old
-                        .focused_pane_id
-                        .clone()
-                        .filter(|old| Some(old) != snapshot.focused_pane_id.as_ref())
-                        .or_else(|| self.previous_pane.take()),
-                    _ => None,
-                };
-                // Pane IDs, and so each agent's history, belong to one boot.
-                let previous = self
-                    .snapshot
-                    .as_deref()
-                    .filter(|old| old.boot_id == snapshot.boot_id);
-                self.agent_recency.observe(previous, &snapshot);
-                self.snapshot = Some(snapshot);
-            }
-            ClientEvent::Surface(surface) => {
-                if self
-                    .snapshot
-                    .as_ref()
-                    .is_some_and(|s| coherent(s, &surface))
-                {
-                    self.surface = Some(surface);
-                }
-            }
-            ClientEvent::SurfaceImages(images) => self.surface_images = images,
+            ClientEvent::Snapshot(snapshot) => self.receive_snapshot(snapshot),
+            ClientEvent::Surface(surface) => self.receive_surface(surface),
+            ClientEvent::SurfaceImages(images) => self.receive_surface_images(images),
             // The `Disconnected` that follows carries the reason text.
-            ClientEvent::VersionMismatch(mismatch) => self.version_mismatch = Some(mismatch),
+            ClientEvent::VersionMismatch(mismatch) => {
+                if let Some(version) = mismatch.server_version() {
+                    self.daemon_version = sanitize_daemon_version(version);
+                }
+                self.version_mismatch = Some(mismatch);
+            }
             ClientEvent::Disconnected { reason, ssh } => {
                 self.ssh_failure = ssh;
                 self.settings_reload = false;
@@ -578,6 +545,8 @@ impl LiveState {
                 self.status = ConnectionStatus::Disconnected;
                 self.error = Some(reason);
                 self.snapshot = None;
+                self.pending_snapshot = None;
+                self.pending_surface_images = None;
                 self.agent_recency = AgentRecency::default();
                 self.surface = None;
                 self.announcement_dismissal = None;
@@ -714,10 +683,9 @@ impl LiveState {
                     // A dropped event may have invalidated an already displayed pane.
                     self.notifications_lost = true;
                 }
-                self.notifications.push_back(
-                    crate::notifications::Notice::new(notification, received)
-                        .with_snapshot(self.snapshot.as_deref()),
-                );
+                let notice = crate::notifications::Notice::new(notification, received)
+                    .with_snapshot(self.latest_snapshot().map(Arc::as_ref));
+                self.notifications.push_back(notice);
             }
             ClientEvent::Message(ServerMessage::ReloadSoundConfig) => {
                 self.reload_sound = true;
@@ -819,6 +787,19 @@ fn sanitize_window_title(title: &str) -> Option<String> {
         .collect::<String>();
     let title = title.trim();
     (!title.is_empty()).then(|| title.to_owned())
+}
+
+/// Maximum characters kept for a daemon version string.
+pub(crate) const MAX_DAEMON_VERSION_CHARS: usize = 64;
+
+fn sanitize_daemon_version(version: &str) -> Option<String> {
+    let version = version
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(MAX_DAEMON_VERSION_CHARS)
+        .collect::<String>();
+    let version = version.trim();
+    (!version.is_empty()).then(|| version.to_owned())
 }
 
 fn coherent(snapshot: &ClientShellSnapshot, surface: &PaneSurfaceFrame) -> bool {

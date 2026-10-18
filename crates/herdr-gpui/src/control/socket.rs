@@ -1,15 +1,19 @@
-//! The Unix socket behind `herdr-gpui <command>`. A worker accepts
-//! connections and serves each on a thread of its own, up to a bound: it
-//! reads one bounded request, hands it to the UI through a bounded queue,
-//! and writes back the answer the UI gives it. A feedback request may wait
-//! minutes for the user, so connections cannot share one thread.
+//! The channel behind `herdr-gpui <command>`: a Unix socket, or a named
+//! pipe on Windows. A worker accepts connections and serves each on a
+//! thread of its own, up to a bound: it reads one bounded request, hands it
+//! to the UI through a bounded queue, and writes back the answer the UI
+//! gives it. A feedback request may wait minutes for the user, so
+//! connections cannot share one thread.
+#[cfg(windows)]
+mod pipe;
+#[cfg(unix)]
+mod unix;
+
 use super::protocol::{ErrorCode, FeedbackRequest, MAX_MESSAGE, Request, Response};
+#[cfg(windows)]
+use pipe as transport;
 use std::{
-    io::{self, BufRead, BufReader, Read, Write},
-    os::unix::{
-        fs::PermissionsExt,
-        net::{UnixListener, UnixStream},
-    },
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -19,6 +23,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use transport::Connection;
+#[cfg(unix)]
+use unix as transport;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long a caller waits for the UI, which may be busy or have no window.
@@ -28,6 +35,11 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(10);
 const QUEUE: usize = 4;
 /// Connections served at once, waiting ones included.
 const CONNECTIONS: usize = 8;
+
+/// Where this user's app listens, given its state directory.
+pub(super) fn address(state: &Path) -> crate::Result<PathBuf> {
+    transport::address(state)
+}
 
 /// How long the UI may take to answer `request`: one that waits for the
 /// user, a page, or an event on purpose gets as long as it asked for.
@@ -90,27 +102,10 @@ pub(crate) struct Server {
 }
 
 impl Server {
-    /// Binds `path`, replacing a socket no process answers on. Another live
-    /// server keeps its socket and this one does not start.
+    /// Listens at `path`. Another live server keeps it and this one does
+    /// not start.
     pub(crate) fn bind(path: &Path) -> crate::Result<Self> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
-        }
-        let listener = match UnixListener::bind(path) {
-            Ok(listener) => listener,
-            Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
-                if UnixStream::connect(path).is_ok() {
-                    return Err(crate::Error::ControlSocketInUse {
-                        path: path.to_owned(),
-                    });
-                }
-                std::fs::remove_file(path)?;
-                UnixListener::bind(path)?
-            }
-            Err(error) => return Err(error.into()),
-        };
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        let listener = transport::Listener::bind(path)?;
         let (sender, requests) = mpsc::sync_channel(QUEUE);
         // The worker blocks in accept for the life of the process. Nothing
         // joins it: the UI must never wait on it, and exit reclaims it.
@@ -118,14 +113,21 @@ impl Server {
             .name("control-socket".into())
             .spawn(move || {
                 let open = Arc::new(AtomicUsize::new(0));
-                for stream in listener.incoming() {
-                    let stream = match stream {
+                loop {
+                    let mut stream = match listener.accept() {
                         Ok(stream) => stream,
                         Err(error) => {
                             tracing::debug!(%error, "Control accept failed");
+                            // A failure that repeats, such as a pipe instance
+                            // that cannot be made, must not spin this thread.
+                            thread::sleep(Duration::from_millis(100));
                             continue;
                         }
                     };
+                    if let Err(error) = stream.prepare(IO_TIMEOUT) {
+                        tracing::debug!(%error, "Control connection setup failed");
+                        continue;
+                    }
                     if open.fetch_add(1, Ordering::AcqRel) >= CONNECTIONS {
                         open.fetch_sub(1, Ordering::AcqRel);
                         refuse(&stream);
@@ -135,7 +137,7 @@ impl Server {
                     let spawned = thread::Builder::new()
                         .name("control-connection".into())
                         .spawn(move || {
-                            serve(stream, &queue);
+                            serve(&stream, &queue);
                             done.fetch_sub(1, Ordering::AcqRel);
                         });
                     if let Err(error) = spawned {
@@ -168,6 +170,11 @@ impl Server {
     }
 }
 
+/// Cleans up after the server at `path` when the app quits.
+pub(crate) fn release(path: &Path) {
+    transport::release(path);
+}
+
 /// Reads one line of at most `MAX_MESSAGE` bytes, without its newline.
 fn read_line(reader: impl Read) -> crate::Result<Vec<u8>> {
     let mut line = Vec::new();
@@ -188,7 +195,7 @@ fn write_line(mut writer: impl Write, message: &impl serde::Serialize) -> crate:
     Ok(())
 }
 
-fn answer(request: Request, queue: &SyncSender<Event>, stream: &UnixStream) -> Response {
+fn answer(request: Request, queue: &SyncSender<Event>, stream: &Connection) -> Response {
     let timeout = answer_timeout(&request);
     let (sender, answer) = mpsc::sync_channel(1);
     let reply = Arc::new(Mutex::new(Reply { live: true, sender }));
@@ -209,7 +216,7 @@ fn answer(request: Request, queue: &SyncSender<Event>, stream: &UnixStream) -> R
         if let Ok(response) = answer.recv_timeout(Duration::from_millis(50)) {
             return response;
         }
-        if Instant::now() >= until || peer_closed(stream) {
+        if Instant::now() >= until || stream.peer_closed() {
             // No I/O under this lock. Serialize cancellation with try_respond,
             // retaining a response that raced the disconnect instead of dropping it.
             let mut reply = reply
@@ -223,37 +230,24 @@ fn answer(request: Request, queue: &SyncSender<Event>, stream: &UnixStream) -> R
     }
 }
 
-/// A request is one line only. EOF, another byte, or an I/O error ends it;
-/// WouldBlock means the peer is still waiting. Runs only on the socket worker.
-fn peer_closed(mut stream: &UnixStream) -> bool {
-    !matches!(stream.read(&mut [0]), Err(error) if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted))
-}
-
 /// Answers a connection over the bound without reading it.
-fn refuse(stream: &UnixStream) {
-    let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
+fn refuse(stream: &Connection) {
     let busy = Response::error(ErrorCode::Busy, "Herdr UI is handling other requests");
     if let Err(error) = write_line(stream, &busy) {
         tracing::debug!(%error, "Control refusal failed");
     }
 }
 
-fn serve(stream: UnixStream, queue: &SyncSender<Event>) {
-    let prepared = stream
-        .set_read_timeout(Some(IO_TIMEOUT))
-        .and_then(|()| stream.set_write_timeout(Some(IO_TIMEOUT)));
-    if let Err(error) = prepared {
-        tracing::debug!(%error, "Control connection setup failed");
-        return;
-    }
-    let request = read_line(&stream).and_then(|line| Ok(serde_json::from_slice::<Request>(&line)?));
+/// Serves one request on a connection whose timeouts are already set.
+fn serve(stream: &Connection, queue: &SyncSender<Event>) {
+    let request = read_line(stream).and_then(|line| Ok(serde_json::from_slice::<Request>(&line)?));
     let (request, response) = match request {
         Ok(request) => {
-            if let Err(error) = stream.set_nonblocking(true) {
+            if let Err(error) = stream.watch(true) {
                 tracing::debug!(%error, "Control disconnect monitoring failed");
                 return;
             }
-            let response = answer(request.clone(), queue, &stream);
+            let response = answer(request.clone(), queue, stream);
             (Some(request), response)
         }
         Err(error) => (
@@ -261,28 +255,31 @@ fn serve(stream: UnixStream, queue: &SyncSender<Event>) {
             Response::error(ErrorCode::InvalidRequest, error.to_string()),
         ),
     };
-    finish_response(&stream, queue, request, response);
+    finish_response(stream, queue, request, response);
+}
+
+/// Whether an answer fits the bound the caller reads with, newline included.
+fn fits(response: &Response) -> bool {
+    serde_json::to_vec(response).is_ok_and(|bytes| bytes.len() < MAX_MESSAGE)
 }
 
 fn finish_response(
-    stream: &UnixStream,
+    stream: &Connection,
     queue: &SyncSender<Event>,
     request: Option<Request>,
     response: Response,
 ) {
-    // Every answer must fit the bound the caller reads with. A feature that
-    // would send more is refused here rather than cut off mid-line; notes
-    // that cannot go out are kept again, as on any failed write.
-    let fits = serde_json::to_vec(&response).is_ok_and(|bytes| bytes.len() < MAX_MESSAGE);
-    let response = if fits {
+    // A feature that would send more is refused here rather than cut off
+    // mid-line. Notes that cannot go out are kept again, as on any failed write.
+    let response = if fits(&response) {
         response
     } else {
         if let (Some(Request::Feedback(request)), Response::Feedback { text: Some(text) }) =
-            (&request, &response)
+            (&request, response)
         {
             let _ = queue.send(Event::Undelivered {
                 request: request.clone(),
-                text: text.clone(),
+                text,
             });
         }
         tracing::warn!("Control answer over {MAX_MESSAGE} bytes refused");
@@ -292,7 +289,7 @@ fn finish_response(
         )
     };
     let written = stream
-        .set_nonblocking(false)
+        .watch(false)
         .map_err(crate::Error::from)
         .and_then(|()| write_line(stream, &response));
     if let Err(error) = written {
@@ -309,13 +306,8 @@ fn finish_response(
 
 /// Sends one request to the server at `path` and returns its answer.
 pub(crate) fn call(path: &Path, request: &Request) -> crate::Result<Response> {
-    let stream = UnixStream::connect(path).map_err(|source| crate::Error::ControlUnavailable {
-        path: path.to_owned(),
-        source,
-    })?;
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
     // The server waits this long for the UI before answering.
-    stream.set_read_timeout(Some(answer_timeout(request) + IO_TIMEOUT))?;
+    let stream = transport::connect(path, IO_TIMEOUT, answer_timeout(request) + IO_TIMEOUT)?;
     write_line(&stream, request)?;
     let line = read_line(&stream)?;
     if line.is_empty() {
@@ -325,202 +317,6 @@ pub(crate) fn call(path: &Path, request: &Request) -> crate::Result<Response> {
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used)]
-    use super::super::protocol::{
-        BrowserOpen, Caller, FeedbackRequest, MAX_WAIT_SECONDS, OpenedIn, Page,
-    };
-    use super::*;
-
-    mod cancellation;
-
-    fn open(url: &str) -> Request {
-        Request::Open(BrowserOpen {
-            page: Page::Url(url.into()),
-            caller: Caller::default(),
-            focus: true,
-            placement: crate::cli::control::Placement::Tab,
-        })
-    }
-
-    /// A short private directory: socket paths are limited to about 100 bytes.
-    fn socket_dir() -> tempfile::TempDir {
-        tempfile::Builder::new()
-            .prefix("hgc")
-            .tempdir_in("/tmp")
-            .unwrap()
-    }
-
-    #[test]
-    fn a_request_reaches_the_ui_and_its_answer_reaches_the_caller() {
-        let dir = socket_dir();
-        let path = dir.path().join("control.sock");
-        let server = Server::bind(&path).unwrap();
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
-        let caller = thread::spawn({
-            let path = path.clone();
-            move || call(&path, &open("https://a.test/"))
-        });
-        let incoming = server.next().unwrap();
-        assert_eq!(incoming.request, open("https://a.test/"));
-        let expected = Response::Opened {
-            opened_in: OpenedIn::Tab,
-            workspace_id: Some("w_1".into()),
-            placement: crate::cli::control::Placement::Beside,
-        };
-        incoming.respond(expected.clone());
-        assert_eq!(caller.join().unwrap().unwrap(), expected);
-    }
-
-    #[test]
-    fn malformed_and_oversized_requests_are_answered_without_the_ui() {
-        let dir = socket_dir();
-        let path = dir.path().join("control.sock");
-        let server = Server::bind(&path).unwrap();
-        // Exactly one byte over, so the server reads all of it and closing
-        // never discards unread input, which some kernels answer with a reset.
-        for request in [b"not json\n".to_vec(), vec![b'x'; MAX_MESSAGE + 1]] {
-            let mut stream = UnixStream::connect(&path).unwrap();
-            stream.write_all(&request).unwrap();
-            let response: Response = serde_json::from_slice(&read_line(&stream).unwrap()).unwrap();
-            assert!(
-                matches!(
-                    response,
-                    Response::Error {
-                        code: ErrorCode::InvalidRequest,
-                        ..
-                    }
-                ),
-                "{response:?}"
-            );
-        }
-        assert!(server.drain().next().is_none());
-    }
-
-    #[test]
-    fn a_live_server_keeps_its_socket_and_a_stale_one_is_replaced() {
-        let dir = socket_dir();
-        let path = dir.path().join("control.sock");
-        let server = Server::bind(&path).unwrap();
-        assert!(matches!(
-            Server::bind(&path),
-            Err(crate::Error::ControlSocketInUse { .. })
-        ));
-        drop(server);
-        // A socket file nobody listens on, as a crashed app leaves behind.
-        let stale = dir.path().join("stale.sock");
-        drop(UnixListener::bind(&stale).unwrap());
-        // A process a parallel test forks meanwhile holds a copy of the
-        // listener until it execs; wait until nothing answers on it.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while UnixStream::connect(&stale).is_ok() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(10));
-        }
-        Server::bind(&stale).unwrap();
-    }
-
-    #[test]
-    fn a_waiting_caller_does_not_hold_up_the_next_one() {
-        let dir = socket_dir();
-        let path = dir.path().join("control.sock");
-        let server = Server::bind(&path).unwrap();
-        let waiting = thread::spawn({
-            let path = path.clone();
-            move || {
-                call(
-                    &path,
-                    &Request::Feedback(FeedbackRequest {
-                        pane_id: "w_1:p1".into(),
-                        daemon_socket: Some("/tmp/daemon.sock".into()),
-                        wait_seconds: 30,
-                    }),
-                )
-            }
-        });
-        let parked = server.next().unwrap();
-        assert!(matches!(parked.request, Request::Feedback(_)));
-        // While the first caller waits for the user, another is answered.
-        let next = thread::spawn({
-            let path = path.clone();
-            move || call(&path, &open("https://a.test/"))
-        });
-        server
-            .next()
-            .unwrap()
-            .respond(Response::Reloaded { tabs: 0 });
-        assert_eq!(
-            next.join().unwrap().unwrap(),
-            Response::Reloaded { tabs: 0 }
-        );
-        parked.respond(Response::Feedback { text: None });
-        assert_eq!(
-            waiting.join().unwrap().unwrap(),
-            Response::Feedback { text: None }
-        );
-    }
-
-    #[test]
-    fn feedback_waits_are_bounded() {
-        let wait = |wait_seconds| {
-            answer_timeout(&Request::Feedback(FeedbackRequest {
-                pane_id: "p".into(),
-                daemon_socket: Some("/tmp/daemon.sock".into()),
-                wait_seconds,
-            }))
-        };
-        assert_eq!(wait(5), ANSWER_TIMEOUT + Duration::from_secs(5));
-        assert_eq!(
-            wait(u64::MAX),
-            ANSWER_TIMEOUT + Duration::from_secs(MAX_WAIT_SECONDS)
-        );
-        assert_eq!(answer_timeout(&open("https://a.test/")), ANSWER_TIMEOUT);
-    }
-
-    #[test]
-    fn an_answer_over_the_bound_is_refused_and_its_notes_kept() {
-        let dir = socket_dir();
-        let path = dir.path().join("control.sock");
-        let server = Server::bind(&path).unwrap();
-        let request = FeedbackRequest {
-            pane_id: "w_1:p1".into(),
-            daemon_socket: Some("/tmp/daemon.sock".into()),
-            wait_seconds: 0,
-        };
-        let caller = thread::spawn({
-            let path = path.clone();
-            let request = request.clone();
-            move || call(&path, &Request::Feedback(request))
-        });
-        let notes = "n".repeat(MAX_MESSAGE);
-        server.next().unwrap().respond(Response::Feedback {
-            text: Some(notes.clone()),
-        });
-        assert!(matches!(
-            caller.join().unwrap().unwrap(),
-            Response::Error {
-                code: ErrorCode::Failed,
-                ..
-            }
-        ));
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            if let Some(Event::Undelivered { text, .. }) = server.drain().next() {
-                assert_eq!(text, notes, "the notes are kept again");
-                break;
-            }
-            assert!(Instant::now() < deadline, "the notes were lost");
-            thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    #[test]
-    fn a_missing_server_is_reported_as_unavailable() {
-        let dir = socket_dir();
-        let path = dir.path().join("missing.sock");
-        assert!(matches!(
-            call(&path, &open("https://a.test/")),
-            Err(crate::Error::ControlUnavailable { .. })
-        ));
-    }
-}
+mod tests;
+#[cfg(test)]
+pub(crate) use tests::address as test_address;

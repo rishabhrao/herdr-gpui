@@ -3,12 +3,12 @@
 use crate::{Error, Result, checkpoint::Checkout, usage::Host};
 use std::{
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
 /// One line of a Git query in `dir`, or `None` when Git refused it.
 fn git(dir: &Path, args: &[&str]) -> Result<Option<String>> {
-    let output = Command::new("git")
+    let output = herdr_client::new_command("git")
         .arg("-C")
         .arg(dir)
         .args(args)

@@ -333,12 +333,12 @@ impl HerdrWindow {
             window.prevent_default();
             return;
         }
-        // Cmd-A, or Ctrl-Shift-A on Linux, where plain Ctrl-A stays the
-        // pane's, selects the focused pane's history and screen.
+        // Cmd-A, or Ctrl-Shift-A on Linux and Windows, where plain Ctrl-A
+        // stays the pane's, selects the focused pane's history and screen.
         let select_all = if modifiers.platform {
             !modifiers.control && !modifiers.shift
         } else {
-            cfg!(target_os = "linux") && modifiers.control && modifiers.shift
+            crate::controls::CTRL_SHORTCUTS && modifiers.control && modifiers.shift
         };
         if event.keystroke.key.eq_ignore_ascii_case("a")
             && select_all

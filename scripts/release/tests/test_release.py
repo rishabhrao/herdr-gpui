@@ -236,6 +236,39 @@ class ReleaseTests(unittest.TestCase):
             self.run_script("package-linux.sh", "20260920.3", "x86_64-unknown-linux-gnu", binary, self.work, self.notices, success=False)
             self.assertFalse(list(self.work.glob("*.tar.gz")))
 
+    def test_signing_retries_apple_network_failures(self):
+        self.mock_tools()
+        app = self.work / "unsigned.app"
+        (app / "Contents/MacOS").mkdir(parents=True)
+        (app / "Contents/MacOS/Herdr").write_text("never run")
+        (app / "Contents/Resources").mkdir()
+        (app / "Contents/Resources/THIRD-PARTY-NOTICES.txt").write_bytes(self.notices.read_bytes())
+        self.env.update(
+            MACOS_CERTIFICATE_P12_BASE64="ZHVtbXk=", MACOS_CERTIFICATE_PASSWORD="dummy",
+            APPLE_API_PRIVATE_KEY="dummy p8", APPLE_API_KEY_ID="dummy",
+            APPLE_API_ISSUER_ID="dummy", MACOS_SIGNING_IDENTITY="Developer ID Application: Dummy",
+            APPLE_RETRY_DELAY="0",
+        )
+        output = self.work / "Herdr-20260920.3-universal-apple-darwin.dmg"
+        # Nine dropped connections in a row still succeed on the tenth try.
+        self.env["MOCK_XCRUN_FAILURES"] = "9"
+        result = self.run_script("sign-macos.sh", "20260920.3", app, self.work)
+        self.assertIn("attempt 9 of 10", result.stderr)
+        self.assertTrue(output.exists())
+        for path in (output, self.work / "herdr-gpui-20260920.3-macos-universal.app.tar.gz",
+                     self.work / "xcrun-failures"):
+            path.unlink()
+        # Ten in a row give up, leaving no output behind.
+        self.env["MOCK_XCRUN_FAILURES"] = "10"
+        result = self.run_script("sign-macos.sh", "20260920.3", app, self.work, success=False)
+        self.assertNotIn("attempt 10 of 10", result.stderr)
+        self.assertFalse(output.exists())
+        self.assertFalse(list(self.work.glob(".herdr-sign.*")))
+        (self.work / "xcrun-failures").unlink()
+        self.env.update(MOCK_XCRUN_FAILURES="0", APPLE_RETRY_DELAY="soon")
+        self.run_script("sign-macos.sh", "20260920.3", app, self.work, success=False)
+        self.assertFalse(output.exists())
+
     def test_signing_success_and_fail_closed(self):
         self.mock_tools()
         app = self.work / "unsigned.app"
@@ -247,6 +280,7 @@ class ReleaseTests(unittest.TestCase):
             MACOS_CERTIFICATE_P12_BASE64="ZHVtbXk=", MACOS_CERTIFICATE_PASSWORD="dummy",
             APPLE_API_PRIVATE_KEY="dummy p8", APPLE_API_KEY_ID="dummy",
             APPLE_API_ISSUER_ID="dummy", MACOS_SIGNING_IDENTITY="Developer ID Application: Dummy",
+            APPLE_RETRY_DELAY="0",
         )
         output = self.work / "Herdr-20260920.3-universal-apple-darwin.dmg"
         update = self.work / "herdr-gpui-20260920.3-macos-universal.app.tar.gz"

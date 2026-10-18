@@ -1,10 +1,10 @@
-//! Keyboard input typed while a newer snapshot waits for its matching surface.
+//! Keyboard input held while an input-changing projection waits for its surface.
 //!
-//! The daemon publishes a snapshot before the surface of the same projection
-//! revision, and an agent's title spinner bumps that revision several times a
-//! second. Without a coherent surface the popup target is unknown, so input
-//! waits here instead of being discarded, and leaves only for the target that
-//! was focused when the gap opened.
+//! Metadata-only updates retain a coherent displayed pair and send input
+//! immediately. Other projection gaps may temporarily remove that pair, so
+//! held input leaves only for the target that was focused when the gap opened.
+//! A WSL drop whose paths are still being mapped holds input the same way, so
+//! keys typed after it land after it.
 
 use super::{Flash, HerdrWindow};
 use crate::{connection::ConnectionBridge, terminal::InputTarget};
@@ -41,7 +41,8 @@ impl HerdrWindow {
         if self.menu.page.is_some() || self.mouse_focus_pending() {
             return;
         }
-        if !self.input_ready() {
+        // Keys typed while a WSL drop's paths are mapped follow those paths.
+        if !self.input_ready() || self.wsl_paste.is_some() {
             if self.disconnected() {
                 // Nothing typed into a lost connection is replayed into the
                 // next one: the user sees that it went nowhere.
@@ -72,7 +73,7 @@ impl HerdrWindow {
     }
 
     /// Whether the selected endpoint is down or reconnecting after a drop.
-    fn disconnected(&self) -> bool {
+    pub(super) fn disconnected(&self) -> bool {
         !self.live.status.is_connected()
             || self.endpoints[self.selected_endpoint].outage().is_some()
     }
@@ -110,6 +111,10 @@ impl HerdrWindow {
     /// discard it if focus moved during the gap. Returns whether the
     /// projection is coherent, so the caller may send after held input.
     pub(crate) fn flush_pending_input(&mut self, cx: &mut Context<Self>) -> bool {
+        // A WSL drop's paths go before keys typed after it.
+        if self.wsl_paste.is_some() && !self.deliver_wsl_paste(cx) {
+            return false;
+        }
         if !self.input_ready() {
             return false;
         }
@@ -154,5 +159,7 @@ impl HerdrWindow {
     /// nothing held for the old one.
     pub(crate) fn clear_pending_input(&mut self) {
         self.pending_input = PendingInput::default();
+        // Its paths name files for the old connection's pane.
+        self.wsl_paste = None;
     }
 }

@@ -26,6 +26,7 @@ mod completion;
 #[cfg(windows)]
 mod covered_pages;
 mod progress;
+mod taskbar;
 
 const HOST: &str = "upload-test.invalid";
 const REMOTE: &str = "/tmp/herdr-upload.ABCDEF123456/it's a file";

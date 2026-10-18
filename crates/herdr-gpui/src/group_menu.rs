@@ -53,7 +53,7 @@ impl Action {
         match self {
             Self::NewBrowserTab => "New Browser Tab".into(),
             Self::Review => "Review Changes".into(),
-            Self::Orchestrator => "Orchestrator".into(),
+            Self::Orchestrator => "Issues and pull requests".into(),
             Self::VsCode => "VS Code".into(),
             Self::Port { link, .. } => link.label().into(),
             Self::Close => "Close Tab".into(),
@@ -67,7 +67,7 @@ impl Action {
         match self {
             Self::NewBrowserTab => Some("icons/globe.svg"),
             Self::Review => Some("icons/diff-unified.svg"),
-            Self::Orchestrator => Some("icons/pulse.svg"),
+            Self::Orchestrator => Some("icons/issue.svg"),
             Self::VsCode => Some("icons/vscode.svg"),
             Self::Port { .. } => Some("icons/arrow-right.svg"),
             Self::Split => Some("icons/split.svg"),

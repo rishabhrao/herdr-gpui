@@ -344,7 +344,7 @@ fn kill(child: &mut Child) {
 pub(super) fn install_and_restart(prepared: Prepared, cancel: &AtomicBool) -> Result<RestartGuard> {
     check(cancel)?;
     let request = read_request(prepared.stage.path(), prepared.installation.uid)?;
-    let mut child = Command::new(&prepared.installation.executable)
+    let mut child = herdr_client::new_command(&prepared.installation.executable)
         .arg(HELPER)
         .arg(prepared.stage.path())
         .stdin(Stdio::piped())

@@ -32,11 +32,7 @@ fn saves_reject_changed_deleted_created_or_replaced_originals() -> anyhow::Resul
     let settings = Settings::load_path(path.clone())?.save(Edit::Sound(false))?;
     let stale = settings.clone();
     settings.save(Edit::Sound(true))?;
-    assert!(
-        stale
-            .save(Edit::Indicators(IndicatorStyle::Symbols))
-            .is_err()
-    );
+    assert!(stale.save(Edit::Sound(false)).is_err());
     let settings = Settings::load_path(path.clone())?;
     let replacement = temp.path().join("replacement");
     fs::write(&replacement, fs::read_to_string(&path)?)?;

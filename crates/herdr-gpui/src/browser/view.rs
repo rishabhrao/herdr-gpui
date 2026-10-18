@@ -14,7 +14,6 @@ use std::collections::{HashMap, HashSet};
 mod agent_tab;
 pub(in crate::browser) mod present;
 mod render;
-#[cfg(unix)]
 mod requests;
 
 /// One window's browser state. How each workspace's view is split, and what

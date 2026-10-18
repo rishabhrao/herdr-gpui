@@ -97,6 +97,17 @@ impl Drop for Carry {
 }
 
 impl Carry {
+    /// How far a running move is, for the taskbar; `None` while the dialog
+    /// waits on the user or after it failed.
+    #[cfg(any(windows, test))]
+    pub(crate) fn progress(&self) -> Option<Progress> {
+        match &self.stage {
+            Stage::Reviewing => Some(Progress::Busy),
+            Stage::Moving(step) => Some(Progress::Working(step.map_or(0., Step::progress))),
+            Stage::Ready(_) | Stage::Failed(_) => None,
+        }
+    }
+
     /// Starts reviewing a move of `origin`'s pane to `destination`.
     fn review(origin: Origin, destination: HostRepositories, choice: Choice) -> Self {
         let label = destination.place.label.clone();

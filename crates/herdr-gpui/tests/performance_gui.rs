@@ -1,5 +1,6 @@
 //! Explicit native opt-in: unlike GPUI unit tests, this launches a real AppKit app.
 #![cfg(target_os = "macos")]
+#![allow(clippy::disallowed_methods)]
 use anyhow::{Context as _, Result, bail};
 use std::{
     process::{Command, Stdio},

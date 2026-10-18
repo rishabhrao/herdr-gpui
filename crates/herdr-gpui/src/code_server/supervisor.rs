@@ -349,7 +349,7 @@ impl Drop for Supervisor {
 
 /// `code serve-web` on the loopback port, with the token file.
 pub(super) fn serve_web(plan: &Plan, port: NonZeroU16) -> Command {
-    let mut command = Command::new(&plan.program);
+    let mut command = herdr_client::new_command(&plan.program);
     command
         .args(["serve-web", "--host", "127.0.0.1", "--port"])
         .arg(port.to_string())

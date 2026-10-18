@@ -15,7 +15,7 @@ fn the_group_menu_offers_the_orchestrator_where_scripts_run(cx: &mut TestAppCont
     });
     let offered = actions(&view, cx, group);
     assert!(offered.contains(&Action::Orchestrator));
-    assert_eq!(Action::Orchestrator.label(), "Orchestrator");
+    assert_eq!(Action::Orchestrator.label(), "Issues and pull requests");
     // It sits with the other tabs the menu opens, before the closing rows.
     let at = offered
         .iter()

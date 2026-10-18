@@ -14,6 +14,7 @@ mod probe;
 mod providers;
 mod registry;
 mod render;
+mod section;
 mod service;
 mod settings;
 mod ui;
@@ -188,6 +189,11 @@ impl Usage {
     /// What the status bar shows for the tracked host.
     pub fn current(&self) -> Option<&Entry> {
         self.entries.get(self.host.as_ref()?)
+    }
+
+    /// What was last read on `host`, tracked or not.
+    pub fn entry(&self, host: &Host) -> Option<&Entry> {
+        self.entries.get(host)
     }
 
     /// The provider picked in the panel to lead the status bar.
@@ -482,7 +488,10 @@ fn read(
     let mut exec = match host {
         Host::Local => Exec::Local,
         Host::Ssh(target) => Exec::Remote(Shell::connect(target)?),
-        Host::Wsl(_) => return Err(crate::Error::WslHostUnsupported),
+        // A distribution is read as a Linux host, its sign-ins its own.
+        Host::Wsl(distro) => Exec::Remote(Shell::connect_wsl(distro)?),
+        #[cfg(feature = "azure")]
+        Host::Azure { .. } => return Err(crate::Error::CloudHostUnsupported),
     };
     for provider in registry::all() {
         if config.hidden(provider) {

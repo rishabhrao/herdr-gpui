@@ -1,7 +1,6 @@
-//! The workspace popover opens a Git workspace's orchestrator tab on a host
-//! that runs scripts, and a restored orchestrator tab gets its view back.
+//! The workspace popover offers a Git workspace's issues on a host that runs
+//! scripts, and shows them in the Issues section.
 use super::*;
-use crate::browser::{Location, OrchestratorRepo, Store, scope};
 
 #[gpui::test]
 fn a_git_workspace_offers_issues_and_pull_requests(cx: &mut gpui::TestAppContext) {
@@ -18,7 +17,7 @@ fn a_git_workspace_offers_issues_and_pull_requests(cx: &mut gpui::TestAppContext
     assert!(
         items.iter().any(
             |(action, label)| *action == WorkspaceMenuAction::Orchestrator
-                && *label == "Orchestrator"
+                && *label == "Issues and pull requests"
         ),
         "{items:?}"
     );
@@ -38,101 +37,39 @@ fn a_git_workspace_offers_issues_and_pull_requests(cx: &mut gpui::TestAppContext
 }
 
 #[gpui::test]
-fn a_restored_orchestrator_tab_gets_its_view_and_a_closed_one_loses_it(
-    cx: &mut gpui::TestAppContext,
-) {
+fn the_menu_shows_every_project_narrowed_to_the_workspaces(cx: &mut gpui::TestAppContext) {
     let (view, cx) = cx.add_window_view(sidebar::layout_tests::fixture_window);
-    let workspace = "w3".to_owned();
-    cx.update(|_, cx| {
-        view.update(cx, |view, _| {
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.config.sidebar_style.activity_bar = true;
+            view.live.status = crate::state::ConnectionStatus::Connected;
+            view.endpoints[0].connection.target = herdr_client::ConnectTarget::Local;
             if let Some(snapshot) = view.live.snapshot.as_mut() {
-                std::sync::Arc::make_mut(snapshot).focused_workspace_id = Some(workspace.clone());
+                std::sync::Arc::make_mut(snapshot).focused_workspace_id = Some("w3".into());
             }
+            // A folder no workspace holds narrows to the workspace's project.
+            view.open_orchestrator_in("w3".into(), Some("/nonexistent/repo".into()), window, cx);
+            assert_eq!(view.activity.panel, sidebar::ActivityPanel::Issues);
+            view.poll_orchestrators(window, cx);
+            let id = view.activity.section_view.unwrap();
+            let listing = view.orchestrators[&id].view().read(cx);
+            let keys = listing.repo_keys();
+            // The fixture's workspaces hold two repositories: agent-launcher's
+            // worktrees, and the folder the others share.
+            assert_eq!(keys.len(), 2, "{keys:?}");
+            assert_eq!(
+                listing.picked_projects(),
+                [view.workspace_repo_key("w3").unwrap()]
+            );
         })
     });
-    let id = cx.update(|_, cx| {
-        let tab_scope = scope(&view.read(cx).endpoints[0]);
-        Store::update(cx, |store| {
-            store.open(
-                tab_scope,
-                &workspace,
-                Some(Location::Orchestrator {
-                    repo: OrchestratorRepo::new("/nonexistent/orchestrator-test".into()).unwrap(),
-                }),
-                None,
-            )
-        })
-        .unwrap()
-    });
+    // Without the activity bar there is nowhere to show them, which is said.
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            assert!(view.orchestrators.is_empty());
-            view.poll_orchestrators(window, cx);
-            assert!(view.orchestrators.contains_key(&id));
-            view.poll_orchestrators(window, cx);
-            assert_eq!(view.orchestrators.len(), 1);
-        })
-    });
-    cx.update(|window, cx| {
-        Store::update(cx, |store| store.close(id));
-        view.update(cx, |view, cx| {
-            view.poll_orchestrators(window, cx);
-            assert!(view.orchestrators.is_empty());
-        })
-    });
-}
-
-#[gpui::test]
-fn a_view_moves_into_its_own_window_and_goes_when_it_closes(cx: &mut gpui::TestAppContext) {
-    let (view, cx) = cx.add_window_view(sidebar::layout_tests::fixture_window);
-    let workspace = "w3".to_owned();
-    cx.update(|_, cx| {
-        view.update(cx, |view, _| {
-            if let Some(snapshot) = view.live.snapshot.as_mut() {
-                std::sync::Arc::make_mut(snapshot).focused_workspace_id = Some(workspace.clone());
-            }
-        })
-    });
-    let id = cx.update(|_, cx| {
-        let tab_scope = scope(&view.read(cx).endpoints[0]);
-        Store::update(cx, |store| {
-            store.open(
-                tab_scope,
-                &workspace,
-                Some(Location::Orchestrator {
-                    repo: OrchestratorRepo::new("/nonexistent/orchestrator-test".into()).unwrap(),
-                }),
-                None,
-            )
-        })
-        .unwrap()
-    });
-    cx.update(|window, cx| view.update(cx, |view, cx| view.poll_orchestrators(window, cx)));
-    cx.update(|_, cx| view.update(cx, |view, cx| view.detach_orchestrator(id, cx)));
-    cx.update(|window, cx| {
-        assert!(
-            Store::update(cx, |store| store.get(id).is_none()),
-            "the tab closed"
-        );
-        view.update(cx, |view, cx| {
-            assert!(view.orchestrators.is_empty());
-            assert_eq!(view.detached_orchestrators.len(), 1);
-            // Its window keeps it alive across ticks.
-            view.poll_orchestrators(window, cx);
-            assert_eq!(view.detached_orchestrators.len(), 1);
-        })
-    });
-    let handle = cx.update(|_, cx| view.read(cx).detached_orchestrators[&id].window());
-    cx.update(|_, cx| {
-        handle
-            .update(cx, |_, window, _| window.remove_window())
-            .unwrap();
-    });
-    cx.run_until_parked();
-    cx.update(|window, cx| {
-        view.update(cx, |view, cx| {
-            view.poll_orchestrators(window, cx);
-            assert!(view.detached_orchestrators.is_empty());
+            view.activity.pick(sidebar::ActivityPanel::Workspaces);
+            view.config.sidebar_style.activity_bar = false;
+            view.open_orchestrator_in("w3".into(), None, window, cx);
+            assert_eq!(view.activity.panel, sidebar::ActivityPanel::Workspaces);
         })
     });
 }
@@ -148,19 +85,18 @@ fn a_run_whose_workspace_closed_says_so_in_the_view(cx: &mut gpui::TestAppContex
             }
         })
     });
-    let id = cx.update(|_, cx| {
-        let tab_scope = scope(&view.read(cx).endpoints[0]);
-        Store::update(cx, |store| {
-            store.open(
-                tab_scope,
-                &workspace,
-                Some(Location::Orchestrator {
-                    repo: OrchestratorRepo::new("/nonexistent/orchestrator-test".into()).unwrap(),
-                }),
-                None,
-            )
+    let id = cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.config.sidebar_style.activity_bar = true;
+            view.endpoints[0].connection.target = herdr_client::ConnectTarget::Local;
+            view.open_orchestrator_in(
+                workspace.clone(),
+                Some("/nonexistent/orchestrator-test".into()),
+                window,
+                cx,
+            );
+            view.activity.section_view.unwrap()
         })
-        .unwrap()
     });
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {

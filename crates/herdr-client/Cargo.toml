@@ -13,28 +13,34 @@ workspace = true
 # `ConnectTarget::Cloud`: machines a cloud provider created, reached through an
 # application-built command. Each provider adds its `CloudProvider` variant.
 cloud = []
+azure = ["cloud"]
 boat = ["cloud"]
 coder = ["cloud"]
 daytona = ["cloud"]
 railway = ["cloud"]
 
 [dependencies]
+base64.workspace            = true
 crossbeam-channel.workspace = true
 herdr-protocol.workspace    = true
 serde.workspace             = true
 serde_json.workspace        = true
+tempfile.workspace          = true
 thiserror.workspace         = true
 tracing.workspace           = true
 
 [target.'cfg(unix)'.dependencies]
-base64.workspace   = true
-rustix.workspace   = true
-tempfile.workspace = true
+rustix.workspace = true
 
 # The Windows daemon binds a named pipe, not an AF_UNIX socket; `interprocess`
 # maps a socket path into the NPFS namespace exactly as upstream Herdr does.
-# `windows-sys` supplies only `PeekNamedPipe`, which has no safe wrapper and
-# which the session loop's bounded polling cannot do without.
+# `windows-sys` supplies the overlapped pipe calls behind the transport's read
+# and write deadlines, which no safe wrapper offers without a runtime.
 [target.'cfg(windows)'.dependencies]
 interprocess.workspace = true
-windows-sys.workspace  = true
+windows-sys = { features = [
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_Threading",
+], workspace = true }

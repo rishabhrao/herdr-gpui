@@ -54,6 +54,8 @@ pub(in crate::settings_window) struct DaytonaCard {
     account: Account,
     /// The user's approval to install Herdr in sandboxes created from here.
     install: bool,
+    /// Run the setup script on the next device made here, when one is set.
+    setup: bool,
     message: Option<String>,
     job: Option<Worker>,
 }
@@ -76,6 +78,7 @@ impl DaytonaCard {
             key,
             account: Account::Checking,
             install: true,
+            setup: true,
             message: None,
             job: None,
         }
@@ -253,10 +256,13 @@ impl SettingsWindow {
             name: name.clone(),
             install: card.install,
         };
+        let run = card.setup;
+        let script = self.cloud_setup_script(CloudProvider::Daytona, run);
         let started = self.source.update(cx, |window, cx| {
             window.start_cloud_job(
                 CloudProvider::Daytona,
                 name.clone(),
+                script,
                 move |cancelled, report| setup::add_device(request, cancelled, report),
                 cx,
             )
@@ -387,6 +393,17 @@ impl SettingsWindow {
                     }))
                 }),
             )
+            .children(self.cloud_setup_switch(
+                CloudProvider::Daytona,
+                card.setup,
+                ready,
+                |this| {
+                    if let Some(card) = &mut this.daytona_card {
+                        card.setup = !card.setup;
+                    }
+                },
+                cx,
+            ))
             .child(
                 div().flex().justify_end().child(
                     self.cloud_button("cloud-daytona-create", "Create sandbox", create)

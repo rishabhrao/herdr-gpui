@@ -25,3 +25,6 @@ pub(crate) const APP_VERSION: &str = match option_env!("HERDR_RELEASE_VERSION") 
 // builds are unsigned, so features that depend on a stable code identity (such as
 // macOS Keychain access) must treat them as development builds.
 pub(crate) const RELEASE_BUILD: bool = option_env!("HERDR_RELEASE_VERSION").is_some();
+
+// The git commit hash embedded by build.rs for source/dev builds.
+pub(crate) const BUILD_COMMIT: Option<&str> = option_env!("HERDR_BUILD_COMMIT");

@@ -59,10 +59,8 @@ fn edits_preserve_comments_unknown_fields_and_disable_auto_switch() -> anyhow::R
     assert_eq!(settings.theme(false)?, settings.theme(true)?);
     assert_eq!(settings.status_color(AgentStatus::Blocked, false), 0x123456);
     let settings = settings
-        .save(Edit::Indicators(IndicatorStyle::Symbols))?
         .save(Edit::Sound(false))?
         .save(Edit::Toasts(ToastDelivery::Terminal))?;
-    assert_eq!(settings.indicators, IndicatorStyle::Symbols);
     assert!(!settings.sound_enabled);
     assert_eq!(settings.toast_delivery, ToastDelivery::Terminal);
     let text = fs::read_to_string(&path)?;

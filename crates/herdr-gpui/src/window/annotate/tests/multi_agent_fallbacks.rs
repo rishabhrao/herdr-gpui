@@ -44,18 +44,12 @@ fn unavailable_agents_and_shell_notes_all_survive_one_send(cx: &mut TestAppConte
     queue_for(&view, cx, Some("missing-two"), "Second agent.");
     queue_for(&view, cx, None, "Shell note.");
     cx.update(|_, cx| view.update(cx, |view, cx| view.send_terminal_notes(cx)));
-    let text = if cfg!(unix) {
-        [
-            kept(&view, cx, "missing-one").unwrap(),
-            kept(&view, cx, "missing-two").unwrap(),
-            clipboard(cx),
-        ]
-        .join("\n")
-    } else {
-        // Windows has no feedback collector: all three batches must be in
-        // the single clipboard value, rather than only the final shell note.
-        clipboard(cx)
-    };
+    let text = [
+        kept(&view, cx, "missing-one").unwrap(),
+        kept(&view, cx, "missing-two").unwrap(),
+        clipboard(cx),
+    ]
+    .join("\n");
     for comment in ["First agent.", "Second agent.", "Shell note."] {
         assert_eq!(text.matches(comment).count(), 1, "{text}");
     }
@@ -79,15 +73,11 @@ fn failed_pastes_for_two_agents_are_recovered_together(cx: &mut TestAppContext) 
             assert_eq!(view.deliveries.len(), 0);
         });
     });
-    let text = if cfg!(unix) {
-        [
-            kept(&view, cx, "w0:p1").unwrap(),
-            kept(&view, cx, "w0:p2").unwrap(),
-        ]
-        .join("\n")
-    } else {
-        clipboard(cx)
-    };
+    let text = [
+        kept(&view, cx, "w0:p1").unwrap(),
+        kept(&view, cx, "w0:p2").unwrap(),
+    ]
+    .join("\n");
     assert_eq!(text.matches("First paste.").count(), 1, "{text}");
     assert_eq!(text.matches("Second paste.").count(), 1, "{text}");
 }
@@ -113,10 +103,6 @@ fn later_paste_failures_preserve_the_sends_earlier_clipboard_notes(cx: &mut Test
             assert_eq!(view.deliveries.len(), 1);
         })
     });
-    if !cfg!(unix) {
-        let text = clipboard(cx);
-        assert!(text.contains("Shell note.") && text.contains("First paste."));
-    }
     cx.update(|_, cx| {
         view.update(cx, |view, cx| {
             let mut snapshot = (**view.live.snapshot.as_ref().unwrap()).clone();
@@ -129,16 +115,12 @@ fn later_paste_failures_preserve_the_sends_earlier_clipboard_notes(cx: &mut Test
             assert_eq!(view.deliveries.len(), 0);
         })
     });
-    let text = if cfg!(unix) {
-        [
-            clipboard(cx),
-            kept(&view, cx, "w0:p1").unwrap(),
-            kept(&view, cx, "w0:p2").unwrap(),
-        ]
-        .join("\n")
-    } else {
-        clipboard(cx)
-    };
+    let text = [
+        clipboard(cx),
+        kept(&view, cx, "w0:p1").unwrap(),
+        kept(&view, cx, "w0:p2").unwrap(),
+    ]
+    .join("\n");
     for comment in ["Shell note.", "First paste.", "Late paste."] {
         assert_eq!(text.matches(comment).count(), 1, "{text}");
     }

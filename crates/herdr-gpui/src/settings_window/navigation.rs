@@ -8,6 +8,8 @@ impl SettingsWindow {
         let theme = &self.theme;
         div()
             .id("settings-navigation")
+            .role(Role::Navigation)
+            .aria_label("Settings sections")
             .relative()
             .map(|navigation| {
                 // Narrow, the list is the whole window until a page opens.
@@ -61,6 +63,10 @@ impl SettingsWindow {
                     div()
                         .id("settings-sections")
                         .debug_selector(|| "settings-sections".into())
+                        // Picking a section swaps the page beside it, as a tab does.
+                        .role(Role::TabList)
+                        .aria_label("Sections")
+                        .aria_orientation(Orientation::Vertical)
                         .flex_1()
                         .min_h_0()
                         .flex()
@@ -69,19 +75,25 @@ impl SettingsWindow {
                         .overflow_y_scroll()
                         .track_scroll(&self.navigation_scroll)
                         // Flat, so `Section::nav_item` can scroll to a page.
-                        .children(Group::ALL.into_iter().flat_map(|group| {
-                            std::iter::once(self.group_label(group).into_any_element()).chain(
-                                Section::ALL
-                                    .iter()
-                                    .copied()
-                                    .enumerate()
-                                    .filter(move |(_, section)| section.group() == group)
-                                    .map(|(index, section)| {
-                                        self.navigation_row(index, section, cx).into_any_element()
-                                    })
-                                    .collect::<Vec<_>>(),
-                            )
-                        })),
+                        .children(std::iter::once(None).chain(Group::ALL.map(Some)).flat_map(
+                            |group| {
+                                group
+                                    .map(|group| self.group_label(group).into_any_element())
+                                    .into_iter()
+                                    .chain(
+                                        Section::ALL
+                                            .iter()
+                                            .copied()
+                                            .enumerate()
+                                            .filter(move |(_, section)| section.group() == group)
+                                            .map(|(index, section)| {
+                                                self.navigation_row(index, section, cx)
+                                                    .into_any_element()
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    )
+                            },
+                        )),
                     cx,
                 ),
             )
@@ -108,6 +120,9 @@ impl SettingsWindow {
         let selected = self.section == section;
         div()
             .id(("settings-section", index))
+            .role(Role::Tab)
+            .aria_label(section.label())
+            .aria_selected(selected)
             .relative()
             .map(|row| {
                 #[cfg(all(feature = "integration-test", target_os = "macos"))]
@@ -200,7 +215,10 @@ impl SettingsWindow {
             })
             .child(
                 div()
+                    .id("settings-footer-status")
                     .debug_selector(|| "settings-footer-status".into())
+                    .role(Role::Status)
+                    .aria_label(SharedString::from(text.clone()))
                     .flex_1()
                     .min_w_0()
                     .child(text),
@@ -209,6 +227,8 @@ impl SettingsWindow {
                 footer.child(
                     self.control_choice("settings-footer-save", "Save now", false, !self.busy())
                         .debug_selector(|| "settings-footer-save".into())
+                        .role(Role::Button)
+                        .aria_label("Save now")
                         .flex_none()
                         .px(px(10.))
                         .py(px(3.))
@@ -218,6 +238,8 @@ impl SettingsWindow {
             .child(
                 self.control_choice("settings-footer-reload", "Reload", false, true)
                     .debug_selector(|| "settings-footer-reload".into())
+                    .role(Role::Button)
+                    .aria_label("Reload")
                     .flex_none()
                     .px(px(10.))
                     .py(px(3.))

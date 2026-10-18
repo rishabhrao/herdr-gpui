@@ -7,10 +7,7 @@ use crate::{
     Error,
     pull_request::{Input, local_checkout, local_repository, run},
 };
-use std::{
-    process::Command,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 pub(super) const TIMEOUT: Duration = Duration::from_secs(20);
 /// Fetching one ref can wait on the network and on credential prompts that are
@@ -36,10 +33,10 @@ pub(super) fn list(
     cooldown: &mut Option<Duration>,
 ) -> crate::Result<(Origin, Vec<Item>)> {
     let deadline = Instant::now() + TIMEOUT;
-    let (owner, repo) = local_repository(input, deadline, &cancelled)?;
-    // The account that reads this owner's repositories.
-    let token = tokens.for_owner(&owner).clone();
-    let origin = Origin { owner, repo };
+    let origin = Origin::from(local_repository(input, deadline, &cancelled)?);
+    // The account that reads the listed repository's owner, which is the
+    // upstream owner in a fork checkout.
+    let token = tokens.for_owner(&origin.owner).clone();
     let timeout = deadline
         .checked_duration_since(Instant::now())
         .ok_or(Error::PrTimeout)?;
@@ -57,7 +54,8 @@ pub(super) fn list(
     Ok((origin, items))
 }
 
-/// Fetch the PR's head from origin, including GitHub's published fork PR refs.
+/// Fetch the PR's head from the remote it lives on, including GitHub's
+/// published fork PR refs on the listed repository's remote.
 /// Existing local branches are never moved by this fetch.
 pub(super) fn fetch_branch(
     input: &Input,
@@ -67,10 +65,16 @@ pub(super) fn fetch_branch(
     let deadline = Instant::now() + FETCH_TIMEOUT;
     let checkout = local_checkout(input, deadline, cancelled)?;
     let refspec = item.fetch_refspec();
-    let mut command = Command::new("git");
+    let mut command = herdr_client::new_command("git");
     command
         .args(["-c", "core.fsmonitor=false", "-C", &checkout])
-        .args(["fetch", "--no-tags", "--quiet", "origin", &refspec]);
+        .args([
+            "fetch",
+            "--no-tags",
+            "--quiet",
+            item.remote.name(),
+            &refspec,
+        ]);
     let (ok, output) = run(&mut command, deadline, cancelled)?;
     if ok {
         return Ok(());

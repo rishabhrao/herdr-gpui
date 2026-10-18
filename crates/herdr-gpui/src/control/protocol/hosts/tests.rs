@@ -28,6 +28,7 @@ fn host_requests_have_a_stable_wire_form() {
         HostOp::Usage,
         HostOp::System,
         HostOp::Cloud,
+        HostOp::CloudSetup { id: "w1".into() },
     ] {
         let request = Request::Host(Call {
             caller: Caller::default(),

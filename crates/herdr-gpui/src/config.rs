@@ -7,9 +7,13 @@ use crate::{
     contrast::Contrast,
     keymap::{Binding, DaemonKeys, Keymap, PaneKeys},
 };
+mod accent;
+mod agents_placement;
+mod azure;
 pub(crate) mod backdrop;
 mod bitmap_fonts;
 mod boat;
+mod cloud;
 mod coder;
 mod daytona;
 mod devices;
@@ -22,13 +26,19 @@ mod github;
 mod keybindings;
 mod layout;
 mod notifications;
+mod omarchy;
 mod padding;
 pub(crate) mod preferences;
 pub(crate) mod sidebar;
 mod sidebar_style;
 pub(crate) mod status_bar;
 mod status_icons;
-#[cfg(any(feature = "boat", feature = "coder", feature = "daytona"))]
+#[cfg(any(
+    feature = "azure",
+    feature = "boat",
+    feature = "coder",
+    feature = "daytona"
+))]
 mod table;
 pub(crate) use sidebar_style::parse_hex;
 mod theme;
@@ -36,10 +46,16 @@ mod updates;
 pub(crate) mod watch;
 mod zen;
 
-pub use backdrop::Backdrop;
+pub use accent::Accent;
+pub use agents_placement::AgentsPlacement;
+pub use azure::AzureConfig;
+#[cfg(feature = "azure")]
+pub(crate) use azure::AzureFields;
+pub use backdrop::{Backdrop, Material};
 pub use boat::BoatConfig;
 #[cfg(feature = "boat")]
 pub(crate) use boat::BoatFields;
+pub use cloud::CloudConfig;
 pub use coder::CoderConfig;
 #[cfg(feature = "coder")]
 pub(crate) use coder::CoderFields;
@@ -107,10 +123,15 @@ pub(crate) mod corners {
 #[derive(Clone, Debug)]
 pub struct Config {
     // keep-sorted start
+    /// Where the app's own accent color comes from.
+    pub accent: Accent,
     /// Snapshot a checkout's files each time one of its agents starts or
     /// finishes a turn, so they can be rolled back.
     pub agent_checkpoints: bool,
+    /// Where the sidebar lists agents while `show_agents` is on.
+    pub agents_placement: AgentsPlacement,
     /// What shows behind the main window's terminals and chrome.
+    pub azure: AzureConfig,
     pub backdrop: Backdrop,
     pub bell: BellConfig,
     pub boat: BoatConfig,
@@ -118,6 +139,8 @@ pub struct Config {
     /// override from the Herdr value it shadows.
     pub(crate) clipboard_overrides: ClipboardToastSettings,
     pub clipboard_toast: ClipboardToast,
+    /// What a new cloud device runs the first time it connects.
+    pub cloud: CloudConfig,
     pub code: CodeConfig,
     pub coder: CoderConfig,
     pub confirm_close_pane: bool,
@@ -130,6 +153,9 @@ pub struct Config {
     pub daytona: DaytonaConfig,
     /// Per saved device, by catalog profile ID.
     pub(crate) devices: BTreeMap<String, DeviceSettings>,
+    /// A bar on the leading edge of each working, blocked, or done row,
+    /// whichever status icons are drawn.
+    pub edge_rail: bool,
     /// How the editor starts; the pane's `$VISUAL` or `$EDITOR` when unset.
     pub(crate) editor_command: Option<crate::editor::EditorCommand>,
     pub features: Features,
@@ -167,6 +193,12 @@ pub struct Config {
     /// its workspace closed, without asking. The focused workspace still asks.
     pub remove_merged_worktrees: bool,
     pub show_agents: bool,
+    /// The "Agents" title row above the agents list, which also holds the sort
+    /// toggle. The sort then follows Herdr's `ui.agent_panel_sort` unless it
+    /// was toggled earlier, unless a plugin sets the agent view, which keeps the
+    /// header visible. Set in Settings > Sidebar or with
+    /// `herdr-gpui config set show_agents_header false`.
+    pub show_agents_header: bool,
     /// The mark before a device's name in the sidebar, in the layouts that
     /// draw one: where the device runs and how it is reached.
     pub show_device_icons: bool,
@@ -191,8 +223,8 @@ pub struct Config {
     pub sound: SoundConfig,
     /// Which status bar items show, and how compactly.
     pub status_bar: StatusBar,
-    /// Drawn status icons in place of Herdr's dots or symbols; `None` follows Herdr.
-    pub status_icons: Option<StatusIcons>,
+    /// The set agent status is drawn with.
+    pub status_icons: StatusIcons,
     pub tabs: FontConfig,
     pub terminal: FontConfig,
     /// Blank space around every terminal's cells.
@@ -392,12 +424,16 @@ impl Default for Config {
         };
         Self {
             // keep-sorted start
+            accent: Accent::default(),
             agent_checkpoints: true,
+            agents_placement: AgentsPlacement::default(),
+            azure: AzureConfig::default(),
             backdrop: Backdrop::default(),
             bell: BellConfig::default(),
             boat: BoatConfig::default(),
             clipboard_overrides: ClipboardToastSettings::default(),
             clipboard_toast: ClipboardToast::default(),
+            cloud: CloudConfig::default(),
             code: CodeConfig::default(),
             coder: CoderConfig::default(),
             confirm_close_pane: true,
@@ -406,6 +442,7 @@ impl Default for Config {
             contrast: Contrast::default(),
             daytona: DaytonaConfig::default(),
             devices: BTreeMap::new(),
+            edge_rail: false,
             editor_command: None,
             features: Features::default(),
             focus_follows_mouse: true,
@@ -426,6 +463,7 @@ impl Default for Config {
             pane_keys: PaneKeys::new(),
             remove_merged_worktrees: false,
             show_agents: true,
+            show_agents_header: true,
             show_device_icons: true,
             show_listening_ports: true,
             show_network_quality: false,
@@ -438,7 +476,7 @@ impl Default for Config {
             smooth_scroll: true,
             sound: SoundConfig::default(),
             status_bar: StatusBar::default(),
-            status_icons: None,
+            status_icons: StatusIcons::default(),
             // Tabs are terminal chrome, so they read in the monospace face the
             // sidebar and terminal use, as they do in the reference UI.
             tabs: font(monospace, 12.0),
@@ -459,11 +497,15 @@ impl Default for Config {
 #[serde(default)]
 struct Settings {
     // keep-sorted start
+    accent: Accent,
     agent_checkpoints: Option<bool>,
+    agents_placement: AgentsPlacement,
+    azure: AzureConfig,
     backdrop: Backdrop,
     bell: BellConfig,
     boat: BoatConfig,
     clipboard_toast: ClipboardToastSettings,
+    cloud: CloudConfig,
     code: CodeConfig,
     coder: CoderConfig,
     confirm_close_pane: Option<bool>,
@@ -472,6 +514,7 @@ struct Settings {
     contrast: Contrast,
     daytona: DaytonaConfig,
     devices: BTreeMap<String, DeviceSettings>,
+    edge_rail: Option<bool>,
     editor_command: Option<crate::editor::EditorCommand>,
     features: Features,
     focus_follows_mouse: Option<bool>,
@@ -487,6 +530,7 @@ struct Settings {
     pane_keys: PaneKeys,
     remove_merged_worktrees: Option<bool>,
     show_agents: Option<bool>,
+    show_agents_header: Option<bool>,
     show_device_icons: Option<bool>,
     show_listening_ports: Option<bool>,
     show_network_quality: Option<bool>,
@@ -497,7 +541,7 @@ struct Settings {
     smooth_scroll: Option<bool>,
     sound: SoundConfig,
     status_bar: StatusBar,
-    status_icons: Option<StatusIcons>,
+    status_icons: Option<status_icons::SavedIcons>,
     tabs: FontSettings,
     terminal: FontSettings,
     theme: Option<String>,
@@ -693,6 +737,7 @@ impl Config {
         let (text, source) = Self::overrides_text(path)?;
         Self::parse_layers([DEFAULT_CONFIG, &text], &daemon_settings(daemon))
             .map_err(|error| error.at_path(&source))
+            .map(|config| config.with_desktop_theme(&text))
     }
 
     /// The user's overrides as the app reads them now, and the file they
@@ -723,7 +768,18 @@ impl Config {
         // Validate the override independently so bad types/unknown keys cannot
         // disappear inside the merge. Empty arrays explicitly replace defaults.
         Self::parse_over(&text, &base).map_err(|error| error.at_path(&local))?;
-        Self::parse_layers([DEFAULT_CONFIG, &text], &base).map_err(|error| error.at_path(&local))
+        Self::parse_layers([DEFAULT_CONFIG, &text], &base)
+            .map_err(|error| error.at_path(&local))
+            .map(|config| config.with_desktop_theme(&text))
+    }
+
+    /// Without a home directory there is no desktop theme to find, and the
+    /// managed default stays.
+    fn with_desktop_theme(mut self, overrides: &str) -> Self {
+        if let Ok(home) = home() {
+            self.follow_omarchy(overrides, &home);
+        }
+        self
     }
 
     /// The GUI file on its own, with nothing layered under it: the shape the
@@ -807,6 +863,7 @@ impl Config {
         }
         // A newer build may keep more accounts or owners than this one.
         unknown_keys.extend(settings.github.limit_accounts());
+        unknown_keys.extend(settings.cloud.retain_known());
         unknown_keys.sort();
         unknown_keys.dedup();
         let mut config = Self {
@@ -816,9 +873,14 @@ impl Config {
         settings.github.client_id_with_override(None)?;
         settings.github.check_accounts()?;
         config.github = settings.github;
+        #[cfg(feature = "azure")]
+        settings.azure.check()?;
+        config.azure = settings.azure;
         #[cfg(feature = "boat")]
         settings.boat.settings_with(|_| None)?;
         config.boat = settings.boat;
+        settings.cloud.check()?;
+        config.cloud = settings.cloud;
         // Check what the file says so a bad value is reported at load; the
         // environment may still fill or override keys when Coder is used.
         #[cfg(feature = "coder")]
@@ -874,6 +936,7 @@ impl Config {
         config.focus_follows_mouse = settings.focus_follows_mouse.unwrap_or(true);
         config.remove_merged_worktrees = settings.remove_merged_worktrees.unwrap_or(false);
         config.show_agents = settings.show_agents.unwrap_or(true);
+        config.show_agents_header = settings.show_agents_header.unwrap_or(true);
         config.show_device_icons = settings.show_device_icons.unwrap_or(true);
         config.show_listening_ports = settings.show_listening_ports.unwrap_or(true);
         config.show_network_quality = settings.show_network_quality.unwrap_or(false);
@@ -883,11 +946,15 @@ impl Config {
         config.smooth_scroll = settings.smooth_scroll.unwrap_or(true);
         // keep-sorted end
         config.status_bar = settings.status_bar;
-        config.status_icons = settings.status_icons;
+        let (status_icons, legacy_rail) = status_icons::SavedIcons::resolve(settings.status_icons);
+        config.status_icons = status_icons;
+        config.edge_rail = settings.edge_rail.unwrap_or(legacy_rail);
         config.zen = settings.zen.try_into()?;
         settings.backdrop.validate()?;
         config.backdrop = settings.backdrop;
+        config.accent = settings.accent;
         config.contrast = settings.contrast;
+        config.agents_placement = settings.agents_placement;
         config.usage = settings.usage;
         config.option_as_alt = settings.option_as_alt;
         config.open_links_in = settings.open_links_in;

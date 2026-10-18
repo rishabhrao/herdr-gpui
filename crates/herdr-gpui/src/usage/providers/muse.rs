@@ -2,13 +2,14 @@
 //! login (`muse login`): `providers.meta.access_token` in
 //! `$MUSE_AUTH_PATH` (default `~/.config/muse/auth.json`), else the login
 //! keychain item `ai.meta.dev.credentials` / `meta` on a Mac, else the
-//! `token` setting. The `dca:` token is posted to `muse-code/key`, whose
+//! `token` setting. The CLI guards that item with its own access list, so
+//! macOS asks before `security` reads it: like Zed's sign-in, it is read only
+//! for a listed provider once the user pressed Allow in its panel. The `dca:` token is posted to `muse-code/key`, whose
 //! answer carries the plan, the 5-hour and weekly windows, and a freshly
 //! minted inference key that is ignored and never stored.
 //!
 //! Not ported: CodexBar's keychain access-list preflight, which avoids a
-//! prompt for a CLI-owned item (here the bounded `security` read times out
-//! instead); its `dca:` prefix check, which would need the token revealed;
+//! prompt for a CLI-owned item (here the read waits for Allow instead); its `dca:` prefix check, which would need the token revealed;
 //! and the local session-log token history, which scans large directories.
 //! On a remote host the minted inference key comes back with the response
 //! body, as it does to CodexBar, and is dropped by the parser.
@@ -17,7 +18,7 @@ use crate::{
     Result,
     usage::{
         model::{Account, Kind, Provider, Report, SESSION, Section, WEEK, Window},
-        probe::{HostPath, Probe, Request},
+        probe::{HostPath, Probe, Request, Secret},
         service::{Meta, Service, Setting, Timestamp, json},
         values::invalid,
     },
@@ -39,8 +40,10 @@ static META: Meta = Meta::new("muse", "Muse Code")
         &[],
         "A Muse CLI device-code access token (it starts with dca:), used when this host \
          has no `muse login`. It is providers.meta.access_token in \
-         ~/.config/muse/auth.json on a machine where you ran `muse login`. Dashboard \
-         LLM_ keys and LLM| inference keys are not accepted.",
+         ~/.config/muse/auth.json on a machine where you ran `muse login`. On a Mac \
+         where `muse login` kept it in the keychain instead, list muse in \
+         show_providers and press Allow in its usage panel rather than setting \
+         this. Dashboard LLM_ keys and LLM| inference keys are not accepted.",
     )]);
 
 impl Service for Muse {
@@ -57,16 +60,7 @@ impl Service for Muse {
         let inline = file
             .as_ref()
             .and_then(|file| probe.field(file, &["providers", "meta", "access_token"]));
-        let keychain = || {
-            probe
-                .is_macos()
-                .then(|| probe.keychain(KEYCHAIN, Some("meta")))
-                .flatten()
-                .and_then(|payload| probe.field(&payload, &["access_token"]))
-        };
-        let token = inline
-            .or_else(keychain)
-            .or_else(|| probe.setting("token"))?;
+        let token = inline.or_else(|| token(probe))?;
         let request = Request::post(URL)
             .bearer(&token)
             .header("x-api-version", "1.0.0")
@@ -74,6 +68,16 @@ impl Service for Muse {
             .json("{}");
         Some(probe.body(request).and_then(|body| parse(&body)))
     }
+}
+
+/// The keychain sign-in, else the `token` setting.
+pub(crate) fn token(probe: &mut Probe) -> Option<Secret> {
+    probe
+        .is_macos()
+        .then(|| probe.foreign_keychain(KEYCHAIN, Some("meta")))
+        .flatten()
+        .and_then(|payload| probe.field(&payload, &["access_token"]))
+        .or_else(|| probe.setting("token"))
 }
 
 pub(crate) fn parse(body: &str) -> Result<Report> {

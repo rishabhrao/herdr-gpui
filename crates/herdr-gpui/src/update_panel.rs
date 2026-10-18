@@ -114,6 +114,22 @@ fn release_notes_section(
         )
 }
 
+/// What the taskbar shows for an update: only work the user started, so a
+/// background check or a finished download leaves the button alone.
+#[cfg(any(windows, test))]
+pub(crate) fn taskbar_progress(state: &State) -> Option<Progress> {
+    match state {
+        State::Downloading { received, total } if *total > 0 => Some(Progress::Fraction(
+            (*received as f64 / *total as f64).min(1.) as f32,
+        )),
+        State::Downloading { .. }
+        | State::Installing
+        | State::Upgrading { .. }
+        | State::Restarting => Some(Progress::Busy),
+        _ => None,
+    }
+}
+
 fn update_progress(state: &State, accent: Hsla, track: Hsla) -> Option<Div> {
     let progress = match state {
         State::Downloading { received, total } if *total > 0 && received < total => {
@@ -218,7 +234,12 @@ impl HerdrWindow {
                 Some(UpdateAction::Cancel),
             ),
             State::Ready { .. } => (
-                "Download verified. Install when you are ready; system packages may ask for administrator authentication.".into(),
+                if cfg!(windows) {
+                    "Download and publisher signature verified. Install when you are ready: Herdr UI quits, its installer runs, and it reopens; your daemon and terminal sessions stay running."
+                } else {
+                    "Download verified. Install when you are ready; system packages may ask for administrator authentication."
+                }
+                .into(),
                 Some(UpdateAction::Install),
             ),
             State::Installing => (

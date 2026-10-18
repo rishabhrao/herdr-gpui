@@ -67,6 +67,27 @@ fn the_window_stays_opaque_under_a_picture_and_blurs_only_the_desktop() {
     );
 }
 
+#[test]
+fn mica_replaces_blur_on_windows_only() {
+    let mut mica = backdrop(0.5);
+    mica.blur = true;
+    mica.material = config::Material::Mica;
+    let expected = if cfg!(windows) {
+        WindowBackgroundAppearance::MicaBackdrop
+    } else {
+        WindowBackgroundAppearance::Blurred
+    };
+    assert_eq!(appearance(&mica, false), expected);
+    // Without blur it is plain translucency, and a picture covers it.
+    mica.blur = false;
+    assert_eq!(
+        appearance(&mica, false),
+        WindowBackgroundAppearance::Transparent
+    );
+    mica.blur = true;
+    assert_eq!(appearance(&mica, true), WindowBackgroundAppearance::Opaque);
+}
+
 fn pixel() -> RenderImage {
     texture(RgbaImage::from_pixel(1, 1, image::Rgba([1, 2, 3, 4])))
 }

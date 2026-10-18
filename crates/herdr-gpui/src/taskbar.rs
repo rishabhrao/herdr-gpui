@@ -3,6 +3,7 @@
 //! `herdr-gpui.exe`, so a pinned window would reopen with a console. Each
 //! top-level window instead carries an explicit AppUserModelID and relaunch
 //! properties that point a pin at the launcher. Other platforms set nothing.
+//! The button's badge and progress bar live in [`button`].
 
 use gpui::{App, Global, Window};
 
@@ -86,6 +87,14 @@ impl Taskbar {
         }
     }
 
+    /// The windowed launcher beside this executable, when it is installed.
+    #[cfg(windows)]
+    pub(crate) fn launcher(&self) -> Option<&Path> {
+        self.relaunch
+            .as_ref()
+            .map(|relaunch| relaunch.launcher.as_path())
+    }
+
     #[cfg(not(windows))]
     pub(crate) fn load() -> Self {
         Self::default()
@@ -129,6 +138,9 @@ pub(crate) fn mark(window: &Window, cx: &mut App) {
 #[cfg(not(windows))]
 pub(crate) fn mark(_window: &Window, _cx: &mut App) {}
 
+/// The button itself: the attention badge and progress.
+#[cfg(windows)]
+pub(crate) mod button;
 #[cfg(windows)]
 mod native;
 

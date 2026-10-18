@@ -14,7 +14,6 @@ use std::{
     collections::HashSet,
     ffi::OsString,
     io::Read,
-    process::Command,
     time::{Duration, Instant, SystemTime},
 };
 use zeroize::Zeroizing;
@@ -382,7 +381,7 @@ fn configured_host(value: &str) -> String {
 /// shared with PR lookups. Its environment tokens are removed, so the
 /// answer is the CLI's saved sign-in for this host alone.
 fn cli_token(host: &str) -> Option<SecretString> {
-    let mut command = Command::new("glab");
+    let mut command = herdr_client::new_command("glab");
     // An app opened from a desktop launcher has a minimal PATH.
     crate::login_env::apply(&mut command);
     for name in TOKEN_VARIABLES

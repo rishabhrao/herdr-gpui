@@ -54,6 +54,21 @@ for reproducible builds and matching cross-architecture PR metadata.
 
 ## Packaging Commands
 
+The release workflow's `ci-gate` job runs `scripts/release/check-ci.py` against
+the exact release SHA, waiting for a CI run that is still going. A successful
+CI workflow alone is insufficient: every platform check (both its
+default-features and all-features legs), native Windows test job, and Linux
+optimized build must have completed successfully in the same owner-triggered
+push or manual run on `main`. Skipped or missing jobs fail the gate. CI runs
+the macOS optimized builds on pull requests only, where the final gate requires
+them: on `main` they would hold the account-wide macOS runners this workflow's
+own macOS builds wait for. `just release` dispatches without waiting, so the
+release builds overlap CI; `sign`, `windows-sign`, and everything after them
+wait behind `ci-gate`, so nothing is signed or published before CI passes. CI
+never cancels a run on `main`, so a later merge cannot strand a release commit
+without one. For documentation-only commits, start a full run with
+`gh workflow run ci.yml --repo penso/herdr-gpui --ref main` before releasing.
+
 ```sh
 cargo install cargo-about --version 0.9.2 --locked --features cli
 python3 scripts/release/generate-notices.py OUTPUT_DIR/THIRD-PARTY-NOTICES.txt
@@ -71,8 +86,9 @@ The package floor is macOS 14.2 (`LSMinimumSystemVersion`; Homebrew can only
 express `:sonoma`). The binary strongly links CoreAudio's process-tap functions,
 introduced in 14.2, through rodio's cpal backend, so dyld refuses to launch it
 on 14.0 and 14.1. GPUI checks for macOS 15 at runtime before using its newer
-window behavior. The `macos-14` CI job runs the workspace tests on that floor;
-release builds still run on `macos-15` runners. Build release inputs with
+window behavior. The `macos-14` CI job that ran the workspace tests on that
+floor is commented out in `ci.yml` to save macOS runners; re-enable it if a
+macOS 14 regression appears. Release builds run on `macos-15` runners. Build release inputs with
 `MACOSX_DEPLOYMENT_TARGET=14.2` to match the plist; do not supply binaries
 targeting a newer OS.
 
@@ -164,10 +180,138 @@ OUTPUT_DIR THIRD_PARTY_NOTICES` (standard-library Python, since the runner has n
 zip tool) writes one `Herdr-VERSION-TARGET.zip` per target with a same-named root
 containing `herdr-gpui.exe`, the windowed `herdr-gpui-launcher.exe` that the
 installer's Start menu shortcut opens, and `licenses/` holding the same license
-and notice files as the Linux tree. Entries carry a fixed timestamp. Both zips are mandatory in the
-asset manifest and receive checksums, Sigstore sidecars and provenance like
-every other asset, but they are not Authenticode-signed and have no updater archive
-or update-manifest entry: Windows installs update by manual download.
+and notice files as the Linux tree. Entries carry a fixed timestamp.
+
+`scripts/release/windows-installer.py` then installs the pinned Inno Setup
+compiler (`install-iscc`, checked against its SHA-256), compiles
+`herdr-gpui.iss` over the extracted zip tree into
+`Herdr-VERSION-TARGET-setup.exe` (`build`), and installs and uninstalls it on
+the runner (`smoke`), checking the files, their subsystems, `herdr-gpui.exe`'s
+output, the Start menu shortcut's target (the launcher) and AppUserModelID,
+the user `PATH` entry, and the Settings entry. CI's `windows-package` job runs the same
+optimized build, packaging, installer build, and install/uninstall check on
+`windows-2025` for any pull request that changes their inputs
+(`scripts/ci-changes.sh` lists them), and the required gate then requires it. The installer is per-user (no elevation),
+installs to `%LOCALAPPDATA%\Programs\Herdr UI` as `site/install.ps1` does, adds
+that directory to the user `PATH`, and creates the Start menu shortcut to the
+launcher. Both zips and both
+installers are mandatory in the asset manifest and receive checksums, Sigstore
+sidecars and provenance like every other asset, after the Authenticode signing
+below when it is set up. The installers are also listed in their own
+Ed25519-signed `windows-manifest.json`, so a signed copy in the standard install
+location updates itself in the app (see
+[App Updates](../../docs/updating.md#windows-installers)); other copies update
+by manual download, or through winget.
+
+## Windows Signing
+
+The `windows` job's zip and installer are unsigned, and so are every local and
+pull request build: `windows-installer.py build` signs only when given `--sign`,
+and `herdr-gpui.iss` only sets `SignTool` when ISCC receives one. The release
+workflow then signs in `windows-sign`, one job per target on `windows-2025`,
+gated by the protected **`release`** environment like `sign`.
+
+Signing is optional until it is set up: `validate` turns it on once the
+`WINDOWS_SIGNING_SUBJECT` repository variable (below) is set, and warns while it
+is not. Until then `windows-sign`, `windows-smoke` and `winget` are skipped,
+`sign` and `attest` take the unsigned `windows-package-TARGET` artifacts, and
+the release ships unsigned Windows zips and installers. Those builds embed no
+publisher, so their in-app updater stays off rather than trusting an unsigned
+installer, and Windows SmartScreen warns on first run. Once the variable is
+set, `windows-sign` requires the Azure setup below, and a release without it
+fails instead of falling back to unsigned. When signing is on:
+
+1. `windows-signing.py unpack` extracts the tested zip without running anything.
+2. `azure/login` signs in to Azure with the job's OIDC token, and
+   `azure/artifact-signing-action` signs `herdr-gpui.exe` and
+   `herdr-gpui-launcher.exe` with SHA-256 and an RFC 3161 timestamp from
+   `http://timestamp.acs.microsoft.com`.
+3. `windows-signing.py repack` refuses unless the tree holds exactly the zip's
+   files and each executable differs from the tested one only by its appended
+   signature (checksum, certificate table entry, alignment padding), then writes
+   the zip again with the same entry order and timestamps.
+4. `windows-installer.py build --sign` compiles the installer from the signed
+   zip. ISCC calls `windows-sign-file.ps1` as its `SignTool`, with
+   `SignedUninstaller=yes`, to sign the uninstaller it embeds and the final
+   `-setup.exe`, through the ArtifactSigning module and Azure CLI login of
+   step 2 and the same digest and timestamp.
+5. `windows-signing.py verify` requires Windows to report every signature as
+   valid and timestamped, from exactly `WINDOWS_SIGNING_SUBJECT`.
+
+`windows-smoke` then installs and uninstalls each signed installer on its own
+architecture, outside the signing environment, and checks the signatures of
+the installer and of the installed app, launcher and uninstaller. `attest`
+then takes only the signed `windows-signed-TARGET` artifacts, so checksums,
+Sigstore and GitHub provenance (`actions/attest-build-provenance`) cover the
+bytes users download.
+
+Signing needs this one-time Azure setup, which only the maintainer can do:
+
+1. An Azure Artifact Signing (formerly Trusted Signing) account with a
+   completed identity validation and a public-trust certificate profile.
+2. A Microsoft Entra app registration with a federated credential for issuer
+   `https://token.actions.githubusercontent.com` and subject
+   `repo:penso/herdr-gpui:environment:release`, holding the **Artifact Signing
+   Certificate Profile Signer** role on the certificate profile and nothing
+   else. No client secret: only an OIDC token from a job in the protected
+   `release` environment can use it.
+3. These variables on the `release` environment (not the repository), none
+   secret, except `WINDOWS_SIGNING_SUBJECT`, below:
+
+   | Variable | Value |
+   | --- | --- |
+   | `AZURE_CLIENT_ID` | the app registration's client ID |
+   | `AZURE_TENANT_ID` | its tenant ID |
+   | `AZURE_SUBSCRIPTION_ID` | the subscription holding the signing account |
+   | `ARTIFACT_SIGNING_ENDPOINT` | the account's regional endpoint, such as `https://eus.codesigning.azure.net/` |
+   | `ARTIFACT_SIGNING_ACCOUNT` | the signing account name |
+   | `ARTIFACT_SIGNING_PROFILE` | the certificate profile name |
+
+4. `WINDOWS_SIGNING_SUBJECT` as a **repository** variable: the certificate
+   subject Windows reports, such as `CN=..., O=..., L=..., S=..., C=...`. The
+   unsigned `windows` build job, which runs outside the `release` environment,
+   embeds it as the publisher the in-app updater requires
+   (`HERDR_WINDOWS_SIGNER`), and `windows-sign` verifies against the same
+   value. The subject is the validated identity, so read it from a first signed
+   file (`(Get-AuthenticodeSignature file.exe).SignerCertificate.Subject`).
+   Set it only once the Azure variables above are in place: it is the switch
+   that turns signing on. Artifact Signing certificates last
+   days, so pin the subject, never a thumbprint.
+
+## Winget
+
+After a stable release publishes, the `winget` job (and the same job in
+`promote.yml` when a beta is promoted) submits it to
+[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) as
+`Penso.HerdrUI`. It downloads the published `SHA256SUMS`, installs the pinned
+[Komac](https://github.com/russellbanks/Komac) after checking its SHA-256, and
+runs `winget.py submit`: Komac writes the new version's manifests from the
+previous winget-pkgs version and the `-setup.exe` release URLs (x64, plus
+arm64 whenever the release lists it), and the script refuses to submit unless
+every installer is a per-user (`Scope: user`) Inno Setup installer with the
+release's URL and SHA-256, the publisher is `Herdr UI`, and the product code is
+the installer's `AppId`. Only then does `komac submit` open the pull request.
+Betas never reach winget.
+
+`Penso.HerdrUI` and the publisher must never change: winget matches installed
+copies and upgrades by them. `winget.py` holds both, and its tests tie them to
+`herdr-gpui.iss`.
+
+The maintainer has to:
+
+1. Create the protected **`winget`** environment, with required reviewers and
+   deployments limited to `main`, like `homebrew`.
+2. Fork `microsoft/winget-pkgs` to the account that will submit, and store a
+   classic personal access token for that account with only the `public_repo`
+   scope as the `winget` environment secret `WINGET_TOKEN`. Komac cannot open
+   pull requests with a fine-grained token.
+3. Submit the first version by hand, after the first signed release: Komac's
+   update needs an existing version to start from. Run
+   `komac new Penso.HerdrUI --version VERSION --urls URL_X64 URL_ARM64` with
+   the two published `-setup.exe` URLs, check that it detects `inno` and
+   `user` scope, set the publisher and package name to `Herdr UI`, the license
+   and URLs, and submit. Until that version is merged, the job only prints a
+   warning.
 
 ## Updater Signing
 
@@ -178,15 +322,16 @@ signing step of `sign` receives it; builds, tests, metadata, OIDC and publicatio
 never do. The public key is validated before builds and matched against the
 private key before signing exact JSON bytes. See [updater setup](../../docs/updating.md).
 
-The exact release base set is nineteen files: the DMG, two manual Linux archives,
-their `.deb`, `.rpm` and Arch packages, two Windows zips, SBOM, three updater archives, `update-manifest.json`, and its
+The exact release base set is twenty-three files: the DMG, two manual Linux archives,
+their `.deb`, `.rpm` and Arch packages, two Windows zips and two Windows installers, SBOM, three updater archives, `update-manifest.json`, and its
 raw 64-byte Ed25519 `update-manifest.sig`, plus `package-manifest.json` and
-`package-manifest.sig` for the six Linux packages. All nineteen receive checksum and Sigstore sidecars and GitHub
+`package-manifest.sig` for the six Linux packages and `windows-manifest.json` and
+`windows-manifest.sig` for the two signed Windows installers. All twenty-three receive checksum and Sigstore sidecars and GitHub
 provenance in the separate protected OIDC job. The raw signature is not overwritten:
 its Sigstore sidecar is `update-manifest.sig.sig`; the JSON's is
-`update-manifest.json.sig` (and likewise for the package manifest). `SHA256SUMS` covers all 95 base/sidecar files; the
-immutable release has exactly 96 assets. Missing or additional files fail closed.
-`artifact-manifest.py base-names VERSION DIRECTORY` lists the nineteen base names.
+`update-manifest.json.sig` (and likewise for the package and Windows manifests). `SHA256SUMS` covers all 115 base/sidecar files; the
+immutable release has exactly 116 assets. Missing or additional files fail closed.
+`artifact-manifest.py base-names VERSION DIRECTORY` lists the twenty-three base names.
 The publication job verifies downloaded draft bytes and the complete exact asset
 set before making it public; Homebrew still verifies and uses only the final DMG.
 
@@ -364,7 +509,8 @@ original actor, or source repository to be the owner. An owner rerun only change
 `github.triggering_actor`; approval does not change the other identities.
 Pushes and manual dispatches remain restricted to owner-triggered `main` runs.
 The final **Format, lint, and test** gate requires successful platform checks for
-code changes and permits skipped platform jobs only for confirmed non-code edits.
+code changes, and the macOS optimized builds on pull requests, and permits
+skipped platform jobs only for confirmed non-code edits.
 
 Fork PR execution uses GitHub-hosted runners and read-only permissions. GitHub
 withholds repository secrets from fork `pull_request` runs, including after

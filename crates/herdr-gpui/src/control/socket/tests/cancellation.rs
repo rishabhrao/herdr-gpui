@@ -10,11 +10,11 @@ fn feedback_request() -> Request {
 
 #[test]
 fn disconnected_receivers_cancel_without_waiting_for_the_deadline() {
-    let (server, client) = UnixStream::pair().unwrap();
+    let (_address, server, client) = pair();
     let (sender, events) = mpsc::sync_channel(QUEUE);
     let (finished, done) = mpsc::channel();
     let worker = thread::spawn(move || {
-        serve(server, &sender);
+        serve(&server, &sender);
         finished.send(()).unwrap();
     });
     write_line(&client, &feedback_request()).unwrap();
@@ -34,7 +34,7 @@ fn disconnected_receivers_cancel_without_waiting_for_the_deadline() {
 
 #[test]
 fn failed_socket_writes_return_notes_with_their_original_session() {
-    let (server, client) = UnixStream::pair().unwrap();
+    let (_address, server, client) = pair();
     let (sender, events) = mpsc::sync_channel(QUEUE);
     drop(client);
     finish_response(

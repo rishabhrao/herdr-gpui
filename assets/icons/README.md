@@ -79,6 +79,12 @@ Run `just icons-windows` to regenerate both files. It needs Python's standard
 library and `rsvg-convert` (`apt-get install librsvg2-bin` or
 `brew install librsvg`), so on Windows run it under WSL. `just icons` runs it too.
 
+The Inno Setup installer uses `Herdr.ico` as its own icon, and the same tile at
+each DPI scale for its pages: `windows/wizard-small-*.png` in every page's
+corner, and `windows/wizard-*.png` centered on the welcome and finish pages.
+`just icons-windows` regenerates those too, with
+`scripts/generate-installer-images.py` (`rsvg-convert` or `resvg`).
+
 ### macOS sizing
 
 The flattened `.icns` icons follow Apple's
@@ -135,7 +141,7 @@ workspace menu alongside the original `pencil.svg` (rename), `trash.svg`
 worktree group); `git-branch.svg` is original artwork for the titlebar's Git
 actions button; `sessions.svg` is original artwork for the sidebar footer's local
 session list; `file.svg` is original document-outline artwork for Settings' Configuration section; `teleport.svg` is original artwork for moving a worktree to
-another host, and `teleport-back.svg` its mirror for bringing it back; `zoom.svg` is original artwork marking a zoomed tab in the tab strip; `window-minimize.svg`, `window-maximize.svg`, and `window-restore.svg` are original artwork for the window buttons drawn on Linux when the compositor provides none, beside `close.svg`; `user.svg` is an
+another host, and `teleport-back.svg` its mirror for bringing it back; `zoom.svg` is original artwork marking a zoomed tab in the tab strip; `window-minimize.svg`, `window-maximize.svg`, and `window-restore.svg` are original artwork for the window buttons drawn on Linux when the compositor provides none, beside `close.svg`; `pull-request.svg` and `issue.svg` are original artwork for the activity bar's Pull requests and Issues panels, and `beads.svg` for items from Beads; `user.svg` is an
 original generic silhouette for the future account placeholder, not a personal
 identity or GitHub logo. All of them are embedded through a
 minimal GPUI asset source. GPUI renders them as SVG masks tinted with the current

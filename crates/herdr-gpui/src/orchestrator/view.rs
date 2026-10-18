@@ -1,7 +1,8 @@
-//! The orchestrator view: one repository's issues, pull requests, and agent
-//! runs, as a GPUI entity of its own. A tab hosts it today; because it owns
-//! its state and talks to its host only through [`Event`]s and setters, a
-//! separate window could host the same entity.
+//! The orchestrator view: the issues, pull requests, and agent runs of every
+//! repository the window's workspaces hold, as one list the activity bar's
+//! Pull requests and Issues sections draw. Each repository keeps its own
+//! worker and database (`repo`); an item's page and actions go to its own.
+//! The view talks to its host only through [`Event`]s and setters.
 //!
 //! It never blocks: the [`Service`] worker does the I/O, and the host pushes
 //! the theme, live agent statuses, and the GitHub account from its tick.
@@ -12,10 +13,12 @@ mod dispatch;
 mod hosts;
 mod inbox;
 mod list;
+mod listing;
 mod look;
 mod markdown;
-mod preview;
+mod pills;
 mod pull;
+mod repo;
 mod rows;
 
 #[cfg(test)]
@@ -23,13 +26,19 @@ mod rows;
 mod tests;
 
 pub(crate) use look::Look;
-pub(crate) use rows::LiveAgent;
+pub(crate) use repo::RepoSpec;
+pub(crate) use rows::{LiveAgent, Tab as List, key_label};
 
-use super::{Item, Notice, Request, Service, Snapshot};
+use super::{Notice, Provider, Request, Service, Snapshot, SyncState};
 use crate::search_input::{self, SearchInput};
 use gpui::{prelude::*, *};
-use rows::{Filters, ItemRow, RunLine, Runs, Sort, Tab};
-use std::{collections::HashSet, sync::Arc};
+use repo::Repo;
+use rows::{Filters, Runs, Sort, Tab};
+use std::{
+    collections::HashSet,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// What the view asks its host to do.
 #[derive(Clone, Debug)]
@@ -54,8 +63,6 @@ pub(crate) enum Event {
     OpenUrl(String),
     /// Sign in to GitHub, which the view needs to list a repository.
     SignIn,
-    /// Move the view into a window of its own.
-    OpenWindow,
     /// Start `request` on the host `endpoint`, which the window sets it up
     /// for, then hands back through [`OrchestratorView::dispatch_elsewhere`].
     Dispatch {
@@ -66,10 +73,12 @@ pub(crate) enum Event {
 
 impl EventEmitter<Event> for OrchestratorView {}
 
-/// The preview's width bounds, in pixels.
-const PREVIEW_MIN: f32 = 280.;
-const PREVIEW_DEFAULT: f32 = 380.;
-const PREVIEW_MAX_SHARE: f32 = 0.6;
+/// The details pane's width bounds, in pixels, and its share of the view.
+/// How long Refresh spins before the workers' own sync states take over.
+const REFRESH_GRACE: Duration = Duration::from_millis(1500);
+const PANE_MIN: f32 = 360.;
+const PANE_DEFAULT: f32 = 520.;
+const PANE_MAX_SHARE: f32 = 0.7;
 
 /// The detail page of one item.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,55 +126,61 @@ impl DetailTab {
     }
 }
 
-/// The preview's drag handle, as a drag payload.
+/// The details pane's drag handle, as a drag payload.
 #[derive(Clone, Copy)]
-pub(crate) struct PreviewDrag;
+pub(crate) struct PaneDrag;
 
-impl Render for PreviewDrag {
+impl Render for PaneDrag {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         Empty
     }
 }
 
 pub(crate) struct OrchestratorView {
-    service: Option<Service>,
-    request: Request,
-    snapshot: Snapshot,
+    /// Every repository listed, and the one the open item, the selection,
+    /// and the dialogs belong to.
+    repos: Vec<Repo>,
+    active: usize,
+    /// What a view without a repository reads.
+    blank: Snapshot,
+    /// Only these backends and projects (by repository key); none picked
+    /// lists them all.
+    backends: HashSet<Provider>,
+    projects: HashSet<String>,
+    /// Counts changes to what is listed, so the window redraws the bar's
+    /// counts only when they may have moved.
+    revision: u64,
+    /// When Refresh was last pressed: the button spins from then until the
+    /// workers report their syncs, which they start a moment later.
+    refresh_asked: Option<Instant>,
     look: Look,
     live: Arc<Vec<LiveAgent>>,
     /// Herdr workspaces' branches on connected hosts, for finding work.
     live_branches: Arc<Vec<super::LiveBranch>>,
-    /// The runs the database records; the snapshot's runs add those found
-    /// from branches.
-    recorded_runs: Arc<Vec<super::Run>>,
-    /// The signed-in GitHub login, for "Mine".
-    login: Option<String>,
     tab: Tab,
     sort: Sort,
     sort_open: bool,
     filters: Filters,
     mine: bool,
-    active_runs: bool,
+    /// Whether the Issues filters' column is unfolded.
+    filters_open: bool,
+    /// Only issues with this label.
+    label: Option<String>,
     collapsed: HashSet<String>,
     search: Entity<SearchInput>,
     query: String,
     /// The selected row's item key, or run id on the Runs tab.
     selected: Option<String>,
     detail: Option<Detail>,
-    preview_open: bool,
-    preview_width: f32,
+    pane_width: f32,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
-    issue_rows: Vec<ItemRow>,
-    pull_request_rows: Vec<ItemRow>,
-    run_lines: Vec<RunLine>,
-    /// Items runs work on that are no longer listed, so those runs still
-    /// open a page with their controls.
-    stand_ins: Vec<Item>,
+    /// The shown list's lines: headings and rows.
+    lines: Vec<rows::Line>,
+    /// Whether the shown list mixes backends, so rows mark their source.
+    mixed_sources: bool,
     /// The open item's description, parsed once per change of its text.
     description: markdown::Markdown,
-    /// The previewed item's description, likewise.
-    preview_markdown: markdown::Markdown,
     dialog: Option<dispatch::Dialog>,
     confirm: Option<dispatch::Confirm>,
     /// The newest action's outcome, until dismissed or replaced.
@@ -182,13 +197,11 @@ pub(crate) struct OrchestratorView {
     merge_open: bool,
     /// Hosts a dispatch could go to, while the dialog is open.
     hosts: Arc<Vec<crate::dispatch::Candidate>>,
-    /// Hosted by a window of its own rather than a tab.
-    detached: bool,
     _subscriptions: Vec<Subscription>,
 }
 
 impl OrchestratorView {
-    pub(crate) fn new(request: Request, look: Look, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(look: Look, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| {
             let mut input = SearchInput::new(cx);
             input.set_placeholder("Filter: title, id, author, label, body\u{2026}", cx);
@@ -213,44 +226,35 @@ impl OrchestratorView {
             input.set_appearance(look.ui.clone(), look.theme.clone(), cx);
             input
         });
-        let (service, error) = match Service::start(request.clone()) {
-            Ok(service) => (Some(service), None),
-            Err(error) => (None, Some(Arc::new(super::Error::Worker(error)))),
-        };
-        let snapshot = Snapshot {
-            error,
-            ..Snapshot::default()
-        };
         Self {
-            service,
-            request,
-            snapshot,
+            repos: Vec::new(),
+            active: 0,
+            blank: Snapshot::default(),
+            backends: HashSet::new(),
+            projects: HashSet::new(),
+            revision: 0,
+            refresh_asked: None,
             look,
             live: Arc::default(),
             live_branches: Arc::default(),
-            recorded_runs: Arc::default(),
-            login: None,
             tab: Tab::default(),
             sort: Sort::default(),
             sort_open: false,
             filters: Filters::default(),
             mine: false,
-            active_runs: false,
+            filters_open: false,
+            label: None,
             collapsed: HashSet::new(),
             search,
             query: String::new(),
             selected: None,
             detail: None,
-            preview_open: true,
-            preview_width: PREVIEW_DEFAULT,
+            pane_width: PANE_DEFAULT,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
-            issue_rows: Vec::new(),
-            pull_request_rows: Vec::new(),
-            run_lines: Vec::new(),
-            stand_ins: Vec::new(),
+            lines: Vec::new(),
+            mixed_sources: false,
             description: markdown::Markdown::default(),
-            preview_markdown: markdown::Markdown::default(),
             dialog: None,
             confirm: None,
             notice: None,
@@ -261,9 +265,37 @@ impl OrchestratorView {
             avatars: conversation::Avatars::default(),
             merge_open: false,
             hosts: Arc::default(),
-            detached: false,
             _subscriptions: vec![subscription],
         }
+    }
+
+    /// A view of one repository, for tests that drive its state directly.
+    #[cfg(test)]
+    pub(crate) fn with_repo(request: Request, look: Look, cx: &mut Context<Self>) -> Self {
+        let mut view = Self::new(look, cx);
+        view.repos.push(Repo::start(RepoSpec {
+            key: "test".into(),
+            host: "local".into(),
+            request,
+        }));
+        view
+    }
+
+    /// The repositories listed, by key, for tests.
+    #[cfg(test)]
+    pub(crate) fn repo_keys(&self) -> Vec<String> {
+        self.repos.iter().map(|repo| repo.key.clone()).collect()
+    }
+
+    /// The projects picked, for tests.
+    #[cfg(test)]
+    pub(crate) fn picked_projects(&self) -> Vec<String> {
+        self.projects.iter().cloned().collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn repo_mut(&mut self) -> &mut Repo {
+        &mut self.repos[self.active]
     }
 
     pub(crate) fn focus_handle(&self) -> &FocusHandle {
@@ -273,17 +305,22 @@ impl OrchestratorView {
     /// Takes the worker's newest snapshot; called from the host's tick.
     pub(crate) fn poll(&mut self, cx: &mut Context<Self>) {
         let mut changed = false;
-        if let Some(notice) = self
-            .service
-            .as_ref()
-            .and_then(|service| service.notices().pop())
-        {
-            self.notice = Some(notice);
-            changed = true;
+        let mut read = false;
+        for repo in &mut self.repos {
+            let Some(service) = &repo.service else {
+                continue;
+            };
+            if let Some(notice) = service.notices().pop() {
+                self.notice = Some(notice);
+                changed = true;
+            }
+            if let Some(snapshot) = service.poll() {
+                repo.recorded_runs = snapshot.runs.clone();
+                repo.snapshot = snapshot;
+                read = true;
+            }
         }
-        if let Some(snapshot) = self.service.as_ref().and_then(Service::poll) {
-            self.recorded_runs = snapshot.runs.clone();
-            self.snapshot = snapshot;
+        if read {
             self.reconcile_agents();
             self.refresh_rows();
             self.follow_pull_request();
@@ -310,7 +347,7 @@ impl OrchestratorView {
             .and_then(|detail| self.item(&detail.key))
             .and_then(|item| item.pull_request.as_ref())
             .map(|pr| pr.number);
-        if let (Some(number), Some(service)) = (number, &self.service) {
+        if let (Some(number), Some(service)) = (number, self.service()) {
             service.load_pull_request(number);
         }
     }
@@ -320,23 +357,47 @@ impl OrchestratorView {
         self.dialog.is_some()
     }
 
-    /// The host the repository is on.
-    pub(crate) fn target(&self) -> &herdr_client::ConnectTarget {
-        &self.request.target
+    /// The host the active repository is on.
+    pub(crate) fn target(&self) -> Option<&herdr_client::ConnectTarget> {
+        Some(&self.request()?.target)
     }
 
-    pub(crate) fn theme(&self) -> &crate::config::Theme {
-        &self.look.theme
+    /// The Herdr workspace the active repository was found in.
+    pub(crate) fn workspace_id(&self) -> Option<&str> {
+        Some(&self.request()?.workspace_id)
     }
 
-    pub(crate) fn set_detached(&mut self, detached: bool, cx: &mut Context<Self>) {
-        self.detached = detached;
-        cx.notify();
+    /// The hosts the listed repositories are on, once each.
+    pub(crate) fn targets(&self) -> Vec<herdr_client::ConnectTarget> {
+        let mut targets: Vec<herdr_client::ConnectTarget> = Vec::new();
+        for repo in &self.repos {
+            if !targets.contains(&repo.request.target) {
+                targets.push(repo.request.target.clone());
+            }
+        }
+        targets
     }
 
-    /// The Herdr workspace the view was opened from.
-    pub(crate) fn workspace_id(&self) -> &str {
-        &self.request.workspace_id
+    fn repo(&self) -> Option<&Repo> {
+        self.repos.get(self.active)
+    }
+
+    /// The active repository's snapshot, or an empty one.
+    fn snapshot(&self) -> &Snapshot {
+        self.repo().map_or(&self.blank, |repo| &repo.snapshot)
+    }
+
+    fn service(&self) -> Option<&Service> {
+        self.repo()?.service.as_ref()
+    }
+
+    fn request(&self) -> Option<&Request> {
+        self.repo().map(|repo| &repo.request)
+    }
+
+    /// Changes whenever what the views list may have.
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub(crate) fn set_hosts(
@@ -408,26 +469,38 @@ impl OrchestratorView {
         cx.notify();
     }
 
-    /// The account GitHub is read as; a change syncs again at once and reads
-    /// the open pull request again.
+    /// The account GitHub is read as on `target`; a change syncs that host's
+    /// repositories again at once and reads the open pull request again.
     pub(crate) fn set_github(
         &mut self,
+        target: &herdr_client::ConnectTarget,
         token: Option<crate::github::Tokens>,
         login: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let same = match (&token, &self.request.token) {
-            (Some(new), Some(old)) => new.same(old),
-            (None, None) => true,
-            _ => false,
-        };
-        self.login = login;
-        if same {
-            return;
+        let mut changed = false;
+        for repo in self
+            .repos
+            .iter_mut()
+            .filter(|repo| repo.request.target == *target)
+        {
+            repo.login = login.clone();
+            let same = match (&token, &repo.request.token) {
+                (Some(new), Some(old)) => new.same(old),
+                (None, None) => true,
+                _ => false,
+            };
+            if same {
+                continue;
+            }
+            repo.request.token = token.clone();
+            if let Some(service) = &repo.service {
+                service.refresh(token.clone());
+            }
+            changed = true;
         }
-        self.request.token = token.clone();
-        if let Some(service) = &self.service {
-            service.refresh(token);
+        if !changed {
+            return;
         }
         // What the old account read goes, and the open pull request is read
         // again as the new one: a lookup made signed out was dropped.
@@ -439,119 +512,55 @@ impl OrchestratorView {
 
     /// Syncs again, and reads the open pull request's status and
     /// conversation again, which a sync alone leaves as they were.
+    /// Refresh as the user asks for it, which waits for a sync under way.
+    fn ask_refresh(&mut self) {
+        if self.refreshing() {
+            return;
+        }
+        self.refresh_asked = Some(Instant::now());
+        self.refresh();
+    }
+
     fn refresh(&mut self) {
-        if let Some(service) = &self.service {
-            service.refresh(self.request.token.clone());
+        for repo in &self.repos {
+            if let Some(service) = &repo.service {
+                service.refresh(repo.request.token.clone());
+            }
         }
         self.reload_pull_request();
         self.reload_conversation();
     }
 
-    /// The login GitHub is read as for this repository: the account that
-    /// reads its owner, or the device's own before the remote is known.
-    fn reading_login(&self) -> Option<&str> {
-        let owner = self
-            .snapshot
-            .repo
-            .as_ref()
-            .and_then(|info| info.remote.as_ref())
-            .map(|remote| {
-                let repository = remote.source.repository.as_str();
-                repository
-                    .split_once('/')
-                    .map_or(repository, |(owner, _)| owner)
-            });
-        match (&self.request.token, owner) {
-            (Some(tokens), Some(owner)) => Some(tokens.login_for(owner)),
-            _ => self.login.as_deref(),
+    /// Whether a sync is under way, or Refresh was pressed so recently that
+    /// the workers may not have reported starting one yet.
+    pub(crate) fn refreshing(&self) -> bool {
+        self.refresh_asked
+            .is_some_and(|asked| asked.elapsed() < REFRESH_GRACE)
+            || self.repos.iter().any(|repo| {
+                repo.snapshot
+                    .sources
+                    .iter()
+                    .any(|source| matches!(source.state, SyncState::Syncing))
+            })
+    }
+
+    /// The live agents last handed in, which change run statuses.
+    pub(crate) fn live(&self) -> &Arc<Vec<LiveAgent>> {
+        &self.live
+    }
+
+    /// The list shown.
+    #[cfg(test)]
+    pub(crate) fn list(&self) -> Tab {
+        self.tab
+    }
+
+    /// Lists `tab`'s items, as clicking its header would; the activity
+    /// bar's sections pick the list they show.
+    pub(crate) fn show_list(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        if self.tab != tab {
+            self.select_tab(tab, cx);
         }
-    }
-
-    fn refresh_rows(&mut self) {
-        let found = super::naming::found_runs(
-            &self.snapshot.items,
-            &self.recorded_runs,
-            &self.live_branches,
-            &self.snapshot.branches,
-            &self.live,
-        );
-        self.snapshot.runs = if found.is_empty() {
-            self.recorded_runs.clone()
-        } else {
-            Arc::new(self.recorded_runs.iter().cloned().chain(found).collect())
-        };
-        self.stand_ins = stand_ins(&self.snapshot);
-        let items = &self.snapshot.items;
-        let runs = Runs::new(&self.snapshot.runs, &self.snapshot.sessions, &self.live);
-        self.issue_rows = rows::issue_rows(
-            items,
-            &runs,
-            &self.query,
-            self.filters,
-            self.sort,
-            &self.collapsed,
-        );
-        self.pull_request_rows = rows::pull_request_rows(
-            items,
-            &runs,
-            &self.query,
-            self.filters,
-            self.reading_login(),
-            self.mine,
-            self.sort,
-        );
-        let listed: Vec<Item>;
-        let titled = if self.stand_ins.is_empty() {
-            items.as_slice()
-        } else {
-            listed = items.iter().chain(&self.stand_ins).cloned().collect();
-            listed.as_slice()
-        };
-        self.run_lines = rows::run_lines(&runs, titled, &self.query, self.active_runs);
-        if self.selected.is_none() || !self.selection_listed() {
-            self.selected = self.keys().into_iter().next();
-        }
-    }
-
-    /// The selectable keys of the current tab, in order.
-    fn keys(&self) -> Vec<String> {
-        let items = &self.snapshot.items;
-        match self.tab {
-            Tab::Issues => self
-                .issue_rows
-                .iter()
-                .map(|row| items[row.item].key.canonical())
-                .collect(),
-            Tab::PullRequests => self
-                .pull_request_rows
-                .iter()
-                .map(|row| items[row.item].key.canonical())
-                .collect(),
-            Tab::Runs => self
-                .run_lines
-                .iter()
-                .filter_map(|line| match line {
-                    RunLine::Run(row) => Some(self.snapshot.runs[row.run].id.clone()),
-                    RunLine::Group { .. } => None,
-                })
-                .collect(),
-        }
-    }
-
-    fn selection_listed(&self) -> bool {
-        self.selected
-            .as_ref()
-            .is_some_and(|selected| self.keys().contains(selected))
-    }
-
-    /// The item `key` names, or the stand-in of one a run works on that is
-    /// no longer listed.
-    fn item(&self, key: &str) -> Option<&Item> {
-        self.snapshot
-            .items
-            .iter()
-            .chain(&self.stand_ins)
-            .find(|item| item.key.canonical() == key)
     }
 
     fn select_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
@@ -574,49 +583,24 @@ impl OrchestratorView {
             .unwrap_or(0);
         let next = at.saturating_add_signed(by).min(keys.len() - 1);
         self.selected = Some(keys[next].clone());
+        self.activate(&keys[next]);
         let line = self.line_of(&keys[next]);
         self.scroll.scroll_to_item(line, ScrollStrategy::Center);
         cx.notify();
     }
 
-    /// The list line showing `key`, counting the Runs tab's headings.
-    fn line_of(&self, key: &str) -> usize {
-        let items = &self.snapshot.items;
-        match self.tab {
-            Tab::Issues => self
-                .issue_rows
-                .iter()
-                .position(|row| items[row.item].key.canonical() == key),
-            Tab::PullRequests => self
-                .pull_request_rows
-                .iter()
-                .position(|row| items[row.item].key.canonical() == key),
-            Tab::Runs => self.run_lines.iter().position(
-                |line| matches!(line, RunLine::Run(row) if self.snapshot.runs[row.run].id == key),
-            ),
-        }
-        .unwrap_or(0)
-    }
-
     fn open_detail(&mut self, key: String, cx: &mut Context<Self>) {
-        // A run opens the item it works on.
-        let key = match self.tab {
-            Tab::Runs => match self.snapshot.runs.iter().find(|run| run.id == key) {
-                Some(run) => run.item_key.clone(),
-                None => return,
-            },
-            _ => key,
-        };
+        self.activate(&key);
         let Some(item) = self.item(&key) else {
             return;
         };
         let pull_request = item.pull_request.is_some();
         self.detail = Some(Detail {
             key,
-            tab: match (self.tab, pull_request) {
-                (Tab::Runs, _) => DetailTab::Agent,
-                (_, true) => DetailTab::Conversation,
-                (_, false) => DetailTab::Description,
+            tab: if pull_request {
+                DetailTab::Conversation
+            } else {
+                DetailTab::Description
             },
         });
         self.merge_open = false;
@@ -638,7 +622,7 @@ impl OrchestratorView {
     /// Shows run `run`: its agent's pane while Herdr shows the agent, else
     /// the workspace it worked in, else says why there is nothing to show.
     fn open_run(&mut self, run: usize, cx: &mut Context<Self>) {
-        let runs = Runs::new(&self.snapshot.runs, &self.snapshot.sessions, &self.live);
+        let runs = Runs::new(&self.snapshot().runs, &self.snapshot().sessions, &self.live);
         if let Some(agent) = runs.live(run) {
             cx.emit(Event::OpenRun {
                 endpoint: agent.endpoint,
@@ -646,7 +630,7 @@ impl OrchestratorView {
             });
             return;
         }
-        let workspace = self.snapshot.runs.get(run).and_then(|run| {
+        let workspace = self.snapshot().runs.get(run).and_then(|run| {
             run.workspace.as_ref().filter(|workspace| {
                 workspace.backend == super::Backend::Herdr && !workspace.id.is_empty()
             })
@@ -658,7 +642,7 @@ impl OrchestratorView {
                     .session(run)
                     .and_then(|session| session.session.clone())
                     .or_else(|| {
-                        let run = self.snapshot.runs.get(run)?;
+                        let run = self.snapshot().runs.get(run)?;
                         self.live_branches
                             .iter()
                             .find(|branch| {
@@ -749,21 +733,8 @@ impl OrchestratorView {
                 }
                 true
             }
-            ("tab", None) => {
-                let at = Tab::ALL
-                    .iter()
-                    .position(|tab| *tab == self.tab)
-                    .unwrap_or(0);
-                let next = if modifiers.shift {
-                    at + Tab::ALL.len() - 1
-                } else {
-                    at + 1
-                } % Tab::ALL.len();
-                self.select_tab(Tab::ALL[next], cx);
-                true
-            }
             ("r", _) => {
-                self.refresh();
+                self.ask_refresh();
                 true
             }
             ("1" | "2" | "3" | "4" | "5", Some(detail)) => {
@@ -795,16 +766,15 @@ impl Focusable for OrchestratorView {
 
 impl Render for OrchestratorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = match self.detail.clone() {
-            Some(detail) => self.render_detail(detail, window, cx),
-            None => self.render_inbox(window, cx),
-        };
+        let body = self.render_inbox(window, cx);
         let notice = self.render_notice(cx);
         let overlay = self.render_overlay(cx);
         let merge_menu = self.render_merge_menu(cx);
         let look = &self.look;
         div()
             .id("orchestrator")
+            .role(Role::Group)
+            .aria_label("Orchestrator")
             .relative()
             .key_context("Orchestrator")
             .track_focus(&self.focus)
@@ -829,25 +799,4 @@ impl Render for OrchestratorView {
             .children(merge_menu)
             .children(overlay)
     }
-}
-
-/// A stand-in for each item a run works on that the snapshot no longer lists.
-fn stand_ins(snapshot: &Snapshot) -> Vec<Item> {
-    let listed: HashSet<String> = snapshot
-        .items
-        .iter()
-        .map(|item| item.key.canonical())
-        .collect();
-    let mut keys: Vec<&str> = snapshot
-        .runs
-        .iter()
-        .map(|run| run.item_key.as_str())
-        .filter(|key| !listed.contains(*key))
-        .collect();
-    keys.sort_unstable();
-    keys.dedup();
-    keys.into_iter()
-        .filter_map(|key| key.parse().ok())
-        .map(Item::stand_in)
-        .collect()
 }

@@ -4,6 +4,7 @@
 
 use super::{
     CHILD_INDENT, HOST_GAP, LABEL_GAP, ROW_PADDING, STATUS_WIDTH, cell::RowState, row::RowLift,
+    wash::HostMark,
 };
 use crate::{
     backdrop::Fill,
@@ -396,15 +397,47 @@ impl SidebarLook {
         }
     }
 
-    /// A row's state layer and hover wiring together: the lifted card while
-    /// it is carried, and no hover while a carried row passes over it.
-    pub(super) fn mark(&self, row: Div, key: &str, state: RowState, theme: &Theme) -> Div {
+    /// A row's host wash, state layer, and hover wiring together: the lifted
+    /// card while it is carried, and no hover while a carried row passes
+    /// over it.
+    pub(super) fn mark(
+        &self,
+        row: Div,
+        key: &str,
+        (state, host): (RowState, HostMark),
+        theme: &Theme,
+    ) -> Div {
         match state.lift {
-            RowLift::Resting => self
-                .hover_group(row)
-                .child(self.highlight(key, state, theme)),
-            RowLift::Passed => row.child(self.highlight(key, state, theme)),
-            RowLift::Lifted => row.child(self.lifted(key, state.selected, theme)),
+            RowLift::Resting => self.washed(
+                self.hover_group(row),
+                key,
+                host,
+                self.highlight(key, state, theme),
+            ),
+            RowLift::Passed => self.washed(row, key, host, self.highlight(key, state, theme)),
+            RowLift::Lifted => {
+                host.apply(row, key, self)
+                    .child(self.lifted(key, state.selected, theme))
+            }
+        }
+    }
+
+    /// Adds a row's host wash and its highlight `layer`, in the order that
+    /// keeps the host's colour on a marked row. An outline is translucent,
+    /// so the wash goes under it and its border stays crisp. A fill is
+    /// opaque in an opaque window and would hide the colour on exactly the
+    /// rows that are selected or pointed at, so the wash goes over it, as it
+    /// does over superset's fill. The row's content paints above both.
+    pub(super) fn washed<E: ParentElement + Styled>(
+        &self,
+        row: E,
+        key: &str,
+        host: HostMark,
+        layer: Div,
+    ) -> E {
+        match self.density.highlight {
+            Highlight::Fill => host.apply(row.child(layer), key, self),
+            Highlight::Outline => host.apply(row, key, self).child(layer),
         }
     }
 

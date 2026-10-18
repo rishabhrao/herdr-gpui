@@ -93,7 +93,8 @@ impl HerdrWindow {
                 focused = Some(count);
             }
             let gap = self.agent_row_gap(count);
-            list = list.child(self.agent_cell(index, agent, snapshot, &row_cx, lines, gap, cx));
+            list =
+                list.child(self.agent_cell(index, agent, snapshot, &row_cx, lines, gap, false, cx));
             count += 1;
         }
         if count == 0 {

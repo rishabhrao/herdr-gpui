@@ -1,9 +1,5 @@
 use super::*;
-use crate::{
-    control::protocol::work::{FanOutRequest, Script},
-    menu::Page,
-    teleport::AgentKind,
-};
+use crate::{control::protocol::work::Script, menu::Page, teleport::AgentKind};
 use flows::{agent_kind, agents, pick_host, prompt_text};
 
 #[test]
@@ -175,10 +171,11 @@ fn fan_out_opens_composed_and_picks_agents_once_known(cx: &mut gpui::TestAppCont
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
             connected(view);
-            let request = |agents: Vec<(String, u8)>| FanOutRequest {
-                prompt: "fix\nthe flaky test".into(),
-                agents,
-            };
+            let request =
+                |agents: Vec<(String, u8)>| crate::control::protocol::work::FanOutRequest {
+                    prompt: "fix\nthe flaky test".into(),
+                    agents,
+                };
             let refused = flows::fan_out(
                 view,
                 &caller(Some("w4")),

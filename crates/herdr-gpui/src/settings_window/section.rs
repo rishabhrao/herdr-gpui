@@ -1,14 +1,16 @@
 //! The Settings pages and the groups the section list shows them under.
 
-/// One Settings page. `ALL` is the section list's order, group by group.
+/// One Settings page. `ALL` is the section list's order: General alone at the
+/// top, then group by group.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Section {
+    General,
     #[default]
     Theme,
     Sidebar,
+    Indicators,
     Fonts,
     StatusBar,
-    General,
     Tabs,
     Code,
     Notifications,
@@ -47,14 +49,17 @@ impl Group {
 }
 
 impl Section {
-    /// The section list's order: each group's pages together, groups in
-    /// [`Group::ALL`] order. Users see this order, so it is not sorted.
+    /// The section list's order: General first, outside every group, as the
+    /// catch-all people look in when they do not know where a setting lives;
+    /// then each group's pages together, groups in [`Group::ALL`] order. Users
+    /// see this order, so it is not sorted.
     pub(super) const ALL: &[Self] = &[
+        Self::General,
         Self::Theme,
         Self::Sidebar,
+        Self::Indicators,
         Self::Fonts,
         Self::StatusBar,
-        Self::General,
         Self::Tabs,
         Self::Code,
         Self::Notifications,
@@ -70,6 +75,7 @@ impl Section {
         match self {
             Self::Theme => "Theme",
             Self::Sidebar => "Sidebar",
+            Self::Indicators => "Indicators",
             Self::Fonts => "Fonts",
             Self::StatusBar => "Status bar",
             Self::General => "General",
@@ -89,6 +95,10 @@ impl Section {
         match self {
             Self::Theme => Some("Hover a theme to try it in the app; click to keep it."),
             Self::Sidebar => Some("Changes apply to every open window immediately."),
+            Self::Indicators => Some(
+                "How agent status shows in the sidebar, tabs and the collapsed rail. \
+                 Working always moves; reduced motion holds it still.",
+            ),
             Self::Fonts => Some("Each face can have its own family and size."),
             Self::StatusBar => Some("Which items the bottom bar shows, and how compactly."),
             Self::Code => Some(
@@ -108,14 +118,19 @@ impl Section {
         }
     }
 
-    pub(super) fn group(self) -> Group {
+    /// The group the section list shows this page under; `None` for pages
+    /// listed above every group label.
+    pub(super) fn group(self) -> Option<Group> {
         match self {
-            Self::Theme | Self::Sidebar | Self::Fonts | Self::StatusBar => Group::Appearance,
-            Self::General | Self::Tabs | Self::Code | Self::Notifications => Group::Behaviour,
-            Self::Integrations | Self::Plugins | Self::WebAccess => Group::Connect,
+            Self::General => None,
+            Self::Theme | Self::Sidebar | Self::Indicators | Self::Fonts | Self::StatusBar => {
+                Some(Group::Appearance)
+            }
+            Self::Tabs | Self::Code | Self::Notifications => Some(Group::Behaviour),
+            Self::Integrations | Self::Plugins | Self::WebAccess => Some(Group::Connect),
             #[cfg(feature = "cloud")]
-            Self::CloudDevices => Group::Connect,
-            Self::Configuration => Group::Advanced,
+            Self::CloudDevices => Some(Group::Connect),
+            Self::Configuration => Some(Group::Advanced),
         }
     }
 
@@ -123,6 +138,7 @@ impl Section {
         match self {
             Self::Theme => "icons/theme.svg",
             Self::Sidebar => "icons/panel-left.svg",
+            Self::Indicators => "icons/pulse.svg",
             Self::Fonts => "icons/pencil.svg",
             Self::StatusBar => "icons/status-bar.svg",
             Self::General => "icons/settings.svg",
@@ -149,11 +165,13 @@ impl Section {
     }
 
     /// The section's index among the scrolled section list's children, which
-    /// are each group's label followed by its pages.
+    /// are the ungrouped pages, then each group's label followed by its pages.
     pub(super) fn nav_item(self) -> usize {
         let mut item = 0;
-        for group in Group::ALL {
-            item += 1;
+        for group in std::iter::once(None).chain(Group::ALL.map(Some)) {
+            if group.is_some() {
+                item += 1;
+            }
             for section in Self::ALL.iter().filter(|section| section.group() == group) {
                 if *section == self {
                     return item;

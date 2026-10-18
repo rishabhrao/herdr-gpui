@@ -29,6 +29,8 @@ pub enum UiCommand {
     Sidebar(Switch),
     StatusBar(Switch),
     FontSize(FontSize),
+    /// The activity bar section to show.
+    Panel(crate::sidebar::ActivityPanel),
 }
 
 pub(super) fn app(args: &mut Args) -> Result<AppCommand, CliError> {
@@ -77,14 +79,24 @@ fn size(text: std::ffi::OsString) -> Result<Size, CliError> {
         .ok_or(CliError::InvalidValue("WIDTHxHEIGHT"))
 }
 
+/// The panel names `ui panel` takes, as its errors and help name them.
+const PANELS: &str = "workspaces|overview|pull-requests|issues|usage";
+
 pub(super) fn ui(args: &mut Args) -> Result<UiCommand, CliError> {
     let verb = args.verb().ok_or(CliError::MissingArgument {
         command: "ui",
-        what: "sidebar|statusbar|font-size",
+        what: "sidebar|statusbar|font-size|panel",
     })?;
     Ok(match verb.to_str() {
         Some("sidebar") => UiCommand::Sidebar(switch(args.positional())?),
         Some("statusbar" | "status-bar") => UiCommand::StatusBar(switch(args.positional())?),
+        Some("panel") => {
+            let name = args.required_text(PANELS)?;
+            UiCommand::Panel(
+                crate::sidebar::ActivityPanel::parse(&name)
+                    .ok_or(CliError::InvalidValue(PANELS))?,
+            )
+        }
         Some("font-size") => {
             let value = args.required_text("+|-|reset|POINTS")?;
             UiCommand::FontSize(match value.as_str() {

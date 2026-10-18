@@ -50,13 +50,6 @@ fn add_device_opens_the_platforms_setup_form(cx: &mut gpui::TestAppContext) {
     cx.simulate_click(add.center(), gpui::Modifiers::none());
     draw(cx);
     view.read_with(cx, |view, _| {
-        assert_eq!(
-            view.menu.page,
-            Some(if cfg!(windows) {
-                Page::AddWsl
-            } else {
-                Page::AddDevice
-            })
-        );
+        assert_eq!(view.menu.page, Some(Page::AddDevice));
     });
 }

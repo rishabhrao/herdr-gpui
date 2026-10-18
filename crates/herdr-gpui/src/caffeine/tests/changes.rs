@@ -14,7 +14,7 @@ fn every_settled_hold_and_release_counts_as_a_change(cx: &mut gpui::TestAppConte
     assert_eq!((cup_of(cx), cx.update(|cx| changes(cx))), (Cup::Off, 2));
 
     // A failed hold settles too.
-    let failing = || -> keepawake::Result<Held> {
+    let failing = |_| -> keepawake::Result<Held> {
         Err(keepawake::BuilderError::ValidationError("no power".into()).into())
     };
     cx.update(|cx| {

@@ -11,6 +11,7 @@ mod credential_ordering;
 mod keychain;
 mod lifecycle;
 mod recovery;
+mod setup_script;
 
 fn open(cx: &mut TestAppContext) -> (Entity<SettingsWindow>, &mut VisualTestContext) {
     let main = cx.add_window(crate::sidebar::layout_tests::fixture_window);

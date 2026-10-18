@@ -10,7 +10,6 @@ use crate::{
 use std::{
     collections::HashSet,
     path::Path,
-    process::Command,
     time::{Duration, Instant},
 };
 
@@ -39,7 +38,7 @@ pub(crate) fn list(input: &Input, cancelled: &impl Fn() -> bool) -> crate::Resul
     if !Path::new(&repo_key).is_absolute() {
         return Err(Error::PrAbsolutePath);
     }
-    let mut command = Command::new("git");
+    let mut command = herdr_client::new_command("git");
     command
         .args(["-c", "core.fsmonitor=false", "--git-dir", &repo_key])
         .args(["for-each-ref", "--sort=-committerdate"])
@@ -108,7 +107,7 @@ mod tests {
         std::fs::write(&config, "").unwrap();
         let repo = temporary.path().join("repo");
         let git = |args: &[&str]| {
-            let output = Command::new("git")
+            let output = std::process::Command::new("git")
                 .env("GIT_CONFIG_GLOBAL", &config)
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .args([

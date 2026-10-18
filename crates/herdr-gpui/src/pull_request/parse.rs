@@ -119,13 +119,19 @@ fn parse_with_owner(text: &str, owner: &str, repo: &str, branch: &str, head_owne
         return Err(Error::PrSize);
     }
     let mut values: Vec<PullRequest> = serde_json::from_str(text).map_err(Error::github_json)?;
-    if values.is_empty() {
-        return Ok(None);
+    // A lone pull request from another head owner is held to the identity
+    // check below; among several, other owners' ones are not this branch's.
+    if values.len() > 1 {
+        values.retain(|pr| {
+            pr.head_repository_owner
+                .login
+                .eq_ignore_ascii_case(head_owner)
+        });
+        if values.is_empty() {
+            return Err(Error::PrAmbiguous);
+        }
     }
-    if values.len() != 1 {
-        return Err(Error::PrAmbiguous);
-    }
-    let Some(mut pr) = values.pop() else {
+    let Some(mut pr) = current(values, |pr| pr.state == State::Open)? else {
         return Ok(None);
     };
     let expected = format!("https://github.com/{owner}/{repo}/pull/{}", pr.number);
@@ -158,6 +164,26 @@ fn parse_with_owner(text: &str, owner: &str, repo: &str, branch: &str, head_owne
     }
     pr.checks_summary = pr.checks();
     Ok(Some(pr))
+}
+
+/// The one pull request a branch stands for, among those already narrowed to
+/// its head. A branch name reused after its first pull request merged or
+/// closed lists both, so the single open one wins, or, with none open, the
+/// most recently updated, which GitHub lists first. Two open ones stay
+/// ambiguous.
+pub(super) fn current<T>(
+    mut values: Vec<T>,
+    open: impl Fn(&T) -> bool,
+) -> crate::Result<Option<T>> {
+    let open: Vec<usize> = (0..values.len())
+        .filter(|&index| open(&values[index]))
+        .collect();
+    match open.as_slice() {
+        [index] => Ok(Some(values.swap_remove(*index))),
+        [] if values.is_empty() => Ok(None),
+        [] => Ok(Some(values.swap_remove(0))),
+        _ => Err(Error::PrAmbiguous),
+    }
 }
 
 /// GitHub node IDs are short base64url-like tokens.

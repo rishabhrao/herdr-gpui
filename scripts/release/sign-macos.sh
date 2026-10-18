@@ -86,22 +86,37 @@ done
 codesign --force --sign "$MACOS_SIGNING_IDENTITY" --keychain "$keychain" --options runtime --entitlements "$release_root/assets/macos/Herdr.entitlements" --timestamp "$app/Contents/MacOS/Herdr"
 codesign --force --sign "$MACOS_SIGNING_IDENTITY" --keychain "$keychain" --options runtime --entitlements "$release_root/assets/macos/Herdr.entitlements" --timestamp "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
+# Apple's notary and ticket services drop connections now and then ("The
+# network connection was lost"). Retry those calls; a rejected submission
+# still fails below, because notarytool exits 0 and jq checks the status.
+apple_retry_delay=${APPLE_RETRY_DELAY:-30}
+[[ $apple_retry_delay =~ ^[0-9]{1,3}$ ]] || fail 'APPLE_RETRY_DELAY must be whole seconds'
+apple() {
+    local attempt
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        xcrun "$@" && return 0
+        ((attempt < 10)) || break
+        echo "xcrun $1 $2 failed (attempt $attempt of 10); retrying in ${apple_retry_delay}s" >&2
+        sleep "$apple_retry_delay"
+    done
+    return 1
+}
 notarize() {
-    xcrun notarytool submit "$1" --key "$tmp/AuthKey.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --wait --output-format json > "$tmp/notary.json"
+    apple notarytool submit "$1" --key "$tmp/AuthKey.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --wait --output-format json > "$tmp/notary.json"
     jq -e -s 'length == 1 and (.[0] | type == "object" and .status == "Accepted")' "$tmp/notary.json" >/dev/null || fail 'Notarization did not return Accepted'
 }
 ditto -c -k --keepParent "$app" "$tmp/Herdr.zip"
 notarize "$tmp/Herdr.zip"
-xcrun stapler staple "$app"
-xcrun stapler validate "$app"
+apple stapler staple "$app"
+apple stapler validate "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 spctl --assess --type execute --verbose=2 "$app"
 ln -s /Applications "$tmp/image/Applications"
 hdiutil create -volname Herdr -srcfolder "$tmp/image" -format UDZO -ov "$tmp/Herdr.dmg"
 codesign --force --sign "$MACOS_SIGNING_IDENTITY" --keychain "$keychain" --timestamp "$tmp/Herdr.dmg"
 notarize "$tmp/Herdr.dmg"
-xcrun stapler staple "$tmp/Herdr.dmg"
-xcrun stapler validate "$tmp/Herdr.dmg"
+apple stapler staple "$tmp/Herdr.dmg"
+apple stapler validate "$tmp/Herdr.dmg"
 codesign --verify --strict --verbose=2 "$tmp/Herdr.dmg"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$tmp/Herdr.dmg"
 # Package the signed, stapled copy, never the caller's unsigned assembly.

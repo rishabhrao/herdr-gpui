@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::disallowed_methods)]
 
 // `lookup_pr` is exercised through a POSIX mock executable, so it has no caller
 // in this binary elsewhere.

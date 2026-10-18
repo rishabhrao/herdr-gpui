@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = (ROOT / ".github/workflows/ci.yml").read_text()
 SECTIONS = re.split(r"^  ([a-z-]+):\n", WORKFLOW.split("\njobs:\n", 1)[1], flags=re.M)
 JOBS = dict(zip(SECTIONS[1::2], SECTIONS[2::2]))
-PR_JOBS = ("zizmor", "commits", "checks", "windows", "checks-passed")
+PR_JOBS = ("zizmor", "commits", "checks", "windows", "windows-native", "build-macos", "checks-passed")
+# Jobs that never run on main: the release workflow builds those targets.
+PR_ONLY_JOBS = ("build-macos",)
 
 
 def condition_matches(job, context):
@@ -54,6 +56,7 @@ class CiPolicy(unittest.TestCase):
             "github.event.pull_request.user.login": "larry0x",
             "github.event.pull_request.head.repo.full_name": "larry0x/herdr-gpui",
             "needs.commits.outputs.code": "true",
+            "needs.commits.outputs.windows_package": "true",
             **overrides,
         }
 
@@ -90,7 +93,8 @@ class CiPolicy(unittest.TestCase):
                        and actor == "penso" and triggering_actor == "penso")
             for job in JOBS:
                 with self.subTest(job=job, context=context):
-                    self.assertEqual(condition_matches(job, context), allowed)
+                    self.assertEqual(condition_matches(job, context),
+                                     allowed and job not in PR_ONLY_JOBS)
 
     def test_other_repositories_cannot_run_jobs(self):
         for event in ("pull_request", "push", "workflow_dispatch"):
@@ -107,24 +111,55 @@ class CiPolicy(unittest.TestCase):
             context = self.context(**{"needs.commits.outputs.code": code})
             for job in PR_JOBS:
                 self.assertEqual(condition_matches(job, context),
-                                 job not in ("checks", "windows"), (job, code))
+                                 job not in ("checks", "windows", "windows-native", "build-macos"),
+                                 (job, code))
 
     def test_required_gate_rejects_failures_skips_and_missing_detection(self):
         # Run the actual shell gate, including the docs-only exception.
         script = JOBS["checks-passed"].split("        run: |\n", 1)[1]
         script = "\n".join(line[10:] for line in script.splitlines() if line.startswith("          "))
+
+        def gate(code, checks, windows, native, commits, package_inputs="false", package="skipped",
+                 event="push", macos=None):
+            if macos is None:
+                macos = "success" if code == "true" and event == "pull_request" else "skipped"
+            return subprocess.run(
+                ["bash", "-e", "-c", script], capture_output=True,
+                env={**os.environ, "CODE": code, "RESULT": checks, "WINDOWS": windows,
+                     "NATIVE": native, "COMMITS": commits,
+                     "PACKAGE_INPUTS": package_inputs, "PACKAGE": package,
+                     "EVENT": event, "MACOS_RELEASE": macos},
+            ).returncode == 0
+
         for code, checks, windows, commits in itertools.product(
                 ("true", "false", ""), ("success", "failure", "cancelled", "skipped"),
                 ("success", "failure", "cancelled", "skipped"), ("success", "failure", "skipped")):
             expected = commits == "success" and (
                 (code == "true" and checks == windows == "success")
                 or (code == "false" and checks == windows == "skipped"))
-            result = subprocess.run(
-                ["bash", "-e", "-c", script], capture_output=True,
-                env={**os.environ, "CODE": code, "RESULT": checks,
-                     "WINDOWS": windows, "COMMITS": commits},
-            )
-            self.assertEqual(result.returncode == 0, expected, (code, checks, windows, commits))
+            # The native Windows job follows the same rule as the Windows check.
+            self.assertEqual(gate(code, checks, windows, windows, commits), expected,
+                             (code, checks, windows, commits))
+        for native in ("failure", "cancelled", "skipped"):
+            self.assertFalse(gate("true", "success", "success", native, "success"), native)
+        self.assertFalse(gate("false", "skipped", "skipped", "success", "success"))
+        # The Windows package job runs only when its inputs change, and must
+        # then succeed; missing detection fails like the platform jobs'.
+        for inputs, package in itertools.product(
+                ("true", "false", ""), ("success", "failure", "cancelled", "skipped")):
+            expected = ((inputs == "true" and package == "success")
+                        or (inputs == "false" and package == "skipped"))
+            self.assertEqual(gate("true", "success", "success", "success", "success", inputs, package),
+                             expected, (inputs, package))
+        # The macOS release builds run, and must pass, on pull requests with
+        # code changes only; anywhere else they must have been skipped.
+        for code, event, macos in itertools.product(
+                ("true", "false"), ("pull_request", "push", "workflow_dispatch"),
+                ("success", "failure", "cancelled", "skipped")):
+            platform = "success" if code == "true" else "skipped"
+            expected = macos == ("success" if code == "true" and event == "pull_request" else "skipped")
+            self.assertEqual(gate(code, platform, platform, platform, "success", event=event, macos=macos),
+                             expected, (code, event, macos))
 
     def test_ci_has_no_privileged_trigger_or_credentials(self):
         triggers = WORKFLOW.split("\npermissions:", 1)[0]
@@ -144,11 +179,13 @@ class CiPolicy(unittest.TestCase):
         # Keep runners a fixed hosted set; never accept a PR-controlled label.
         self.assertEqual(re.findall(r"^    runs-on: (.+)$", WORKFLOW, re.M), [
             "ubuntu-latest", "ubuntu-24.04", "${{ matrix.runner }}",
-            "${{ matrix.runner }}", "ubuntu-24.04", "${{ matrix.runner }}",
+            "${{ matrix.runner }}", "${{ matrix.runner }}", "windows-2025",
+            "ubuntu-24.04", "${{ matrix.runner }}", "macos-15",
         ])
         self.assertEqual(re.findall(r"^        runner: (.+)$", WORKFLOW, re.M), [
-            "[macos-14, macos-15, ubuntu-24.04, ubuntu-24.04-arm]",
+            "[macos-15, ubuntu-24.04, ubuntu-24.04-arm]",
+            "[windows-2025, windows-11-arm]",
             "[windows-2025, windows-11-arm]",
         ])
         self.assertEqual(re.findall(r"^          - runner: (.+)$", WORKFLOW, re.M),
-                         ["macos-15", "macos-15-intel", "ubuntu-24.04", "ubuntu-24.04-arm"])
+                         ["ubuntu-24.04", "ubuntu-24.04-arm"])

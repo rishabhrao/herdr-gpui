@@ -1,6 +1,7 @@
 use super::*;
 use anyhow::Context as _;
 
+mod channels;
 mod packages;
 
 #[test]

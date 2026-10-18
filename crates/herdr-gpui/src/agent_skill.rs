@@ -30,6 +30,13 @@ fn shell_word(path: &str) -> String {
     }
 }
 
+/// The executable agents are told to run: this one. On Windows that is the
+/// console program `herdr-gpui.exe`, which a shell waits for, never its
+/// windowed launcher. Call it off the UI thread.
+pub(crate) fn executable() -> Option<PathBuf> {
+    std::env::current_exe().ok()
+}
+
 /// How agents run `executable`. A macOS app bundle puts nothing on `PATH`,
 /// so they are told exactly which file to run.
 pub(crate) fn command(executable: Option<&Path>) -> String {
@@ -193,6 +200,14 @@ impl AgentSkill {
         if refresh {
             refresh_installed(cx);
         }
+        // The notes prompt names the executable, which `executable` finds on
+        // disk; resolve it now, off the UI thread, rather than on first use.
+        #[cfg(any(target_os = "macos", windows))]
+        cx.background_executor()
+            .spawn(async {
+                crate::control::reload_command();
+            })
+            .detach();
     }
 
     pub(crate) fn choice(cx: &App) -> Option<Choice> {
@@ -244,7 +259,7 @@ fn refresh_installed(cx: &mut App) {
     };
     cx.background_executor()
         .spawn(async move {
-            let text = text(std::env::current_exe().ok().as_deref());
+            let text = text(executable().as_deref());
             if let Err(error) = install(&home, &text) {
                 tracing::warn!(%error, "Cannot refresh the agent skill");
             }

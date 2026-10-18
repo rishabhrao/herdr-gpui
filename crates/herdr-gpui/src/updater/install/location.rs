@@ -12,7 +12,6 @@ use std::{
     fs::{self, File, OpenOptions},
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Component, Path, PathBuf},
-    process::Command,
     sync::atomic::AtomicBool,
 };
 
@@ -113,7 +112,7 @@ pub(in crate::updater) fn effective_uid() -> Result<u32> {
 }
 
 fn uid(cancel: &AtomicBool) -> Result<u32> {
-    output(Command::new("/usr/bin/id").arg("-u"), cancel)?
+    output(herdr_client::new_command("/usr/bin/id").arg("-u"), cancel)?
         .trim()
         .parse()
         .map_err(Error::EffectiveUid)

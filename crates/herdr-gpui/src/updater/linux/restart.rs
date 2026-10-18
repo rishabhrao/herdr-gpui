@@ -36,7 +36,7 @@ impl RestartGuard {
 }
 
 pub(in crate::updater) fn relaunch(executable: &Path) -> Result<RestartGuard> {
-    let mut child = Command::new(executable)
+    let mut child = herdr_client::new_command(executable)
         .arg(FLAG)
         .arg(std::process::id().to_string())
         .args(env::args_os().skip(1))
@@ -135,7 +135,7 @@ fn helper(args: &[OsString]) -> Result<()> {
     output.write_all(b"READY\n")?;
     output.flush()?;
     after_commit(io::stdin(), &parent, || {
-        Command::new(executable)
+        herdr_client::new_command(executable)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

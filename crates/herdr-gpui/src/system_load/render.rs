@@ -37,6 +37,9 @@ impl HerdrWindow {
         let segment = div()
             .id("system-load")
             .debug_selector(|| "system-load".into())
+            // The tooltip's text, which a screen reader cannot hover for.
+            .role(Role::Label)
+            .aria_value(details(reading, &host))
             .flex()
             .flex_none()
             .items_center()
@@ -282,6 +285,11 @@ fn details(reading: &Reading, host: &Host) -> String {
         Host::Local => "This machine".to_owned(),
         Host::Ssh(target) => target.clone(),
         Host::Wsl(distro) => format!("WSL · {distro}"),
+        #[cfg(feature = "azure")]
+        Host::Azure { id, .. } => match crate::azure::machine::Machine::parse(id) {
+            crate::azure::machine::Machine::Vm(name) => format!("Azure VM · {name}"),
+            crate::azure::machine::Machine::Sandbox(_) => "Azure sandbox".to_owned(),
+        },
     }];
     if let Some(sample) = reading.latest() {
         let mut cpu = match sample.cpu {

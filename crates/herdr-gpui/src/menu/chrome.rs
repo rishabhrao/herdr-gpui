@@ -221,8 +221,7 @@ impl HerdrWindow {
         viewport: Size<Pixels>,
         page: Page,
     ) -> Stateful<Div> {
-        let chrome = px(crate::titlebar::HEIGHT
-            + crate::worktree_banner::reserved(env!("HERDR_BUILD_WORKTREE") == "1"));
+        let chrome = px(crate::titlebar::HEIGHT);
         let band = (viewport.height - chrome - px(2. * MENU_MARGIN)).max(px(60.));
         let room = |side: Pixels| side.clamp(px(0.), band).max(px(60.)).min(band);
         let above = room(self.menu.anchor.y - px(12. + MENU_MARGIN) - chrome);
@@ -333,8 +332,7 @@ impl HerdrWindow {
             .when(matches!(page, Page::Usage(_)), |panel| {
                 // Rises from the status bar segment that opened it, kept inside
                 // the window and clear of the titlebar.
-                let chrome = px(crate::titlebar::HEIGHT
-                    + crate::worktree_banner::reserved(env!("HERDR_BUILD_WORKTREE") == "1"));
+                let chrome = px(crate::titlebar::HEIGHT);
                 let width = px(crate::usage::PANEL_WIDTH)
                     .min((viewport.width - px(2. * MENU_MARGIN)).max(px(0.)));
                 panel
@@ -366,11 +364,7 @@ impl HerdrWindow {
                             .min(px(if page == Page::Git { 340. } else { 420. })))
                         .max_h((viewport.height - px(24.)).max(px(0.)))
                         .when(page == Page::Git, |panel| {
-                            let top = crate::titlebar::HEIGHT
-                                + crate::worktree_banner::reserved(
-                                    env!("HERDR_BUILD_WORKTREE") == "1",
-                                )
-                                + 6.;
+                            let top = crate::titlebar::HEIGHT + 6.;
                             panel
                                 .max_h((viewport.height - px(top + 12.)).max(px(0.)))
                                 .shadow_lg()
@@ -509,7 +503,11 @@ impl HerdrWindow {
             .when(
                 matches!(
                     page,
-                    Page::Install | Page::AgentSkill | Page::VersionMismatch | Page::OpenLink
+                    Page::Install
+                        | Page::AgentSkill
+                        | Page::VersionMismatch
+                        | Page::OpenCheckout
+                        | Page::OpenLink
                 ),
                 |panel| {
                     panel
@@ -559,6 +557,11 @@ impl HerdrWindow {
                     div()
                         .id(item)
                         .debug_selector(move || format!("menu-{item}"))
+                        .role(Role::MenuItem)
+                        .aria_label(item)
+                        .when(Some(index) == self.menu.selected, |row| {
+                            row.aria_active_descendant()
+                        })
                         .min_h(px(font.line_height() + 12.))
                         .px(px(8.))
                         .flex()
@@ -669,6 +672,8 @@ impl HerdrWindow {
             panel = panel.child(self.render_worktree_script(cx));
         } else if page == Page::OpenLink {
             panel = panel.child(self.render_open_link(cx));
+        } else if page == Page::OpenCheckout {
+            panel = panel.child(self.render_open_checkout(cx));
         } else if page == Page::Install {
             panel = panel
                 .child(div().p(px(8.)).child("Herdr must be installed"))
@@ -741,6 +746,10 @@ impl HerdrWindow {
         div()
             .id("menu-overlay")
             .debug_selector(|| "menu-overlay".into())
+            // Focus stays here while the popup is open, so this is the menu
+            // or dialog a screen reader announces.
+            .role(page.accessible_role())
+            .aria_label(page.accessible_name())
             .absolute()
             .top_0()
             .left_0()
@@ -793,14 +802,7 @@ impl HerdrWindow {
             .on_key_down(cx.listener(Self::menu_key_down))
             .child(if pointer_anchored {
                 let position = if page == Page::Git {
-                    point(
-                        self.menu.anchor.x,
-                        px(crate::titlebar::HEIGHT
-                            + crate::worktree_banner::reserved(
-                                env!("HERDR_BUILD_WORKTREE") == "1",
-                            )
-                            + 6.),
-                    )
+                    point(self.menu.anchor.x, px(crate::titlebar::HEIGHT + 6.))
                 } else {
                     self.menu.anchor
                 };

@@ -132,9 +132,11 @@ install:
 icons-linux:
     python3 scripts/generate-linux-icons.py
 
-# Regenerate the Windows executable icons (Python standard library and rsvg-convert).
+# Regenerate the Windows executable icons and the installer's images (Python
+# standard library and rsvg-convert).
 icons-windows:
     python3 scripts/generate-windows-icons.py
+    python3 scripts/generate-installer-images.py
 
 # Regenerate all checked-in artwork on macOS (requires brew install librsvg).
 icons: icons-linux icons-windows
@@ -256,8 +258,19 @@ changelog:
     git-cliff --config cliff.toml
 
 # Exactly what a release would publish: CHANGELOG.md and RELEASE_NOTES.md.
+# Windows counts as signed once WINDOWS_SIGNING_SUBJECT is set, as in
+# release.yml; set WINDOWS_SIGNED=true or false to preview either without gh.
 changelog-release version output:
-    bash scripts/release/generate-changelog.sh "{{version}}" "{{output}}"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -z ${WINDOWS_SIGNED:-} ]]; then
+        if [[ -n $(gh variable get WINDOWS_SIGNING_SUBJECT --repo penso/herdr-gpui 2>/dev/null) ]]; then
+            WINDOWS_SIGNED=true
+        else
+            WINDOWS_SIGNED=false
+        fi
+    fi
+    WINDOWS_SIGNED=$WINDOWS_SIGNED bash scripts/release/generate-changelog.sh "{{version}}" "{{output}}"
 
 # Owner-only remote release; CI derives the YYYYMMDD.COUNTER version itself.
 release:

@@ -21,7 +21,7 @@ actions!(log_window, [Close, FocusSearch, FocusLevel]);
 /// The console's own keys, scoped to its window. They are bound with the app
 /// keymap so a config reload, which replaces every binding, keeps them.
 pub(crate) fn key_bindings() -> [KeyBinding; 5] {
-    let [close, search, level] = if cfg!(target_os = "linux") {
+    let [close, search, level] = if crate::controls::CTRL_SHORTCUTS {
         ["ctrl-w", "ctrl-f", "ctrl-l"]
     } else {
         ["cmd-w", "cmd-f", "cmd-l"]
@@ -106,6 +106,7 @@ fn open_deferred(cx: &mut App) {
 
 struct LogWindow {
     appearance: Appearance,
+    caption: crate::caption::Caption,
     _appearance: Subscription,
     focus: FocusHandle,
     search: Entity<SearchInput>,
@@ -319,6 +320,7 @@ impl LogWindow {
         });
         Self {
             appearance,
+            caption: Default::default(),
             _appearance: appearance_subscription,
             focus: cx.focus_handle(),
             search,
@@ -418,16 +420,19 @@ impl LogWindow {
 
 fn button(id: &'static str, label: impl Into<SharedString>, theme: &Theme) -> Stateful<Div> {
     let active = theme.active;
+    let label = label.into();
     div()
         .id(id)
         .debug_selector(move || id.into())
+        .role(Role::Button)
+        .aria_label(label.clone())
         .px_2()
         .py_1()
         .rounded(px(crate::config::corners::CONTROL))
         .bg(rgb(theme.surface))
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(active)))
-        .child(label.into())
+        .child(label)
 }
 
 fn styled_body(record: &Record, theme: &Theme) -> StyledText {
@@ -486,6 +491,7 @@ impl Render for LogWindow {
                 offset_in_item: px(0.),
             });
         }
+        self.caption.sync(window, &self.appearance.theme);
         let header = crate::titlebar::header(&self.appearance.theme, window, |window, _| {
             window.remove_window();
         });
@@ -552,6 +558,7 @@ impl Render for LogWindow {
                                         deferred(
                                             anchored().child(
                                                 div().id("level-menu").debug_selector(|| "level-menu".into())
+                                                    .role(Role::Menu).aria_label("Minimum level")
                                                     .absolute().top_full().left_0().w(px(180.))
                                                     .p_1().bg(rgb(theme.surface)).border_1().border_color(rgb(theme.active))
                                                     .occlude().track_focus(&self.menu_focus)
@@ -562,6 +569,10 @@ impl Render for LogWindow {
                                                     .children(LEVELS.iter().enumerate().map(|(index, level)| {
                                                         let level = *level;
                                                         div().id(("level-option", index)).debug_selector(move || format!("level-option-{index}"))
+                                                            .role(Role::MenuItemRadio)
+                                                            .aria_label(level.to_string())
+                                                            .aria_toggled(if self.minimum == level { Toggled::True } else { Toggled::False })
+                                                            .when(index == selected, |el| el.aria_active_descendant())
                                                             .px_2().py_1().cursor_pointer()
                                                             .when(index == selected, |el| el.bg(rgb(theme.active)))
                                                             .child(format!("{} {}", if self.minimum == level { "*" } else { " " }, level))
@@ -615,6 +626,9 @@ impl Render for LogWindow {
             )
             .child(
                 div()
+                    .id("log-rows")
+                    .role(Role::List)
+                    .aria_label("Log entries")
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
@@ -637,6 +651,14 @@ impl Render for LogWindow {
                                     div()
                                         .id(index)
                                         .debug_selector(move || format!("log-row-{index}"))
+                                        .role(Role::ListItem)
+                                        .aria_label(format!(
+                                            "{} {} {}: {}",
+                                            record.timestamp,
+                                            record.level.as_str(),
+                                            record.target,
+                                            record.message
+                                        ))
                                         .flex()
                                         .w_full()
                                         .py(px(1.))
@@ -688,6 +710,8 @@ impl Render for LogWindow {
                     div()
                         .id("log-detail")
                         .debug_selector(|| "log-detail".into())
+                        .role(Role::Label)
+                        .aria_value(record.line())
                         .flex_none()
                         .h((window.viewport_size().height * 0.2).min(px(100.)))
                         .overflow_y_scroll()
@@ -700,21 +724,25 @@ impl Render for LogWindow {
                         .child(record.line()),
                 )
             })
-            .child(
+            .child({
+                let summary = format!(
+                    "{} shown | {} dropped | {} | {}",
+                    self.rows.len(),
+                    self.dropped,
+                    if self.following { "LIVE" } else { "PAUSED" },
+                    self.status
+                );
                 div()
+                    .id("log-status")
+                    .role(Role::Status)
+                    .aria_label(summary.clone())
                     .flex_none()
                     .p_3()
                     .border_t_1()
                     .border_color(rgb(theme.active))
                     .truncate()
-                    .child(format!(
-                        "{} shown | {} dropped | {} | {}",
-                        self.rows.len(),
-                        self.dropped,
-                        if self.following { "LIVE" } else { "PAUSED" },
-                        self.status
-                    )),
-            );
+                    .child(summary)
+            });
         let border = theme.active;
         crate::titlebar::frame(window, border, root)
     }

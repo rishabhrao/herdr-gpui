@@ -169,7 +169,7 @@ pub(super) async fn verify_themes(
                 }
                 let expected = Theme::builtin(name)
                     .context("native fixture theme must be built-in")?
-                    .with_contrast(view.config.contrast);
+                    .styled_for(&view.config);
                 ensure!(
                     view.config.theme == name && view.theme == expected,
                     "{name} did not synchronously update Settings chrome"

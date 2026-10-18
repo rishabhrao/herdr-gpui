@@ -7,6 +7,7 @@ fn backdrop(opacity: f32, image: Option<&str>) -> Backdrop {
         opacity,
         blur: false,
         image: image.map(Into::into),
+        ..Backdrop::default()
     }
 }
 

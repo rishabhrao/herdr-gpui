@@ -1,11 +1,13 @@
-//! The inbox: the repository and its sources, the Issues / Pull requests /
-//! Runs tabs, search and filters, and the list beside its preview. Lists are
-//! virtualized, so thousands of beads cost only the rows on screen.
+//! A section's page: the repository and its sources, search and filters,
+//! and the list, with an item's details in a pane beside it once opened.
+//! Issues keep their filters in a column that stays folded until asked for,
+//! the active ones showing as chips. Lists are virtualized, so thousands of
+//! beads cost only the rows on screen.
 
 use super::{
-    Event, OrchestratorView, PREVIEW_MAX_SHARE, PREVIEW_MIN, PreviewDrag,
+    Event, OrchestratorView, PANE_MAX_SHARE, PANE_MIN, PaneDrag,
     look::{BLUE, GREEN, Look, MAGENTA, RED, YELLOW, age},
-    rows::{Runs, Sort, Tab},
+    rows::{Sort, Tab},
 };
 use crate::{
     config::corners,
@@ -19,17 +21,21 @@ impl OrchestratorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let preview = self
-            .preview_open
-            .then(|| self.render_preview_pane(window, cx));
+        let pane = self
+            .detail
+            .clone()
+            .map(|detail| self.render_pane(detail, window, cx));
+        let filters =
+            (self.tab == Tab::Issues && self.filters_open).then(|| self.render_facets(cx));
         div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
             .child(self.render_header(cx))
-            .child(self.render_tabs(cx))
             .child(self.render_search_row(window, cx))
+            .children(self.render_pills(cx))
+            .children(self.render_chips(cx))
             .children(self.render_banners(cx))
             .child(
                 div()
@@ -38,92 +44,338 @@ impl OrchestratorView {
                     .min_h_0()
                     .flex()
                     .on_drag_move(cx.listener(
-                        |this, event: &DragMoveEvent<PreviewDrag>, window, cx| {
+                        |this, event: &DragMoveEvent<PaneDrag>, window, cx| {
                             let right = event.bounds.right();
                             let width = f32::from(right - event.event.position.x);
-                            let max = f32::from(window.viewport_size().width) * PREVIEW_MAX_SHARE;
-                            // Dragged nearly shut, the preview closes.
-                            if width < PREVIEW_MIN / 2. {
-                                this.preview_open = false;
+                            let max = f32::from(window.viewport_size().width) * PANE_MAX_SHARE;
+                            // Dragged nearly shut, the details close.
+                            if width < PANE_MIN / 2. {
+                                this.detail = None;
                             } else {
-                                this.preview_width = width.clamp(PREVIEW_MIN, max.max(PREVIEW_MIN));
+                                this.pane_width = width.clamp(PANE_MIN, max.max(PANE_MIN));
                             }
                             cx.notify();
                         },
                     ))
+                    .children(filters)
                     .child(self.render_list(cx))
-                    .children(preview),
+                    .children(pane),
             )
             .when(self.sort_open, |el| el.child(self.render_sort_menu(cx)))
             .into_any_element()
     }
 
+    /// The open item's page beside the list; its left edge drags to resize
+    /// it, or shut.
+    fn render_pane(
+        &mut self,
+        detail: super::Detail,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let theme = &self.look.theme;
+        let handle = div()
+            .id("orchestrator-pane-handle")
+            .flex_none()
+            .w(px(6.))
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .border_l_1()
+            .border_color(rgb(theme.active))
+            .cursor(CursorStyle::ResizeLeftRight)
+            .on_drag(PaneDrag, |drag, _, _, cx| cx.new(|_| *drag))
+            .child(
+                div()
+                    .w(px(2.))
+                    .h(px(28.))
+                    .rounded_full()
+                    .bg(rgb(theme.active)),
+            );
+        div()
+            .debug_selector(|| "orchestrator-pane".into())
+            .flex_none()
+            .w(px(self.pane_width))
+            .h_full()
+            .flex()
+            .child(handle)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(self.render_detail(detail, window, cx)),
+            )
+    }
+
+    /// How many of the Issues filters narrow the list.
+    fn active_filters(&self) -> usize {
+        usize::from(self.filters.provider.is_some())
+            + usize::from(self.filters.has_run)
+            + usize::from(self.filters.blocked)
+            + usize::from(self.label.is_some())
+    }
+
+    /// The Issues filters' column: state, and the labels the open issues
+    /// carry, most used first. Backends and projects are the pills'.
+    fn render_facets(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let look = &self.look;
+        let theme = &look.theme;
+        // Counted across every repository listed.
+        let open: Vec<&crate::orchestrator::Item> = self
+            .repos
+            .iter()
+            .flat_map(|repo| repo.snapshot.items.iter())
+            .filter(|item| item.pull_request.is_none() && !super::rows::closed(item))
+            .collect();
+        let mut labels: Vec<(String, usize)> = Vec::new();
+        for label in open.iter().flat_map(|item| &item.labels) {
+            match labels.iter_mut().find(|(name, _)| name == label) {
+                Some((_, count)) => *count += 1,
+                None => labels.push((label.clone(), 1)),
+            }
+        }
+        labels.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        labels.truncate(FACET_LABELS);
+        let hover = theme.surface;
+        let option = |id: SharedString, label: SharedString, count: Option<usize>, on: bool| {
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .py(px(3.))
+                .rounded(px(corners::SMALL))
+                .cursor_pointer()
+                .hover(move |style| style.bg(rgb(hover)))
+                .when(on, |el| el.bg(rgb(theme.primary_wash())))
+                .child(
+                    div()
+                        .flex_none()
+                        .size(px(11.))
+                        .rounded(px(2.))
+                        .border_1()
+                        .border_color(rgb(if on { theme.primary() } else { theme.muted }))
+                        .when(on, |el| el.bg(rgb(theme.primary()))),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(look.small())
+                        .child(label),
+                )
+                .children(count.map(|count| look.muted(count.to_string())))
+        };
+        let heading = |text: &'static str| look.label(text).pt_2().pb_1();
+        let has_run = open
+            .iter()
+            .filter(|item| {
+                let key = item.key.canonical();
+                self.repos
+                    .iter()
+                    .flat_map(|repo| repo.snapshot.runs.iter())
+                    .any(|run| run.item_key == key)
+            })
+            .count();
+        let blocked = open
+            .iter()
+            .filter(|item| !item.blocked_by.is_empty() || item.state == "blocked")
+            .count();
+        div()
+            .id("orchestrator-facets")
+            .debug_selector(|| "orchestrator-facets".into())
+            .flex_none()
+            .w(px(FACETS_WIDTH))
+            .h_full()
+            .overflow_y_scroll()
+            .px_3()
+            .py_2()
+            .flex()
+            .flex_col()
+            .border_r_1()
+            .border_color(rgb(theme.active))
+            .child(heading("STATE"))
+            .child(
+                option(
+                    "orchestrator-facet-run".into(),
+                    "Has agent".into(),
+                    Some(has_run),
+                    self.filters.has_run,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.filters.has_run = !this.filters.has_run;
+                    this.refresh_rows();
+                    cx.notify();
+                })),
+            )
+            .child(
+                option(
+                    "orchestrator-facet-blocked".into(),
+                    "Blocked".into(),
+                    Some(blocked),
+                    self.filters.blocked,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.filters.blocked = !this.filters.blocked;
+                    this.refresh_rows();
+                    cx.notify();
+                })),
+            )
+            .when(!labels.is_empty(), |el| {
+                el.child(heading("LABELS"))
+                    .children(labels.into_iter().map(|(label, count)| {
+                        let on = self.label.as_deref() == Some(label.as_str());
+                        let picked = label.clone();
+                        option(
+                            format!("orchestrator-facet-label-{label}").into(),
+                            label.into(),
+                            Some(count),
+                            on,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.label = (this.label.as_deref() != Some(picked.as_str()))
+                                .then(|| picked.clone());
+                            this.refresh_rows();
+                            cx.notify();
+                        }))
+                    }))
+            })
+    }
+
+    /// While the Issues filters are folded, the ones in use as chips that
+    /// clear them.
+    fn render_chips(&self, cx: &mut Context<Self>) -> Option<Div> {
+        if self.tab != Tab::Issues || self.filters_open || self.active_filters() == 0 {
+            return None;
+        }
+        let look = &self.look;
+        let theme = &look.theme;
+        let chip = |id: &'static str, text: String, clear: fn(&mut Self)| {
+            div()
+                .id(id)
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py(px(1.))
+                .rounded_full()
+                .bg(rgb(theme.primary_wash()))
+                .cursor_pointer()
+                .text_size(look.small())
+                .child(text)
+                .child(look.icon("icons/close.svg", 9., theme.muted))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    clear(this);
+                    this.refresh_rows();
+                    cx.notify();
+                }))
+        };
+        let mut row = div()
+            .debug_selector(|| "orchestrator-chips".into())
+            .flex_none()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .px_4()
+            .pb_2()
+            .child(look.muted("Showing only"));
+        if let Some(provider) = self.filters.provider {
+            row = row.child(chip(
+                "orchestrator-chip-source",
+                provider_name(provider).into(),
+                |this| {
+                    this.filters.provider = None;
+                },
+            ));
+        }
+        if self.filters.has_run {
+            row = row.child(chip("orchestrator-chip-run", "Has agent".into(), |this| {
+                this.filters.has_run = false;
+            }));
+        }
+        if self.filters.blocked {
+            row = row.child(chip(
+                "orchestrator-chip-blocked",
+                "Blocked".into(),
+                |this| {
+                    this.filters.blocked = false;
+                },
+            ));
+        }
+        if let Some(label) = &self.label {
+            row = row.child(chip("orchestrator-chip-label", label.clone(), |this| {
+                this.label = None;
+            }));
+        }
+        Some(row)
+    }
+
     fn render_header(&self, cx: &mut Context<Self>) -> Div {
         let look = &self.look;
         let theme = &look.theme;
-        let info = self.snapshot.repo.as_ref();
-        let name = info
-            .and_then(|info| info.remote.as_ref())
-            .map(|remote| remote.source.repository.clone())
-            .or_else(|| {
-                info.map(|info| {
-                    info.main_root
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(&info.main_root)
-                        .to_owned()
-                })
-            })
-            .unwrap_or_else(|| "Reading the repository\u{2026}".into());
-        let host = match &self.request.target {
-            herdr_client::ConnectTarget::Ssh { target, .. } => target.clone(),
-            _ => "local".into(),
+        let title = match self.repos.as_slice() {
+            [] => "No repositories yet".to_owned(),
+            [only] => only.name(),
+            many => format!("{} projects", many.len()),
         };
-        let sources = self
-            .snapshot
-            .sources
+        // Each backend once, across every repository: syncing while any is,
+        // failed or waiting for a sign-in if any is, else what was synced.
+        let mut providers: Vec<(Provider, Vec<&SyncState>)> = Vec::new();
+        for status in self.repos.iter().flat_map(|repo| &repo.snapshot.sources) {
+            match providers
+                .iter_mut()
+                .find(|(provider, _)| *provider == status.key.provider)
+            {
+                Some((_, states)) => states.push(&status.state),
+                None => providers.push((status.key.provider, vec![&status.state])),
+            }
+        }
+        let github = providers
             .iter()
+            .any(|(provider, _)| *provider == Provider::Github);
+        let sources = providers
+            .into_iter()
             .enumerate()
-            .map(|(index, status)| {
-                let (text, color, sign_in) = match &status.state {
-                    SyncState::Syncing => ("syncing\u{2026}".to_owned(), look.hue(BLUE), false),
-                    SyncState::Synced { count, at } => (
-                        format!("{count} \u{00b7} {}", synced(*at)),
-                        look.hue(GREEN),
-                        false,
-                    ),
-                    SyncState::Capped { count } => {
-                        (format!("first {count}"), look.hue(YELLOW), false)
+            .map(|(index, (provider, states))| {
+                let any = |wanted: fn(&SyncState) -> bool| states.iter().any(|state| wanted(state));
+                let (text, color, sign_in) = if any(|state| matches!(state, SyncState::Syncing)) {
+                    ("syncing\u{2026}".to_owned(), look.hue(BLUE), false)
+                } else if any(|state| matches!(state, SyncState::Failed(_))) {
+                    ("failed".to_owned(), look.hue(RED), false)
+                } else if any(|state| matches!(state, SyncState::SignIn)) {
+                    ("sign in".to_owned(), look.hue(YELLOW), true)
+                } else {
+                    let count: usize = states
+                        .iter()
+                        .map(|state| match state {
+                            SyncState::Synced { count, .. } | SyncState::Capped { count } => *count,
+                            _ => 0,
+                        })
+                        .sum();
+                    let at = states
+                        .iter()
+                        .filter_map(|state| match state {
+                            SyncState::Synced { at, .. } => Some(*at),
+                            _ => None,
+                        })
+                        .max();
+                    match at {
+                        Some(at) => (
+                            format!("{count} \u{00b7} {}", synced(at)),
+                            look.hue(GREEN),
+                            false,
+                        ),
+                        None => ("not supported yet".to_owned(), theme.muted, false),
                     }
-                    SyncState::SignIn => ("sign in".to_owned(), look.hue(YELLOW), true),
-                    SyncState::Unsupported => ("not supported yet".to_owned(), theme.muted, false),
-                    SyncState::Failed(_) => ("failed".to_owned(), look.hue(RED), false),
                 };
-                let provider = status.key.provider;
-                div()
-                    .id(("orchestrator-source", index))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .px_2()
-                    .py(px(2.))
-                    .rounded(px(corners::CONTROL))
-                    .border_1()
-                    .border_color(rgb(theme.active))
-                    .text_size(look.small())
-                    .child(match provider {
-                        Provider::Github => look
-                            .icon("icons/github.svg", 12., theme.subtext())
-                            .into_any_element(),
-                        Provider::Beads => look.badge("bd", MAGENTA).into_any_element(),
-                        Provider::Gitlab => look.badge("gl", RED).into_any_element(),
-                    })
-                    .child(match provider {
-                        Provider::Github => "GitHub",
-                        Provider::Beads => "Beads",
-                        Provider::Gitlab => "GitLab",
-                    })
+                source_chip(look, ("orchestrator-source", index), provider)
                     .child(look.dot(color, 6.))
                     .child(div().text_color(rgb(theme.muted)).child(text))
                     .when(sign_in, |el| {
@@ -131,9 +383,14 @@ impl OrchestratorView {
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::SignIn)))
                     })
             });
-        let dispatchable = self.tab != Tab::Runs
-            && self.selected.is_some()
-            && self.snapshot.access == Some(Access::ReadWrite);
+        // A repository without a GitHub remote has no GitHub source, which
+        // reads like a missing account without this.
+        let no_github = (!github && !self.repos.is_empty()).then(|| {
+            source_chip(look, ("orchestrator-source-none", 0), Provider::Github)
+                .child(div().text_color(rgb(theme.muted)).child("no GitHub remote"))
+        });
+        let dispatchable =
+            self.selected.is_some() && self.snapshot().access == Some(Access::ReadWrite);
         div()
             .flex_none()
             .flex()
@@ -143,27 +400,11 @@ impl OrchestratorView {
             .px_4()
             .py_2()
             .child(look.icon("icons/git-branch.svg", 14., theme.subtext()))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
-            .child(look.chip(host))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
             .children(sources)
+            .children(no_github)
             .child(div().flex_1())
-            .child(
-                look.icon_button("orchestrator-refresh", "icons/refresh.svg")
-                    .on_click(cx.listener(|this, _, _, _| this.refresh())),
-            )
-            .when(!self.detached, |el| {
-                el.child(
-                    look.icon_button("orchestrator-window", "icons/window-maximize.svg")
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::OpenWindow))),
-                )
-            })
-            .child(
-                look.icon_button("orchestrator-preview", "icons/panel-right.svg")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.preview_open = !this.preview_open;
-                        cx.notify();
-                    })),
-            )
+            .child(self.render_refresh(cx))
             .when(dispatchable, |el| {
                 el.child(
                     look.button("orchestrator-dispatch", "Dispatch agent", true)
@@ -176,52 +417,38 @@ impl OrchestratorView {
             })
     }
 
-    fn render_tabs(&self, cx: &mut Context<Self>) -> Div {
+    /// Refresh, spinning and inert while a sync it would ask for runs.
+    fn render_refresh(&self, cx: &mut Context<Self>) -> AnyElement {
         let look = &self.look;
-        let theme = &look.theme;
-        let runs = Runs::new(&self.snapshot.runs, &self.snapshot.sessions, &self.live);
-        let waiting = super::rows::attention(&runs);
-        let counts = [
-            self.issue_rows.len(),
-            self.pull_request_rows.len(),
-            self.snapshot.runs.len(),
-        ];
+        if !self.refreshing() {
+            return look
+                .icon_button("orchestrator-refresh", "icons/refresh.svg", "Refresh")
+                .debug_selector(|| "orchestrator-refresh".into())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.ask_refresh();
+                    cx.notify();
+                }))
+                .into_any_element();
+        }
         div()
+            .id("orchestrator-refresh")
+            .debug_selector(|| "orchestrator-refresh-busy".into())
             .flex_none()
+            .size(px(24.))
             .flex()
-            .items_end()
-            .gap_4()
-            .px_4()
-            .border_b_1()
-            .border_color(rgb(theme.active))
-            .children(Tab::ALL.into_iter().zip(counts).map(|(tab, count)| {
-                let on = tab == self.tab;
-                div()
-                    .id(SharedString::from(format!(
-                        "orchestrator-tab-{}",
-                        tab.label()
-                    )))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .pb(px(6.))
-                    .cursor_pointer()
-                    .when(on, |el| el.border_b_2().border_color(rgb(theme.primary())))
-                    .text_color(rgb(if on { theme.foreground } else { theme.muted }))
-                    .child(tab.label())
-                    .child(
-                        div()
-                            .px(px(5.))
-                            .rounded_full()
-                            .bg(rgb(theme.active))
-                            .text_size(look.tiny())
-                            .child(count.to_string()),
-                    )
-                    .when(tab == Tab::Runs && waiting > 0, |el| {
-                        el.child(look.dot(look.hue(YELLOW), 6.))
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_tab(tab, cx)))
-            }))
+            .items_center()
+            .justify_center()
+            .child(
+                look.icon("icons/refresh.svg", 14., look.theme.muted)
+                    .with_animation(
+                        "orchestrator-refresh-spin",
+                        Animation::new(SPIN).repeat(),
+                        |icon, delta| {
+                            icon.with_transformation(Transformation::rotate(percentage(delta)))
+                        },
+                    ),
+            )
+            .into_any_element()
     }
 
     fn render_search_row(&self, window: &Window, cx: &mut Context<Self>) -> Div {
@@ -246,34 +473,42 @@ impl OrchestratorView {
         };
         match self.tab {
             Tab::Issues => {
-                row = row
-                    .child(toggle(
-                        "orchestrator-beads",
-                        "Beads",
-                        filters.provider == Some(Provider::Beads),
-                        |this| {
-                            this.filters.provider = match this.filters.provider {
-                                Some(Provider::Beads) => None,
-                                _ => Some(Provider::Beads),
-                            };
-                        },
-                    ))
-                    .child(toggle(
-                        "orchestrator-has-run",
-                        "Has agent",
-                        filters.has_run,
-                        |this| {
-                            this.filters.has_run = !this.filters.has_run;
-                        },
-                    ))
-                    .child(toggle(
-                        "orchestrator-blocked",
-                        "Blocked",
-                        filters.blocked,
-                        |this| {
-                            this.filters.blocked = !this.filters.blocked;
-                        },
-                    ));
+                let active = self.active_filters();
+                let open = self.filters_open;
+                row = row.child(
+                    div()
+                        .id("orchestrator-filters")
+                        .debug_selector(|| "orchestrator-filters".into())
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .py(px(3.))
+                        .rounded(px(corners::CONTROL))
+                        .border_1()
+                        .border_color(rgb(if open { theme.primary() } else { theme.active }))
+                        .when(open, |el| el.bg(rgb(theme.primary_wash())))
+                        .cursor_pointer()
+                        .text_size(look.small())
+                        .child(look.icon("icons/panel-left.svg", 12., theme.subtext()))
+                        .child("Filters")
+                        .when(active > 0, |el| {
+                            el.child(
+                                div()
+                                    .px(px(5.))
+                                    .rounded_full()
+                                    .bg(rgb(theme.primary()))
+                                    .text_color(rgb(theme.text_on(theme.primary())))
+                                    .text_size(look.tiny())
+                                    .child(active.to_string()),
+                            )
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.filters_open = !this.filters_open;
+                            cx.notify();
+                        })),
+                );
             }
             Tab::PullRequests => {
                 row = row
@@ -285,11 +520,14 @@ impl OrchestratorView {
                             this.filters.open_only = !this.filters.open_only;
                         },
                     ))
-                    .when(self.login.is_some(), |row| {
-                        row.child(toggle("orchestrator-mine", "Mine", self.mine, |this| {
-                            this.mine = !this.mine;
-                        }))
-                    })
+                    .when(
+                        self.repos.iter().any(|repo| repo.reading_login().is_some()),
+                        |row| {
+                            row.child(toggle("orchestrator-mine", "Mine", self.mine, |this| {
+                                this.mine = !this.mine;
+                            }))
+                        },
+                    )
                     .child(toggle(
                         "orchestrator-pr-has-run",
                         "Has agent",
@@ -299,36 +537,24 @@ impl OrchestratorView {
                         },
                     ));
             }
-            Tab::Runs => {
-                row = row.child(toggle(
-                    "orchestrator-active",
-                    "Active",
-                    self.active_runs,
-                    |this| {
-                        this.active_runs = !this.active_runs;
-                    },
-                ));
-            }
         }
-        row.when(self.tab != Tab::Runs, |row| {
-            row.child(
-                div()
-                    .id("orchestrator-sort")
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .cursor_pointer()
-                    .text_size(look.small())
-                    .text_color(rgb(theme.subtext()))
-                    .child(self.sort.label())
-                    .child(look.icon("icons/chevron-down.svg", 10., theme.muted))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.sort_open = !this.sort_open;
-                        cx.notify();
-                    })),
-            )
-        })
+        row.child(
+            div()
+                .id("orchestrator-sort")
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap_1()
+                .cursor_pointer()
+                .text_size(look.small())
+                .text_color(rgb(theme.subtext()))
+                .child(self.sort.label())
+                .child(look.icon("icons/chevron-down.svg", 10., theme.muted))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.sort_open = !this.sort_open;
+                    cx.notify();
+                })),
+        )
     }
 
     /// One outlined field, the magnifier inside: the outline turns accent
@@ -367,11 +593,15 @@ impl OrchestratorView {
             .child(div().flex_1().min_w_0().child(self.search.clone()))
             .when(!self.query.is_empty(), |field| {
                 field.child(
-                    look.icon_button("orchestrator-search-clear", "icons/close.svg")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.search.update(cx, |search, cx| search.clear(cx));
-                            window.focus(&this.search.read(cx).focus.clone(), cx);
-                        })),
+                    look.icon_button(
+                        "orchestrator-search-clear",
+                        "icons/close.svg",
+                        "Clear search",
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.search.update(cx, |search, cx| search.clear(cx));
+                        window.focus(&this.search.read(cx).focus.clone(), cx);
+                    })),
                 )
             })
     }
@@ -423,37 +653,49 @@ impl OrchestratorView {
     fn render_banners(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let look = &self.look;
         let mut banners = Vec::new();
-        if let Some(Access::ReadOnly { found }) = self.snapshot.access {
-            banners.push(banner(
-                look,
-                RED,
-                "icons/lock.svg",
-                format!(
-                    "Shared data is schema {found}; this herdr-gpui understands up to {}. Read-only until updated.",
-                    crate::orchestrator::SCHEMA_VERSION
-                ),
-            ));
-        }
-        if let Some(error) = &self.snapshot.error {
-            banners.push(banner(look, RED, "icons/x.svg", error.to_string()));
-        }
-        for status in &self.snapshot.sources {
-            let text = match &status.state {
-                SyncState::Failed(error) => {
-                    format!("{}: {error}", provider_name(status.key.provider))
+        let named = self.repos.len() > 1;
+        for repo in &self.repos {
+            // With several projects listed, each says whose trouble it is.
+            let of = |text: String| {
+                if named {
+                    format!("{}: {text}", repo.name())
+                } else {
+                    text
                 }
-                SyncState::Capped { count } => format!(
-                    "{} has more than {count} items; the newest are shown and not cached.",
-                    provider_name(status.key.provider)
-                ),
-                _ => continue,
             };
-            let hue = if matches!(status.state, SyncState::Capped { .. }) {
-                YELLOW
-            } else {
-                RED
-            };
-            banners.push(banner(look, hue, "icons/refresh.svg", text));
+            let snapshot = &repo.snapshot;
+            if let Some(Access::ReadOnly { found }) = snapshot.access {
+                banners.push(banner(
+                    look,
+                    RED,
+                    "icons/lock.svg",
+                    of(format!(
+                        "Shared data is schema {found}; this herdr-gpui understands up to {}. Read-only until updated.",
+                        crate::orchestrator::SCHEMA_VERSION
+                    )),
+                ));
+            }
+            if let Some(error) = &snapshot.error {
+                banners.push(banner(look, RED, "icons/x.svg", of(error.to_string())));
+            }
+            for status in &snapshot.sources {
+                let text = match &status.state {
+                    SyncState::Failed(error) => {
+                        format!("{}: {error}", provider_name(status.key.provider))
+                    }
+                    SyncState::Capped { count } => format!(
+                        "{} has more than {count} items; the newest are shown and not cached.",
+                        provider_name(status.key.provider)
+                    ),
+                    _ => continue,
+                };
+                let hue = if matches!(status.state, SyncState::Capped { .. }) {
+                    YELLOW
+                } else {
+                    RED
+                };
+                banners.push(banner(look, hue, "icons/refresh.svg", of(text)));
+            }
         }
         banners
             .into_iter()
@@ -462,12 +704,21 @@ impl OrchestratorView {
                 banner
                     .id(("orchestrator-banner", index))
                     .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, _| this.refresh()))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.ask_refresh();
+                        cx.notify();
+                    }))
                     .into_any_element()
             })
             .collect()
     }
 }
+
+/// The filters' column width, and the most labels it offers.
+const FACETS_WIDTH: f32 = 200.;
+/// One turn of the busy Refresh icon.
+const SPIN: std::time::Duration = std::time::Duration::from_millis(900);
+const FACET_LABELS: usize = 12;
 
 /// "synced now", "synced 4m ago": when a source last finished a sync.
 fn synced(at: chrono::DateTime<chrono::Utc>) -> String {
@@ -477,11 +728,41 @@ fn synced(at: chrono::DateTime<chrono::Utc>) -> String {
     }
 }
 
-fn provider_name(provider: Provider) -> &'static str {
+pub(super) fn provider_name(provider: Provider) -> &'static str {
     match provider {
         Provider::Github => "GitHub",
         Provider::Beads => "Beads",
         Provider::Gitlab => "GitLab",
+    }
+}
+
+/// A backend's chip: its mark and name, for its state to follow.
+fn source_chip(look: &Look, id: (&'static str, usize), provider: Provider) -> Stateful<Div> {
+    let theme = &look.theme;
+    div()
+        .id(id)
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap_1()
+        .px_2()
+        .py(px(2.))
+        .rounded(px(corners::CONTROL))
+        .border_1()
+        .border_color(rgb(theme.active))
+        .text_size(look.small())
+        .child(provider_mark(look, provider))
+        .child(provider_name(provider))
+}
+
+/// A backend's mark: GitHub's logo, else a short colored tag.
+pub(super) fn provider_mark(look: &Look, provider: Provider) -> AnyElement {
+    match provider {
+        Provider::Github => look
+            .icon("icons/github.svg", 12., look.theme.subtext())
+            .into_any_element(),
+        Provider::Beads => look.badge("bd", MAGENTA).into_any_element(),
+        Provider::Gitlab => look.badge("gl", RED).into_any_element(),
     }
 }
 

@@ -27,7 +27,7 @@ fn a_long_conversation_draws_only_the_rows_in_view(cx: &mut TestAppContext) {
         ui: config.ui.clone(),
         mono: config.terminal.clone(),
     };
-    let (view, cx) = cx.add_window_view(|_, cx| OrchestratorView::new(request, look, cx));
+    let (view, cx) = cx.add_window_view(|_, cx| OrchestratorView::with_repo(request, look, cx));
     // A paragraph far wider than the window, then a hundred short lines.
     let body: String = std::iter::once(format!("{}\n", "wrapped ".repeat(400)))
         .chain((0..100).map(|line| format!("- line {line}\n")))
@@ -53,9 +53,9 @@ fn a_long_conversation_draws_only_the_rows_in_view(cx: &mut TestAppContext) {
     let key = pr.key.canonical();
     cx.update(|_, cx| {
         view.update(cx, |view, cx| {
-            view.request.token = Some(crate::github::Tokens::new(&profile, []));
+            view.repo_mut().request.token = Some(crate::github::Tokens::new(&profile, []));
             view.pr.set_comments(comments);
-            view.snapshot.items = Arc::new(vec![pr]);
+            view.repo_mut().snapshot.items = Arc::new(vec![pr]);
             view.detail = Some(Detail {
                 key,
                 tab: DetailTab::Conversation,

@@ -10,15 +10,23 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-/// The machine whose agent sign-ins are read. A remote host is asked over SSH,
-/// so its own credentials are used and never leave it.
+/// The machine whose agent sign-ins are read. A remote host is asked over SSH
+/// and a WSL distribution through `wsl.exe`, so its own credentials are used
+/// and never leave it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Host {
     Local,
     Ssh(String),
-    /// A WSL distribution. Nothing is read from one yet: its files are not this
-    /// machine's, and no shell is opened into it for these probes.
+    /// A WSL distribution, asked through a `wsl.exe` shell as a remote host
+    /// is over SSH: its files and sign-ins are its own, not this machine's.
     Wsl(String),
+    /// An Azure machine, by its saved account and ID. Only its CPU and memory
+    /// are sampled, through the command its connection uses; see `load_of`.
+    #[cfg(feature = "azure")]
+    Azure {
+        account: String,
+        id: String,
+    },
 }
 
 impl Host {
@@ -35,6 +43,25 @@ impl Host {
                 Some(Self::Local)
             }
         }
+    }
+
+    /// The host whose CPU and memory a device shows: `of`'s, and also an
+    /// Azure machine's, sampled through its own connection command.
+    pub(crate) fn load_of(target: &ConnectTarget) -> Option<Self> {
+        #[cfg(feature = "azure")]
+        if let ConnectTarget::Cloud {
+            provider: herdr_client::CloudProvider::Azure,
+            account,
+            id,
+            ..
+        } = target
+        {
+            return Some(Self::Azure {
+                account: account.clone(),
+                id: id.clone(),
+            });
+        }
+        Self::of(target)
     }
 }
 
@@ -205,6 +232,10 @@ impl Window {
 impl Pace {
     /// `11% in reserve · Lasts until reset`, as CodexBar puts it.
     pub fn describe(&self, used: f32) -> String {
+        if used >= 100. {
+            // The header already shows when the window resets.
+            return "Ran out".into();
+        }
         let margin = self.expected - used;
         let standing = if margin >= 0.5 {
             format!("{}% in reserve", margin.round())

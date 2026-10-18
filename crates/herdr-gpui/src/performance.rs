@@ -10,6 +10,9 @@ use std::{
 #[cfg(target_os = "macos")]
 #[path = "performance_native.rs"]
 mod native;
+#[cfg(windows)]
+#[path = "performance_native_windows.rs"]
+mod native;
 
 #[derive(Default, Debug, Clone, Copy)]
 pub(crate) struct Counts {
@@ -131,6 +134,8 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
         for frame in 0..141 {
             timer.timer(Duration::from_millis(20)).await;
             let prepared = AnyWindowHandle::from(handle).update(cx, |root, window, cx| {
+                #[cfg(windows)]
+                let target = native::Target::acquire(window)?;
                 if (1..=10).contains(&frame) {
                     root.downcast::<HerdrWindow>()
                         .map_err(|_| anyhow!("unexpected root"))?
@@ -139,29 +144,37 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                         });
                 }
                 *cx.default_global::<Counts>() = Counts::default();
-                Ok::<_, anyhow::Error>(
-                    if frame > 110 {
-                        window.viewport_size().height.to_f64() / 2.
-                    } else {
-                        0.
-                    } + 60.
-                        + (frame % 5) as f64 * 40.,
-                )
+                let y = if frame > 110 {
+                    window.viewport_size().height.to_f64() / 2.
+                } else {
+                    0.
+                } + 60.
+                    + (frame % 5) as f64 * 40.;
+                #[cfg(windows)]
+                let y = (y, target);
+                Ok::<_, anyhow::Error>(y)
             });
             let Ok(Ok(y)) = prepared else {
                 eprintln!("PERF FAIL preparing frame: {prepared:?}");
                 std::process::exit(1);
             };
+            #[cfg(windows)]
+            let (y, target) = y;
             let start = Instant::now();
-            #[cfg(target_os = "macos")]
-            if frame > 0
-                && let Err(error) = native::dispatch(
-                    y,
-                    (frame > 80).then_some(if frame % 20 < 10 { -32 } else { 32 }),
-                )
-            {
-                eprintln!("PERF FAIL: {error:#}");
-                std::process::exit(1);
+            #[cfg(any(target_os = "macos", windows))]
+            if frame > 0 {
+                let scroll = (frame > 80).then_some(if frame % 20 < 10 { -32 } else { 32 });
+                #[cfg(target_os = "macos")]
+                let dispatched = native::dispatch(y, scroll);
+                // Windows messages go to the window's own procedure, which
+                // reenters GPUI, so they are sent here, outside the update
+                // that found the window.
+                #[cfg(windows)]
+                let dispatched = target.dispatch(y, scroll);
+                if let Err(error) = dispatched {
+                    eprintln!("PERF FAIL: {error:#}");
+                    std::process::exit(1);
+                }
             }
             let result =
                 AnyWindowHandle::from(handle).update(cx, |root, window, cx| -> Result<()> {
@@ -329,6 +342,12 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                     let view = root
                         .downcast::<HerdrWindow>()
                         .map_err(|_| anyhow!("unexpected root"))?;
+                    // Draw whatever else is pending first, unmeasured: the
+                    // platform's own frame need not have run since the last
+                    // step, and whatever invalidated the sidebar meanwhile
+                    // must not count against the surface update. The ARM
+                    // runner re-rendered it so on the first step.
+                    window.draw(cx).clear(cx);
                     view.update(cx, |view, cx| -> Result<()> {
                         let surface = Arc::make_mut(
                             view.live
@@ -356,7 +375,7 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                         || (!uncached && counts.shapes != 0)
                         || counts.sidebar_renders != usize::from(full)
                     {
-                        bail!("terminal redraw (full={full}): {counts:?}");
+                        bail!("terminal redraw step={step} (full={full}): {counts:?}");
                     }
                     Ok(elapsed)
                 });

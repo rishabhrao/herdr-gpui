@@ -13,6 +13,8 @@ Homebrew cask is upgraded by running Homebrew (see [Homebrew Casks](#homebrew-ca
 and Linux `.deb`, `.rpm`, and Arch installations use their owning package manager
 (see [Linux Packages](#linux-packages)). AppImage, Snap, Flatpak, and `/nix/store`
 installations remain externally managed. The Nix flake embeds no update key.
+Windows installations update by running the release's signed per-user installer
+(see [Windows Installers](#windows-installers)).
 
 ## Repository Configuration
 
@@ -131,6 +133,13 @@ Release CI requires all six. Schema 1 remains unchanged so already-installed
 standalone clients can still update. A package updater never substitutes a
 standalone archive when package metadata is absent.
 
+Windows installers use a third manifest, `windows-manifest.json` with raw
+`windows-manifest.sig`, signed with the same key. Its schema is 3, listing exactly
+the two `Herdr-VERSION-TARGET-setup.exe` installers (Authenticode-signed once
+Windows signing is set up) for
+`x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`, one per target. Each
+family's client requires its own schema, so no manifest can answer for another.
+
 The client discovers the latest stable release through
 `https://api.github.com/repos/penso/herdr-gpui/releases/latest`, which GitHub
 never resolves to a prerelease. With `[updates] channel = "beta"` (Settings >
@@ -139,8 +148,11 @@ General > Install beta releases) it instead reads the ten newest releases from
 highest calendar version among published releases of either kind, ignoring drafts
 and non-calendar tags; that listing is bounded at 4 MiB. A beta carries the same
 signed manifest as any release, so the channel changes which release is offered,
-never how it is authenticated. A Homebrew-managed installation always checks the
-stable channel, since the tap only receives stable releases. Switching channels
+never how it is authenticated. The tap only receives stable releases, so a
+Homebrew-managed installation upgrades through Homebrew on the stable channel
+only; on the beta channel it downloads and installs the signed release in place
+like a standalone installation, and Homebrew takes the bundle back at its next
+upgrade. Switching channels
 rechecks at once and never downgrades. That recheck also covers a beta that is
 already downloaded or still downloading: leaving the beta channel discards it
 unless stable now offers the same release. Manifest, signature,
@@ -213,18 +225,21 @@ size, and hash checks and never changes the legacy manifest.
    validate it. Package the **same final signed, stapled app copy** as updater
    USTAR before signing-script cleanup. The input `dist/Herdr.app` is still
    unsigned and must never be used for the updater. No ZIP is published.
-4. Download both current-run Linux artifacts without executing their contents.
-   Require all three updater archives and all six Linux packages, check the
-   PEM/public-key match, sign both exact manifest JSON files, verify both signatures,
-   and require 64 raw bytes each. Upload the DMG, macOS updater archive, both JSON
-   files and raw signatures for the attestation job.
+4. Download both current-run Linux artifacts and both Windows installers
+   (Authenticode-signed once Windows signing is set up) without executing their
+   contents. Require all three updater
+   archives, all six Linux packages and both installers, check the PEM/public-key
+   match, sign the three exact manifest JSON files, verify the three signatures,
+   and require 64 raw bytes each. Upload the DMG, macOS updater archive, the three
+   JSON files and raw signatures for the attestation job.
 5. In the separate protected OIDC job, combine these with both Linux artifact
-   sets (manual tarball, `.deb`, `.rpm`, Arch package and updater archive), both Windows zips (manual download only, never in the update manifest),
-   and the locked six-target SBOM. Require the exact nineteen-file base set, then
-   checksum, Sigstore-sign and attest all nineteen files. Each has four sidecars
-   (`.sha256`, `.sha512`, `.sig`, `.crt`); `SHA256SUMS` covers all 95 files.
+   sets (manual tarball, `.deb`, `.rpm`, Arch package and updater archive), both
+   signed Windows zips and installers, and the locked six-target SBOM. Require the
+   exact twenty-three-file base set, then checksum, Sigstore-sign and attest all
+   twenty-three files. Each has four sidecars (`.sha256`, `.sha512`, `.sig`,
+   `.crt`); `SHA256SUMS` covers all 115 files.
 6. The protected publication job refuses existing tags/releases, creates a
-   `vVERSION` tag at the validated SHA and a draft, uploads all 96 assets, then
+   `vVERSION` tag at the validated SHA and a draft, uploads all 116 assets, then
    re-downloads and verifies the exact set and hashes before publication. The
    separately approved Homebrew job uses only the verified published DMG.
 
@@ -344,6 +359,51 @@ in its `install-result.txt`. Rename or relaunch-spawn failures attempt restorati
 There is no post-launch health acknowledgement or automatic rollback if the new
 process starts successfully and later crashes. Retain recovery copies until the
 new version is confirmed working; cleanup is manual.
+
+## Windows Installers
+
+A Windows release build embeds the update key and, from the
+`WINDOWS_SIGNING_SUBJECT` repository variable, the exact Authenticode subject its
+installers are signed by (`HERDR_WINDOWS_SIGNER`). Until that variable is set,
+releases ship unsigned and embed no subject, so, like any other build without
+either, they never check. Updates are
+offered only to the copy installed in `%LOCALAPPDATA%\Programs\Herdr UI`, where
+both the installer and `install.ps1` put it; a copy run from anywhere else says so
+and points to the release page.
+
+**Download** stages `Herdr-VERSION-TARGET-setup.exe` in a private
+`%TEMP%\herdr-update-*` directory, checks its length and SHA-256 against the
+signed manifest, then has Windows verify its Authenticode signature
+(`WinVerifyTrust`) and requires the signer's subject to equal the embedded one.
+The downloaded file stays open with read sharing only, so nothing can replace or
+delete it while the app runs. **Install** repeats both checks on those held bytes,
+then, when the app commits to quitting, starts the installer with
+`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /RELAUNCH=1` and a log
+beside it, and quits. Setup closes any copy still running through Restart Manager,
+replaces the files for the current user without elevation, and starts the app again
+(`RelaunchRequested` in `herdr-gpui.iss`), through `herdr-gpui-launcher.exe` so no
+console window opens. The daemon and terminal sessions keep
+running. The new app opens without the old one's command-line arguments. A failed
+install leaves the previous version in place and its log in the staging directory;
+stages older than a day are removed by the next download. Revocation is not
+checked: it needs the network at an arbitrary moment, and the Authenticode check
+is the second one, after the manifest digest.
+
+winget installs the same per-user installer and reads the version back from the
+uninstall entry Setup rewrites, so an in-app update leaves `winget list` and
+`winget upgrade` in agreement; there is nothing to defer to winget.
+
+The app registers with Restart Manager (`RegisterApplicationRestart`, never after
+a crash or hang), so an installer or Windows Update that closes it, or a restart
+with **Restart apps** turned on, reopens it. Windows restarts `herdr-gpui.exe`
+itself, a console program, with `--restart-manager`; that process starts the
+launcher beside it and exits, so its console can flash briefly.
+
+`windows-installer.py smoke` checks that Setup run this way restarts the app, and
+CI checks the Authenticode reader against a Microsoft-signed file. An update
+between two real signed releases still needs native QA once a release ships with
+`windows-manifest.json`: the signature check refuses any locally built installer,
+signed or not, unless its publisher's certificate chains to a trusted root.
 
 ## Linux Packages
 

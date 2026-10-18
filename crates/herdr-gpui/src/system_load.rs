@@ -1,7 +1,8 @@
 //! CPU and memory of each host the window lists, for the status bar and the
 //! sidebar's host rows. Every host has its own worker thread sampling it every
 //! couple of seconds: this machine through `sysinfo`, a remote host over one
-//! SSH shell kept open between samples. The UI thread only starts and stops
+//! SSH shell, and a WSL distribution over one `wsl.exe` shell, kept open
+//! between samples. The UI thread only starts and stops
 //! workers and takes their samples on later ticks, so a slow or unreachable
 //! host never blocks rendering or delays another host.
 
@@ -19,11 +20,8 @@ pub(crate) use render::{
     CPU_WARN, DISK_WARN, MEMORY_WARN, gauges, line, line_fits, severity, stacked_line, storage,
     tooltip, uptime,
 };
-// The control socket, Unix only, reads samples too.
-#[cfg(unix)]
+// The control socket reads samples too.
 pub(crate) use sample::Sample;
-#[cfg(not(unix))]
-use sample::Sample;
 use sample::{Disk, Memory, Os, Ticks};
 use std::{
     collections::{HashMap, VecDeque},
@@ -66,20 +64,28 @@ impl Source {
                 primed: false,
                 disk: HomeDisk::open(),
             }),
-            Host::Ssh(target) => {
-                let mut shell = Shell::connect(target).map_err(remote)?;
-                let uname = shell.run("uname -s", STEP_TIMEOUT).map_err(remote)?;
-                let os = Os::from_uname(&uname.stdout).ok_or_else(|| {
-                    Error::SystemLoadUnsupported(uname.stdout.trim().chars().take(32).collect())
-                })?;
-                Ok(Self::Remote {
-                    shell,
-                    os,
-                    ticks: None,
-                })
-            }
-            Host::Wsl(_) => Err(Error::WslHostUnsupported),
+            Host::Ssh(target) => Self::remote(Shell::connect(target)),
+            // A distribution is sampled as a Linux host, through `wsl.exe`.
+            Host::Wsl(distro) => Self::remote(Shell::connect_wsl(distro)),
+            #[cfg(all(feature = "azure", unix))]
+            Host::Azure { account, id } => Self::remote(azure_shell(account, id)),
+            // A remote shell needs a Unix client, as an SSH host's does.
+            #[cfg(all(feature = "azure", not(unix)))]
+            Host::Azure { .. } => Err(Error::CloudHostUnsupported),
         }
+    }
+
+    fn remote(shell: Result<Shell>) -> Result<Self> {
+        let mut shell = shell.map_err(remote)?;
+        let uname = shell.run("uname -s", STEP_TIMEOUT).map_err(remote)?;
+        let os = Os::from_uname(&uname.stdout).ok_or_else(|| {
+            Error::SystemLoadUnsupported(uname.stdout.trim().chars().take(32).collect())
+        })?;
+        Ok(Self::Remote {
+            shell,
+            os,
+            ticks: None,
+        })
     }
 
     fn sample(&mut self) -> Result<Sample> {
@@ -164,6 +170,19 @@ fn home_volume<'a>(
         .filter(|(_, mount)| home.starts_with(mount))
         .max_by_key(|(_, mount)| mount.as_os_str().len())
         .map(|(index, _)| index)
+}
+
+/// An Azure machine's `sh`, through the command its connection uses; see
+/// `crate::azure::monitor_command`.
+#[cfg(all(feature = "azure", unix))]
+fn azure_shell(account: &str, id: &str) -> Result<Shell> {
+    let mut command = crate::azure::monitor_command(account, id)?;
+    command
+        .arg("exec /bin/sh -s")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    Shell::start(command)
 }
 
 fn remote(error: Error) -> Error {

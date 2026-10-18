@@ -24,12 +24,9 @@ use crate::{
 pub(super) use config::config;
 use serde_json::json;
 
-/// No app to ask: not running, or a platform without the control socket.
+/// No app to ask: it is not running.
 fn not_running(error: &crate::Error) -> bool {
-    matches!(
-        error,
-        crate::Error::ControlUnavailable { .. } | crate::Error::ControlUnsupported
-    )
+    matches!(error, crate::Error::ControlUnavailable { .. })
 }
 
 fn refused(code: ErrorCode, message: impl Into<String>) -> crate::Error {
@@ -202,7 +199,7 @@ pub(super) fn integrations(
 fn install_skill() -> crate::Result<Output> {
     use crate::agent_skill::{self, Choice};
     let home = crate::config::home()?;
-    let text = agent_skill::text(std::env::current_exe().ok().as_deref());
+    let text = agent_skill::text(agent_skill::executable().as_deref());
     let paths = agent_skill::install(&home, &text)?;
     let mut message = String::from("Installed the agent skill at:");
     for path in &paths {

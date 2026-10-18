@@ -12,9 +12,19 @@ on:
 # keep pull_request, hosted runners, and secret-free/read-only PR jobs.
 permissions: {}
 
+# A newer push cancels a pull request's run, but every main run finishes:
+# a release requires a complete CI run for its exact commit.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Every rust-cache entry shares the repository's 10 GB budget. With full
+# debug info the entries overflowed it, and GitHub evicted the Windows
+# checks' caches between main runs, so they compiled from scratch. Without
+# debug info dependencies cache about 40% smaller and build faster; panics
+# still report file and line. Release profiles keep their own settings.
+env:
+  CARGO_PROFILE_DEV_DEBUG: '0'
 
 jobs:
   # Audits the workflows themselves for injection, over-broad permissions,
@@ -55,6 +65,7 @@ jobs:
     needs: zizmor
     outputs:
       code: ${{ steps.changes.outputs.code }}
+      windows_package: ${{ steps.changes.outputs.windows_package }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -93,12 +104,20 @@ jobs:
        ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
         github.actor == 'penso' && github.triggering_actor == 'penso' &&
         github.ref == 'refs/heads/main'))
-    name: Format, lint, and test (${{ matrix.runner }})
+    name: Format, lint, and test (${{ matrix.runner }}, ${{ matrix.features }})
     needs: [zizmor, commits]
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-14, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+        # macOS 14, the oldest supported release, is off: every macOS job
+        # shares one account-wide runner limit with the release. Add it back
+        # if a macOS 14 regression shows up:
+        # runner: [macos-14, macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+        # The two test passes each take most of the job, so they run side by
+        # side, each with one of the lints; the script checks ride with the
+        # default-features pass.
+        features: [default, all]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
@@ -112,9 +131,10 @@ jobs:
         run: bash scripts/install-linux-deps.sh
       # Lets the release script tests build real .deb, .rpm and Arch packages.
       - name: Install the pinned Linux package builder
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.features == 'default'
         run: echo "HERDR_TEST_NFPM=$(bash scripts/release/install-nfpm.sh "$RUNNER_TEMP/nfpm")" >> "$GITHUB_ENV"
       - name: Test release scripts and security contracts without credentials
+        if: matrix.features == 'default'
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
@@ -122,34 +142,57 @@ jobs:
           jq --version
           python3 -m unittest discover -s scripts/release/tests -v
           python3 scripts/release/test-release-security.py
+      # The signed update manifests' contract. Releases require this job, so
+      # a manifest regression stops a release, not only the Updater workflow.
+      - name: Test update manifest contracts
+        if: matrix.features == 'default'
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            OPENSSL="$(brew --prefix openssl@3)/bin/openssl"
+          else
+            OPENSSL=/usr/bin/openssl
+          fi
+          export OPENSSL
+          "$OPENSSL" version | grep -q '^OpenSSL 3\.'
+          python3 -m unittest discover -s scripts -p 'test_*manifest.py' -v
       - name: Install pinned Rust toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          key: checks
+          key: checks-${{ matrix.features }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Check formatting
+        if: matrix.features == 'default'
         run: cargo fmt --all -- --check
       - name: Check source file sizes
+        if: matrix.features == 'default'
         run: bash scripts/check-file-size.sh
       - name: Check keep-sorted regions
+        if: matrix.features == 'default'
         run: |
           python3 scripts/test_check_sorted.py
           python3 scripts/check-sorted.py
       - name: Test mockup feedback receiver
+        if: matrix.features == 'default'
         run: python3 .claude/skills/gpui-mockup/scripts/test_wait.py
       - name: Lint every target and feature
+        if: matrix.features == 'all'
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Lint without default features
+        if: matrix.features == 'default'
         run: cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
       - name: Test default features and executable CLI
+        if: matrix.features == 'default'
         run: cargo test --locked --workspace
       - name: Test integration-feature build and executable CLI
+        if: matrix.features == 'all'
         run: cargo test --locked --workspace --all-features
 
   # Match the other platforms' Rust checks without an extra optimized build.
-  # Native GUI tests remain opt-in; release builds and optimized CLI tests run
-  # in the release workflow.
+  # Native GUI tests run in windows-native; the Windows release builds run in
+  # the release workflow.
   windows:
     if: >-
       needs.commits.outputs.code == 'true' &&
@@ -158,12 +201,14 @@ jobs:
        ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
         github.actor == 'penso' && github.triggering_actor == 'penso' &&
         github.ref == 'refs/heads/main'))
-    name: Windows check (${{ matrix.runner }})
+    name: Windows check (${{ matrix.runner }}, ${{ matrix.features }})
     needs: [zizmor, commits]
     strategy:
       fail-fast: false
       matrix:
         runner: [windows-2025, windows-11-arm]
+        # Split as in the checks job: each test pass with one of the lints.
+        features: [default, all]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
@@ -176,23 +221,150 @@ jobs:
         run: rustup show
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          key: ${{ matrix.runner }}
+          key: ${{ matrix.runner }}-${{ matrix.features }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Check formatting
+        if: matrix.features == 'default'
         run: cargo fmt --all -- --check
       - name: Lint every target and feature
+        if: matrix.features == 'all'
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Lint without default features
+        if: matrix.features == 'default'
         run: cargo clippy --locked --workspace --all-targets --no-default-features -- -D warnings
       - name: Test default features and executable CLI
+        if: matrix.features == 'default'
         run: cargo test --locked --workspace
       - name: Test integration-feature build and executable CLI
+        if: matrix.features == 'all'
         run: cargo test --locked --workspace --all-features
+
+  # The native GUI tests (`just test-gui`, `just test-sidebar`) on a real
+  # Windows desktop session against a pinned, checksummed Herdr daemon in the
+  # shared test sandbox, then the release-mode performance budget
+  # (`just test-perf`). Hosted runners have no GPU, so Direct3D runs on WARP:
+  # the budget is a regression tripwire, not a target for real hardware.
+  windows-native:
+    if: >-
+      needs.commits.outputs.code == 'true' &&
+      github.repository == 'penso/herdr-gpui' &&
+      (github.event_name == 'pull_request' ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+        github.actor == 'penso' && github.triggering_actor == 'penso' &&
+        github.ref == 'refs/heads/main'))
+    name: Windows native GUI (${{ matrix.runner }})
+    needs: [zizmor, commits]
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: native-${{ matrix.runner }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install the pinned Herdr daemon
+        run: echo "HERDR_TEST_BINARY=$(python scripts/install-herdr-windows.py "$RUNNER_TEMP/herdr")" >> "$GITHUB_ENV"
+      # Runners start at 1024x768; the sidebar fixture skips, and counts, any
+      # window size the display cannot hold if this is refused.
+      - name: Raise the desktop resolution
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/set-display-resolution.ps1
+      # Herdr publishes no ARM64 Windows build. Under x64 emulation on
+      # windows-11-arm its panes echo typed text but never act on Enter, so
+      # the live-daemon test runs on x64; the native fixtures run on both.
+      - name: Native window, input, and live-daemon tests
+        env:
+          RUNNER: ${{ matrix.runner }}
+        run: |
+          skip=()
+          if [[ $RUNNER == windows-11-arm ]]; then skip=(--skip native_gui_live); fi
+          cargo test --locked -p herdr-gpui --features integration-test --test live_gui -- --ignored --nocapture --test-threads=1 "${skip[@]}"
+      # The updater's Authenticode check against a real signature: the pinned
+      # archive's Microsoft-signed OpenConsole.exe, compared with PowerShell.
+      - name: Update installer signer check
+        run: |
+          HERDR_TEST_SIGNED_FILE="$(dirname "$HERDR_TEST_BINARY")/conpty/x64/OpenConsole.exe" \
+            cargo test --locked -p herdr-gpui signer_matches_what_powershell_reports -- --ignored --nocapture
+      - name: Release-mode performance budget
+        env:
+          HERDR_PERF_P95_MS: '100'
+        run: |
+          cargo build --locked --release -p herdr-gpui --features integration-test
+          target/release/herdr-gpui.exe --performance-test
+
+  # The optimized Windows build, its zip, and its installer, made and installed
+  # as the release workflow does, so a packaging or installer mistake fails the
+  # pull request rather than a release. A release build is too slow for every
+  # change, so this runs only when what those artifacts are made from changes.
+  windows-package:
+    if: >-
+      needs.commits.outputs.windows_package == 'true' &&
+      github.repository == 'penso/herdr-gpui' &&
+      (github.event_name == 'pull_request' ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+        github.actor == 'penso' && github.triggering_actor == 'penso' &&
+        github.ref == 'refs/heads/main'))
+    name: Windows package and installer
+    needs: [zizmor, commits]
+    runs-on: windows-2025
+    timeout-minutes: 60
+    # The steps read "$TARGET" and friends, as the release workflow's do.
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+    env:
+      # Packaging names files after a release version; any valid one will do.
+      VERSION: '20000101.1'
+      TARGET: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The other jobs that run scripts/release/tests are macOS and Linux,
+      # where the shortcut test skips; run it here, before the slow build.
+      - name: Test the install script's Start menu shortcut
+        run: python scripts/release/tests/test_install_ps1.py -v
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: windows-package
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build optimized Windows executables
+        run: cargo build --locked --release -p herdr-gpui -p herdr-gpui-launcher --target "$TARGET"
+      - name: Smoke-test the optimized executable as the release does
+        run: python scripts/release/smoke-cli.py "target/$TARGET/release/herdr-gpui.exe"
+      # The release job passes generated third-party notices; any nonempty
+      # file exercises the same packaging.
+      - name: Package the Windows zip
+        run: |
+          mkdir dist
+          python scripts/release/package-windows.py "$VERSION" "$TARGET" "target/$TARGET/release/herdr-gpui.exe" "target/$TARGET/release/herdr-gpui-launcher.exe" dist LICENSE
+      - name: Install the pinned Inno Setup compiler
+        run: python scripts/release/windows-installer.py install-iscc "$RUNNER_TEMP/inno-setup" > "$RUNNER_TEMP/iscc-path"
+      - name: Build the Windows installer
+        run: python scripts/release/windows-installer.py build "$VERSION" "$TARGET" "dist/Herdr-$VERSION-$TARGET.zip" dist "$(cat "$RUNNER_TEMP/iscc-path")"
+      - name: Install and uninstall the Windows installer
+        run: python scripts/release/windows-installer.py smoke "dist/Herdr-$VERSION-$TARGET-setup.exe"
 
   # Keep the branch-protection context stable while requiring every platform.
   checks-passed:
     name: Format, lint, and test
-    needs: [checks, windows, commits]
+    needs: [checks, windows, windows-native, windows-package, build-macos, commits]
     if: >-
       always() &&
       github.repository == 'penso/herdr-gpui' &&
@@ -208,16 +380,34 @@ jobs:
         env:
           RESULT: ${{ needs.checks.result }}
           WINDOWS: ${{ needs.windows.result }}
+          NATIVE: ${{ needs.windows-native.result }}
+          PACKAGE: ${{ needs.windows-package.result }}
+          MACOS_RELEASE: ${{ needs.build-macos.result }}
+          EVENT: ${{ github.event_name }}
           COMMITS: ${{ needs.commits.result }}
           CODE: ${{ needs.commits.outputs.code }}
+          PACKAGE_INPUTS: ${{ needs.commits.outputs.windows_package }}
         run: |
           test "$COMMITS" = success || exit 1
           if [ "$CODE" = true ]; then
-            test "$RESULT" = success && test "$WINDOWS" = success
+            test "$RESULT" = success && test "$WINDOWS" = success && test "$NATIVE" = success || exit 1
           else
-            test "$CODE" = false && test "$RESULT" = skipped && test "$WINDOWS" = skipped
+            test "$CODE" = false && test "$RESULT" = skipped && test "$WINDOWS" = skipped && test "$NATIVE" = skipped || exit 1
+          fi
+          # The macOS release builds run on pull requests only.
+          if [ "$CODE" = true ] && [ "$EVENT" = pull_request ]; then
+            test "$MACOS_RELEASE" = success || exit 1
+          else
+            test "$MACOS_RELEASE" = skipped || exit 1
+          fi
+          if [ "$PACKAGE_INPUTS" = true ]; then
+            test "$PACKAGE" = success
+          else
+            test "$PACKAGE_INPUTS" = false && test "$PACKAGE" = skipped
           fi
 
+  # Linux release builds on main, which the release gate requires. The release
+  # workflow builds the same targets but only smoke-tests what it ships.
   build:
     if: >-
       needs.commits.outputs.code == 'true' &&
@@ -225,20 +415,16 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.actor == 'penso' && github.triggering_actor == 'penso'
-    name: Release (${{ matrix.runner }}, ${{ matrix.arch }})
+    name: Release (${{ matrix.target }})
     needs: [zizmor, commits]
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
-            arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
           - runner: ubuntu-24.04
-            arch: x86_64
+            target: x86_64-unknown-linux-gnu
           - runner: ubuntu-24.04-arm
-            arch: arm64
+            target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
@@ -248,15 +434,68 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
         run: bash scripts/install-linux-deps.sh
       - name: Install pinned Rust toolchain
-        run: rustup show
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup show
+          rustup target add "$TARGET"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          key: release-${{ matrix.arch }}
+          key: release-${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Build optimized native executable
-        run: cargo build --locked --release -p herdr-gpui
+      - name: Build optimized executable
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --locked --release -p herdr-gpui --target "$TARGET"
+      # The full CLI suite in release mode, for this commit; the release
+      # workflow only smoke-tests the bytes it ships, since `cargo test`
+      # rebuilds the executable with dev-dependency features.
       - name: Exercise release executable without opening a window
-        run: cargo test --locked --release -p herdr-gpui --test cli
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo test --locked --release -p herdr-gpui --test cli --target "$TARGET"
+
+  # The macOS release builds and their release-mode CLI suite, on pull
+  # requests only. On main they would hold two of the account-wide macOS
+  # runners the release workflow's own macOS builds wait for. With no main
+  # run to save a cache, there is nothing to restore, so they build cold.
+  build-macos:
+    if: >-
+      needs.commits.outputs.code == 'true' &&
+      github.repository == 'penso/herdr-gpui' &&
+      github.event_name == 'pull_request'
+    name: Release (${{ matrix.target }})
+    needs: [zizmor, commits]
+    strategy:
+      fail-fast: false
+      matrix:
+        # x86_64 macOS cross-compiles on Apple Silicon and runs under Rosetta,
+        # as the release workflow builds it; Intel runners are scarce.
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup show
+          rustup target add "$TARGET"
+      - name: Require Rosetta for the x86_64 macOS executable
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
+      - name: Build optimized executable
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --locked --release -p herdr-gpui --target "$TARGET"
+      - name: Exercise release executable without opening a window
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo test --locked --release -p herdr-gpui --test cli --target "$TARGET"

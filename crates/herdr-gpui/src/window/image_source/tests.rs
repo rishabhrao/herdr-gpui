@@ -34,9 +34,16 @@ fn recognizes_absolute_paths_without_io_and_canonicalizes_extensions() {
     }
 }
 
+// Item replacement directories are a macOS path layout.
+#[cfg(unix)]
+mod temporary_items;
+#[cfg(windows)]
+mod windows_paths;
+
+#[cfg(unix)]
 #[test]
 fn parses_unix_drop_quotes_escapes_and_bracketed_paste() {
-    let root = if cfg!(windows) { "C:/tmp" } else { "/tmp" };
+    let root = "/tmp";
     let expected = format!("{root}/a b.png");
     for text in [
         expected.clone(),

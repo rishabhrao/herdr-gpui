@@ -1,8 +1,10 @@
 #![allow(clippy::expect_used)]
 use super::*;
 
-// Exercises the POSIX disk cache; other platforms have no cache root.
-#[cfg(unix)]
+mod remote_userinfo;
+
+// Exercises the disk cache; other platforms have no cache root.
+#[cfg(any(unix, windows))]
 #[test]
 fn profile_disk_hits_skip_network_and_stale_images_survive_failed_refresh() {
     let fixture = cache::tests::Fixture::new();

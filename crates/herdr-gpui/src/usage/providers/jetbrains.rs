@@ -52,7 +52,9 @@ static META: Meta = Meta::new("jetbrains", "JetBrains AI").settings(&[Setting::n
     "The config directory of the IDE to read, when the most recently used one is not \
          the right one, e.g. \"~/Library/Application Support/JetBrains/IntelliJIdea2025.3\" \
          on a Mac or \"~/.config/JetBrains/PyCharm2025.3\" on Linux. Its \
-         options/AIAssistantQuotaManager2.xml appears once AI Assistant has been used.",
+         options/AIAssistantQuotaManager2.xml appears once AI Assistant has been used. \
+         On the Mac running Herdr the IDEs are only looked for when this is set or jetbrains is in \
+         show_providers, as macOS may ask before Herdr reads another app's data.",
 )]);
 
 impl Service for Jetbrains {
@@ -71,6 +73,9 @@ impl Service for Jetbrains {
                 };
                 (path, ide(base))
             }
+            // On this Mac the IDEs keep their folders under Application
+            // Support; see [`Probe::app_data`]. A set `ide_path` is consent.
+            None if !probe.app_data() => return None,
             None => {
                 let listing = probe
                     .command("sh", &["-c", FIND], Duration::from_secs(10))

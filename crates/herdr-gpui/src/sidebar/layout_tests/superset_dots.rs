@@ -8,30 +8,16 @@ fn superset_status_dots_stay_inside_their_icon_slot(cx: &mut gpui::TestAppContex
     use crate::config::LayoutMode;
     let (view, cx) = cx.add_window_view(fixture_window);
     cx.simulate_resize(size(px(800.), px(900.)));
-    for (size, style) in [12., 20., 36.]
-        .into_iter()
-        .flat_map(|size| ["dots", "symbols", "solid", "rail"].map(|style| (size, style)))
-    {
+    for (size, style) in [12., 20., 36.].into_iter().flat_map(|size| {
+        crate::config::StatusIcons::ALL
+            .iter()
+            .filter(|&&style| style != crate::config::StatusIcons::Tiles)
+            .map(move |&style| (size, style))
+    }) {
         view.update(cx, |view, cx| {
             view.config.layout.mode = LayoutMode::Superset;
-            // Drawn icons are this client's own setting; Herdr's style stays dots.
-            view.config.status_icons = match style {
-                "solid" => Some(crate::config::StatusIcons::Solid),
-                "rail" => Some(crate::config::StatusIcons::Rail),
-                _ => None,
-            };
-            let style = if view.config.status_icons.is_some() {
-                "dots"
-            } else {
-                style
-            };
+            view.config.status_icons = style;
             view.config.sidebar.size = size;
-            view.settings.shared = Some(
-                crate::herdr_settings::Settings::parse_text(&format!(
-                    "[ui]\nstatus_indicators = '{style}'\n"
-                ))
-                .unwrap(),
-            );
             cx.notify();
         });
         cx.run_until_parked();
@@ -43,12 +29,12 @@ fn superset_status_dots_stay_inside_their_icon_slot(cx: &mut gpui::TestAppContex
             let slot = cx.debug_bounds(icon).unwrap();
             let dot = cx
                 .debug_bounds(mark)
-                .unwrap_or_else(|| panic!("{style} at {size}: no dot on {key}"));
+                .unwrap_or_else(|| panic!("{style:?} at {size}: no dot on {key}"));
             assert!(
                 slot.contains(&dot.origin)
                     && dot.right() <= slot.right()
                     && dot.bottom() <= slot.bottom(),
-                "{style} at {size}: {key} dot {dot:?} leaves slot {slot:?}"
+                "{style:?} at {size}: {key} dot {dot:?} leaves slot {slot:?}"
             );
         }
     }
@@ -62,7 +48,7 @@ fn superset_tiles_tint_the_slot_instead_of_a_badge(cx: &mut gpui::TestAppContext
     cx.simulate_resize(size(px(800.), px(900.)));
     view.update(cx, |view, cx| {
         view.config.layout.mode = LayoutMode::Superset;
-        view.config.status_icons = Some(crate::config::StatusIcons::Tiles);
+        view.config.status_icons = crate::config::StatusIcons::Tiles;
         cx.notify();
     });
     cx.run_until_parked();

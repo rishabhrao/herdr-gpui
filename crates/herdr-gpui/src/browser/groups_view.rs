@@ -10,7 +10,7 @@ use super::{
     groups::{GroupId, Layout, Pick, Shown, Slot},
     view::store,
 };
-use crate::{HerdrWindow, NavigationTarget, search_input::SearchInput};
+use crate::{HerdrWindow, NavigationTarget, controls::Command, search_input::SearchInput};
 use gpui::{prelude::*, *};
 use std::{collections::hash_map::Entry, time::Instant};
 
@@ -23,6 +23,26 @@ fn neighbour(tabs: &[Pick], pick: &Pick, near: impl Fn(&Pick) -> bool) -> Option
         .find(|tab| near(tab))
         .or_else(|| tabs[..position].iter().rev().find(|tab| near(tab)))
         .cloned()
+}
+
+/// The tab Next Tab, Previous Tab, or a tab by number lands on among `tabs`
+/// from `current`. Next and Previous wrap around, and a number counts from
+/// one, as Herdr's `switch_tab` does.
+fn stepped<'a>(tabs: &'a [Pick], current: Option<&Pick>, command: Command) -> Option<&'a Pick> {
+    let index = match command {
+        Command::TabNumber(number) => usize::from(number).checked_sub(1)?,
+        Command::NextTab | Command::PreviousTab => {
+            let index = tabs.iter().position(|tab| Some(tab) == current)?;
+            let step = if command == Command::NextTab {
+                1
+            } else {
+                tabs.len() - 1
+            };
+            (index + step) % tabs.len()
+        }
+        _ => return None,
+    };
+    tabs.get(index)
 }
 
 impl HerdrWindow {
@@ -393,6 +413,51 @@ impl HerdrWindow {
         true
     }
 
+    /// Runs Next Tab, Previous Tab, or a tab by number over the focused
+    /// workspace's tabs, its browser tabs included, from the tab the group in
+    /// use shows. The daemon knows only its own tabs, so asking it alone
+    /// would skip the pages, and would leave a page in front of the Herdr tab
+    /// it already focuses. From a terminal to a terminal, the daemon still
+    /// moves its focus and the groups follow; a step from or to a page shows
+    /// its tab in its own group, as clicking it does. Returns false without a
+    /// focused workspace.
+    pub(crate) fn step_tab(
+        &mut self,
+        command: Command,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(active) = self.ensure_layout().map(|layout| layout.active()) else {
+            return false;
+        };
+        // A focus change in flight lands after this step and would move the
+        // group off a page the step showed, so the step is dropped, as one
+        // asked of the daemon always was.
+        if self.activation_deadline.is_some() {
+            return true;
+        }
+        let tabs = self.workspace_tabs(cx);
+        let current = self.group_pick(active).or_else(|| {
+            self.focused_herdr_tab()
+                .map(|tab| Pick::Herdr(tab.to_owned()))
+        });
+        let Some(target) = stepped(&tabs, current.as_ref(), command).cloned() else {
+            return true;
+        };
+        match target {
+            Pick::Herdr(tab) if !matches!(current, Some(Pick::Page(_))) => {
+                self.navigate(NavigationTarget::Tab(&tab), cx);
+                window.focus(&self.focus, cx);
+            }
+            target => {
+                if let Some(group) = self.layout().map(|layout| layout.owner(&target)) {
+                    self.show_group_tab(group, target, window, cx);
+                }
+            }
+        }
+        true
+    }
+
     /// Shows `pick` in `group`, which owns it.
     fn show_group_tab(
         &mut self,
@@ -706,7 +771,7 @@ impl HerdrWindow {
             self.ensure_code_page(window, cx);
         } else {
             #[cfg(any(target_os = "macos", windows))]
-            match self.browser.pages.ensure(&tab, window) {
+            match self.browser.pages.ensure(&tab, window, cx) {
                 Ok(()) => {
                     self.browser.failed.remove(&id);
                 }

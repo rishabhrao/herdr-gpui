@@ -119,6 +119,17 @@ fn spawn(
 }
 
 impl Teleport {
+    /// How far a running teleport is, for the taskbar; `None` while the
+    /// dialog waits on the user or after it failed.
+    #[cfg(any(windows, test))]
+    pub(crate) fn progress(&self) -> Option<Progress> {
+        match &self.stage {
+            Stage::Reviewing(_) => Some(Progress::Busy),
+            Stage::Moving(_, step) => Some(Progress::Working(step.map_or(0., Step::progress))),
+            Stage::Choosing | Stage::Ready(..) | Stage::Failed(_) => None,
+        }
+    }
+
     /// Opens on the host list at once: which repository a host has, if any,
     /// is only looked up for the host chosen.
     pub(crate) fn start(source: Source, label: String, hosts: Vec<HostRepositories>) -> Self {
@@ -169,7 +180,6 @@ impl Teleport {
     }
 
     /// Whether `endpoint_id` is among the hosts the work could move to.
-    #[cfg(unix)]
     pub(crate) fn offers(&self, endpoint_id: &str) -> bool {
         self.hosts
             .iter()

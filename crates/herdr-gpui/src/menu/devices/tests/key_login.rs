@@ -23,7 +23,11 @@ fn a_host_that_refuses_every_key_offers_to_install_one(cx: &mut gpui::TestAppCon
             assert!(
                 Offer::InstallKey
                     .question("m5mini.local")
-                    .contains("asks for the password once")
+                    .contains(if cfg!(windows) {
+                        "accepted none of your SSH keys"
+                    } else {
+                        "asks for the password once"
+                    })
             );
         });
     });

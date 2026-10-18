@@ -1,3 +1,6 @@
+// Build-time tools (git, gh) run under Cargo, not beside the app: no window to avoid.
+#![allow(clippy::disallowed_methods)]
+
 mod build_identity;
 mod release_version;
 mod windows_resource;
@@ -84,6 +87,7 @@ fn main() -> Result<(), BuildError> {
     );
     println!("cargo:rustc-env=HERDR_BUILD_BRANCH={}", identity.branch);
     println!("cargo:rustc-env=HERDR_BUILD_PR={pr}");
+    println!("cargo:rustc-env=HERDR_BUILD_COMMIT={}", identity.commit);
     if std::env::var_os("CARGO_FEATURE_MOCKUP").is_some() {
         mockup_scratch()?;
     }

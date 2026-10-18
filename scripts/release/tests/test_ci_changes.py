@@ -10,7 +10,7 @@ import unittest
 SCRIPT = Path(__file__).resolve().parents[2] / "ci-changes.sh"
 
 
-class CiChanges(unittest.TestCase):
+class GitFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -35,13 +35,21 @@ class CiChanges(unittest.TestCase):
         self.git("-c", "user.name=Test", "-c", "user.email=test@example.invalid",
                  "commit", "-qm", "fixture")
 
-    def detect(self, event="pull_request", base=None):
-        return subprocess.check_output(
+    def outputs(self, event="pull_request", base=None):
+        lines = subprocess.check_output(
             ["bash", str(SCRIPT)], cwd=self.root, text=True,
             env={**os.environ, "EVENT": event, "BASE": base or self.base,
                  "HEAD_SHA": self.git("rev-parse", "HEAD").strip()},
-        ).strip()
+        ).splitlines()
+        outputs = dict(line.split("=", 1) for line in lines)
+        self.assertEqual(len(outputs), len(lines), lines)
+        return outputs
 
+    def detect(self, event="pull_request", base=None):
+        return f"code={self.outputs(event, base)['code']}"
+
+
+class CiChanges(GitFixture):
     def test_documentation_and_setup_skip_native_jobs(self):
         for path in ("setup.sh", "README.md", "crates/herdr-gpui/README.md",
                      "scripts/release/README.md", "assets/social-preview-dark.png",
@@ -84,3 +92,28 @@ class CiChanges(unittest.TestCase):
         self.git("checkout", "-qb", "topic", self.base)
         self.commit_path("setup.sh")
         self.assertEqual(self.detect(base=base_tip), "code=false")
+
+
+class WindowsPackageChanges(GitFixture):
+    """The optimized Windows packaging check runs only for its own inputs."""
+
+    def test_windows_packaging_inputs_run_the_installer_check(self):
+        for path in ("scripts/release/package-windows.py", "scripts/release/windows-installer.py",
+                     "scripts/release/herdr-gpui.iss", "site/install.ps1",
+                     "crates/herdr-gpui-launcher/src/main.rs", "crates/herdr-gpui/windows_resource.rs",
+                     "assets/icons/Herdr.ico", "assets/icons/windows/wizard-128.png",
+                     ".github/workflows/ci.yml"):
+            self.base = self.git("rev-parse", "HEAD").strip()
+            self.commit_path(path)
+            self.assertEqual(self.outputs()["windows_package"], "true", path)
+
+    def test_other_changes_skip_the_installer_check(self):
+        for path in ("crates/herdr-gpui/src/app.rs", "Cargo.lock", "README.md",
+                     "scripts/release/package-linux.sh"):
+            self.base = self.git("rev-parse", "HEAD").strip()
+            self.commit_path(path)
+            self.assertEqual(self.outputs()["windows_package"], "false", path)
+
+    def test_manual_and_unknown_base_run_the_installer_check(self):
+        self.assertEqual(self.outputs("workflow_dispatch")["windows_package"], "true")
+        self.assertEqual(self.outputs("push", "0" * 40)["windows_package"], "true")

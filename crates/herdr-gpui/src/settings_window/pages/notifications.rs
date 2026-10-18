@@ -1,23 +1,11 @@
-//! Notifications: delivery, in-app toasts, sound and status indicators.
+//! Notifications: delivery, in-app toasts, and sound.
 use super::{SettingsWindow, TOAST_POSITIONS, on_off, on_value, ui};
-use crate::settings_window::controls::indicators::icon_label;
 use crate::settings_window::inputs::{DropdownField, NumberField};
 use crate::{
     config::preferences::Preference,
-    herdr_settings::{Edit, IndicatorStyle, ToastDelivery},
+    herdr_settings::{Edit, ToastDelivery},
 };
 use gpui::{prelude::*, *};
-use herdr_client::protocol::AgentStatus;
-
-/// Whether a style segment responds: any style while Herdr's file is
-/// writable, otherwise only the one Herdr already uses.
-pub(in crate::settings_window) fn indicator_style_live(
-    style: IndicatorStyle,
-    herdr: IndicatorStyle,
-    ready: bool,
-) -> bool {
-    ready || style == herdr
-}
 
 impl SettingsWindow {
     pub(in crate::settings_window) fn render_notifications(&self, cx: &mut Context<Self>) -> Div {
@@ -40,32 +28,11 @@ impl SettingsWindow {
             .unwrap_or_default();
         let sound = shared.is_some_and(|shared| shared.sound_enabled);
         let finished = self.config.notifications.finished;
-        let icons = self.config.status_icons;
-        // Herdr's style as it applies now; Dots when its file is unreadable.
-        let herdr = shared.map_or(IndicatorStyle::Dots, |shared| shared.indicators);
-        let mut icon_choices = vec![(None, "Herdr")];
-        icon_choices
-            .extend(crate::config::StatusIcons::ALL.map(|icons| (Some(icons), icon_label(icons))));
         let source_alive = self.source.upgrade().is_some();
-        let light = matches!(
-            cx.window_appearance(),
-            WindowAppearance::Light | WindowAppearance::VibrantLight
-        );
-        let styles = [
-            (IndicatorStyle::Dots, "Dots"),
-            (IndicatorStyle::Symbols, "Symbols"),
-        ]
-        .map(|(style, label)| {
-            (
-                style,
-                self.indicator_segment(style, label, light)
-                    .into_any_element(),
-            )
-        });
         div()
             .flex()
             .flex_col()
-            .child(ui::section(theme, "Delivery", Some(ui::Source::Shared)))
+            .child(ui::section(theme, "Delivery", Some(ui::Source::Herdr)))
             .child(
                 self.gate_shared(
                     ui::row(theme, "notif-delivery", "Deliver agent notifications").description(
@@ -91,19 +58,23 @@ impl SettingsWindow {
             )
             .child(
                 ui::row(theme, "notif-finished", "Finished notifications")
-                    .tag(ui::Source::Local)
+                    .tag(ui::Source::HerdrUi)
                     .description(
                         "Off drops the notice at the end of each agent turn, in-app and from \
                          the system; \u{201c}needs attention\u{201d} still shows.",
                     )
-                    .control(self.preference_toggle(
+                    .switch(self.preference_toggle(
                         "notif-finished-toggle",
                         finished,
                         Preference::NotificationFinished(!finished),
                         cx,
                     )),
             )
-            .child(ui::section(theme, "In-app toasts", Some(ui::Source::Local)))
+            .child(ui::section(
+                theme,
+                "In-app toasts",
+                Some(ui::Source::HerdrUi),
+            ))
             .child(
                 ui::row(theme, "notif-show", "Show toasts").control(self.override_dropdown(
                     DropdownField::ToastEnabled,
@@ -132,12 +103,12 @@ impl SettingsWindow {
             .child(
                 self.gate_shared(
                     ui::row(theme, "notif-sound", "Play agent sounds")
-                        .tag(ui::Source::Shared)
+                        .tag(ui::Source::Herdr)
                         .description(if source_alive {
-                            "Uses shared sound paths and per-agent overrides. Missing custom \
+                            "Uses Herdr's sound paths and per-agent overrides. Missing custom \
                              sounds fall back to bundled sounds."
                         } else {
-                            "Uses shared sound paths and per-agent overrides. Missing custom \
+                            "Uses Herdr's sound paths and per-agent overrides. Missing custom \
                              sounds fall back to bundled sounds. Open a main Herdr window to \
                              preview audio."
                         }),
@@ -154,7 +125,7 @@ impl SettingsWindow {
                         },
                     ),
                 )
-                .control(
+                .switch(
                     ui::toggle(theme, "notif-sound-toggle", sound, ready).when(ready, |toggle| {
                         toggle.on_click(cx.listener(move |this, _, _, cx| {
                             this.save_shared(Edit::Sound(!sound), cx)
@@ -163,49 +134,6 @@ impl SettingsWindow {
                 ),
             )
             .child(self.volume_row(cx))
-            .child(ui::section(theme, "Status indicators", None))
-            .child(
-                self.gate_shared(
-                    ui::row(theme, "notif-indicators", "Style")
-                        .tag(ui::Source::Shared)
-                        .description("How agent status shows in the sidebar."),
-                )
-                .control(ui::segmented_elements(
-                    theme,
-                    "notif-indicators-control",
-                    styles.into(),
-                    // Herdr's style shows only while no icon set replaces it.
-                    shared
-                        .filter(|_| icons.is_none())
-                        .map(|shared| shared.indicators),
-                    // Going back to the style Herdr already uses only drops
-                    // this client's key, so it works where Herdr's file is
-                    // read-only; the other styles stay dimmed there.
-                    ready || icons.is_some(),
-                    move |style| indicator_style_live(style, herdr, ready),
-                    on_value(cx, move |this, style, _, cx| {
-                        if indicator_style_live(style, herdr, ready) {
-                            this.choose_herdr_indicators(style, cx)
-                        }
-                    }),
-                )),
-            )
-            .child(
-                ui::row(theme, "notif-icons", "Icons")
-                    .tag(ui::Source::Local)
-                    .description(
-                        "Solid, Tiles and Edge rail are drawn by Herdr UI only; Herdr's \
-                         terminal client keeps its dots or symbols.",
-                    )
-                    .control(ui::segmented(
-                        theme,
-                        "notif-icons-control",
-                        &icon_choices,
-                        Some(icons),
-                        true,
-                        on_value(cx, |this, icons, _, cx| this.choose_status_icons(icons, cx)),
-                    )),
-            )
     }
 
     /// The delay in seconds: a typed field with steppers, and a reset when the
@@ -264,7 +192,7 @@ impl SettingsWindow {
         );
         let view = cx.entity().downgrade();
         ui::row(&self.theme, "notif-volume", "Volume")
-            .tag(ui::Source::Local)
+            .tag(ui::Source::HerdrUi)
             .description("Sounds and Test play at this level, even when sounds are off.")
             .control(ui::number(
                 &self.theme,
@@ -284,53 +212,5 @@ impl SettingsWindow {
                     });
                 },
             ))
-    }
-
-    /// A segment label: the style's name over the five status marks in their
-    /// current colours.
-    fn indicator_segment(&self, style: IndicatorStyle, label: &'static str, light: bool) -> Div {
-        let mut marks = div().flex().items_center().gap(px(4.));
-        if let Some(shared) = &self.shared {
-            for (status, symbol) in [
-                (AgentStatus::Working, "\u{25d0}"),
-                (AgentStatus::Blocked, "\u{d7}"),
-                (AgentStatus::Done, "\u{2713}"),
-                (AgentStatus::Idle, "\u{25cb}"),
-                (AgentStatus::Unknown, "\u{b7}"),
-            ] {
-                let color = rgb(self.theme.ink(shared.status_color(status, light)));
-                marks = marks.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .w(px(self.config.ui.size))
-                        .h(px(self.config.ui.line_height()))
-                        .when(style == IndicatorStyle::Symbols, |mark| {
-                            mark.text_color(color).child(symbol)
-                        })
-                        .when(style == IndicatorStyle::Dots, |mark| {
-                            mark.child(
-                                div()
-                                    .size(px(if status == AgentStatus::Unknown {
-                                        3.
-                                    } else {
-                                        7.
-                                    }))
-                                    .rounded_full()
-                                    .border_1()
-                                    .border_color(color)
-                                    .when(status != AgentStatus::Idle, |dot| dot.bg(color)),
-                            )
-                        }),
-                );
-            }
-        }
-        div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .child(label)
-            .child(marks)
     }
 }

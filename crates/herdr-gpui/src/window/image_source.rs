@@ -66,8 +66,35 @@ pub(super) fn from_path(path: &Path) -> Option<Source> {
     })
 }
 
+/// The one dropped image a local pane cannot be given by path: a macOS
+/// temporary drag item, such as a live screenshot thumbnail, which the source
+/// app writes to an `NSIRD_*` directory under `TemporaryItems`. macOS lets
+/// only the app that receives the drop and its children read that file, and
+/// a pane's processes are the daemon's children, not this app's; the file is
+/// also deleted once the thumbnail saves. Its bytes are read here instead.
+pub(super) fn temporary_drag_image(paths: &[PathBuf]) -> Option<Source> {
+    let [path] = paths else {
+        return None;
+    };
+    let temporary = path.ancestors().skip(1).any(|directory| {
+        directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("NSIRD_"))
+            && directory
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|name| name == "TemporaryItems")
+    });
+    if !temporary {
+        return None;
+    }
+    from_path(path)
+}
+
 /// Match upstream's Unix terminal-drop escaping, even inside matching quotes.
-/// Remote GUI image bridging is Unix-only; this is not Windows shell parsing.
+/// On Windows a backslash separates path components (Explorer's "Copy as path"
+/// and terminal drops quote the path instead), so it is kept as written.
 pub(super) fn from_paste(text: &str) -> Option<Source> {
     if text.len() > MAX_SOURCE_BYTES {
         return None;
@@ -89,6 +116,9 @@ pub(super) fn from_paste(text: &str) -> Option<Source> {
     } else {
         text
     };
+    if cfg!(windows) {
+        return from_path(Path::new(text));
+    }
     let mut path = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(ch) = chars.next() {

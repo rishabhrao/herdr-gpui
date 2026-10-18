@@ -1,8 +1,11 @@
-//! What the inbox lists, derived from a snapshot without drawing: issues with
-//! Beads children under their parents, pull requests, and runs grouped by
-//! what needs the user first. Pure, so it is tested without a window.
+//! What the sections list, derived from a snapshot without drawing: issues
+//! with Beads children under their parents, grouped by priority, and pull
+//! requests grouped by what each waits on. Pure, so it is tested without a
+//! window.
 
-use crate::orchestrator::{Backend, HerdrSession, Item, Provider, Run, RunState};
+use crate::orchestrator::{
+    Backend, CheckState, HerdrSession, Item, PrStatus, Provider, Review, Run, RunState,
+};
 use herdr_client::protocol::AgentStatus;
 use std::{
     cmp::Ordering,
@@ -14,19 +17,6 @@ pub(crate) enum Tab {
     #[default]
     Issues,
     PullRequests,
-    Runs,
-}
-
-impl Tab {
-    pub(crate) const ALL: [Self; 3] = [Self::Issues, Self::PullRequests, Self::Runs];
-
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Issues => "Issues",
-            Self::PullRequests => "Pull requests",
-            Self::Runs => "Runs",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -58,7 +48,7 @@ impl Sort {
         }
     }
 
-    fn compare(self, left: &Item, right: &Item) -> Ordering {
+    pub(crate) fn compare(self, left: &Item, right: &Item) -> Ordering {
         let tie = || left.key.canonical().cmp(&right.key.canonical());
         match self {
             Self::Updated => right.updated_at.cmp(&left.updated_at),
@@ -126,16 +116,6 @@ impl Status {
         }
     }
 
-    /// The Runs tab's groups, most urgent first.
-    fn group(self) -> Group {
-        match self {
-            Self::NeedsInput | Self::Failed => Group::Attention,
-            Self::Starting | Self::Working => Group::Working,
-            Self::Idle => Group::Idle,
-            Self::Done | Self::Stopped => Group::Finished,
-        }
-    }
-
     pub(crate) fn of(run: &Run, live: Option<AgentStatus>) -> Self {
         match live {
             Some(AgentStatus::Working) => return Self::Working,
@@ -152,25 +132,6 @@ impl Status {
             RunState::Completed => Self::Done,
             RunState::Failed | RunState::Disconnected => Self::Failed,
             RunState::Cancelled => Self::Stopped,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Group {
-    Attention,
-    Working,
-    Idle,
-    Finished,
-}
-
-impl Group {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Attention => "NEEDS YOU",
-            Self::Working => "WORKING",
-            Self::Idle => "IDLE",
-            Self::Finished => "FINISHED",
         }
     }
 }
@@ -309,20 +270,16 @@ impl<'a> Runs<'a> {
 }
 
 /// One line of the Issues or Pull requests list.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ItemRow {
+    /// The repository listing it, by its place in the view's list.
+    pub(crate) repo: usize,
+    /// The item, by its place in that repository's snapshot.
     pub(crate) item: usize,
     pub(crate) depth: u8,
     /// `Some(open)` when the item has children shown under it.
     pub(crate) children: Option<bool>,
     pub(crate) run: Option<RunRow>,
-}
-
-/// One line of the Runs list: a group heading or a run.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RunLine {
-    Group { group: Group, count: usize },
-    Run(RunRow),
 }
 
 /// Whether `item` matches every word of `query`, case-insensitively unless
@@ -353,7 +310,7 @@ pub(crate) fn matches(item: &Item, query: &str) -> bool {
     })
 }
 
-fn closed(item: &Item) -> bool {
+pub(crate) fn closed(item: &Item) -> bool {
     matches!(item.state.as_str(), "closed" | "tombstone")
 }
 
@@ -444,6 +401,7 @@ pub(crate) fn issue_rows(
         // A search opens every branch it reaches into.
         let open = !collapsed.contains(&keys[index]) || !query.trim().is_empty();
         rows.push(ItemRow {
+            repo: 0,
             item: index,
             depth,
             children: kids.map(|_| open),
@@ -477,6 +435,7 @@ pub(crate) fn pull_request_rows(
         })
         .filter(|(_, item)| matches(item, query))
         .map(|(index, item)| ItemRow {
+            repo: 0,
             item: index,
             depth: 0,
             children: None,
@@ -486,74 +445,6 @@ pub(crate) fn pull_request_rows(
         .collect();
     rows.sort_by(|a, b| sort.compare(&items[a.item], &items[b.item]));
     rows
-}
-
-/// The Runs tab: runs under group headings, newest first in each.
-pub(crate) fn run_lines(
-    runs: &Runs<'_>,
-    items: &[Item],
-    query: &str,
-    active_only: bool,
-) -> Vec<RunLine> {
-    let titles: HashMap<String, &Item> = items
-        .iter()
-        .map(|item| (item.key.canonical(), item))
-        .collect();
-    let mut rows: Vec<RunRow> = (0..runs.runs.len())
-        .filter_map(|index| {
-            Some(RunRow {
-                run: index,
-                status: runs.status(index)?,
-            })
-        })
-        .filter(|row| !active_only || row.status.group() != Group::Finished)
-        .filter(|row| {
-            let run = &runs.runs[row.run];
-            let haystack = format!(
-                "{} {} {} {}",
-                run.agent,
-                run.item_key,
-                titles
-                    .get(&run.item_key)
-                    .map_or("", |item| item.title.as_str()),
-                run.workspace
-                    .as_ref()
-                    .map_or("", |workspace| workspace.branch.as_str()),
-            );
-            query
-                .split_whitespace()
-                .all(|word| haystack.to_lowercase().contains(&word.to_lowercase()))
-        })
-        .collect();
-    rows.sort_by(|a, b| {
-        a.status.group().cmp(&b.status.group()).then_with(|| {
-            runs.runs[b.run]
-                .started_at
-                .cmp(&runs.runs[a.run].started_at)
-        })
-    });
-    let mut lines = Vec::new();
-    let mut index = 0;
-    while index < rows.len() {
-        let group = rows[index].status.group();
-        let count = rows[index..]
-            .iter()
-            .take_while(|row| row.status.group() == group)
-            .count();
-        lines.push(RunLine::Group { group, count });
-        lines.extend(rows[index..index + count].iter().copied().map(RunLine::Run));
-        index += count;
-    }
-    lines
-}
-
-/// How many runs need the user: blocked on input or failed. The Runs tab and
-/// the entry points mark it.
-pub(crate) fn attention(runs: &Runs<'_>) -> usize {
-    (0..runs.runs.len())
-        .filter_map(|index| runs.status(index))
-        .filter(|status| status.group() == Group::Attention)
-        .count()
 }
 
 /// What a run's item is called when the item is not listed, such as a
@@ -571,4 +462,150 @@ pub(crate) fn key_label(key: &str) -> String {
     } else {
         native
     }
+}
+
+/// What a pull request waits on, which groups the list: a review asked of
+/// the user first, then the user's own to fix, those ready to merge, the
+/// rest, and closed ones last.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum Next {
+    Review,
+    Fix,
+    Merge,
+    Wait,
+    Closed,
+}
+
+impl Next {
+    pub(crate) fn of(item: &Item, status: Option<&PrStatus>, login: Option<&str>) -> Self {
+        if matches!(item.state.as_str(), "closed" | "merged") {
+            return Self::Closed;
+        }
+        let mine = login.is_some_and(|login| {
+            item.author
+                .as_deref()
+                .is_some_and(|author| author.eq_ignore_ascii_case(login))
+        });
+        let review = status.and_then(|status| status.review);
+        let checks = status.and_then(PrStatus::checks_state);
+        if !mine
+            && status
+                .zip(login)
+                .is_some_and(|(status, login)| status.requests(login))
+        {
+            Self::Review
+        } else if mine
+            && (review == Some(Review::ChangesRequested) || checks == Some(CheckState::Failed))
+        {
+            Self::Fix
+        } else if review == Some(Review::Approved)
+            && !matches!(checks, Some(CheckState::Failed | CheckState::Pending))
+            && item.state == "open"
+        {
+            Self::Merge
+        } else {
+            Self::Wait
+        }
+    }
+
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Review,
+        Self::Fix,
+        Self::Merge,
+        Self::Wait,
+        Self::Closed,
+    ];
+}
+
+/// What heads a run of rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Heading {
+    Next(Next),
+    /// An issue's priority; None for none.
+    Priority(Option<i64>),
+}
+
+/// One line of a section's list: a heading, or an item's row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Line {
+    Heading { heading: Heading, count: usize },
+    Row(ItemRow),
+}
+
+/// The status GitHub last gave pull request `item`, if it is one.
+pub(crate) fn status_of<'a>(
+    item: &Item,
+    statuses: &'a HashMap<(String, u64), PrStatus>,
+) -> Option<&'a PrStatus> {
+    let number = item.pull_request.as_ref()?.number;
+    statuses.get(&(item.key.source.repository.clone(), number))
+}
+
+/// Several repositories' rows as one list in `sort`'s order. A top-level
+/// row keeps the children that follow it.
+pub(crate) fn merge<'a>(
+    lists: impl IntoIterator<Item = Vec<ItemRow>>,
+    item: impl Fn(&ItemRow) -> &'a Item,
+    sort: Sort,
+) -> Vec<ItemRow> {
+    let mut blocks: Vec<Vec<ItemRow>> = Vec::new();
+    for row in lists.into_iter().flatten() {
+        match blocks.last_mut() {
+            Some(block) if row.depth > 0 => block.push(row),
+            _ => blocks.push(vec![row]),
+        }
+    }
+    blocks.sort_by(|a, b| sort.compare(item(&a[0]), item(&b[0])));
+    blocks.into_iter().flatten().collect()
+}
+
+/// Pull requests under what each waits on, in the order the rows came.
+pub(crate) fn pull_request_lines(rows: &[ItemRow], next: impl Fn(&ItemRow) -> Next) -> Vec<Line> {
+    let mut lines = Vec::new();
+    for group in Next::ALL {
+        let grouped: Vec<ItemRow> = rows
+            .iter()
+            .copied()
+            .filter(|row| next(row) == group)
+            .collect();
+        if grouped.is_empty() {
+            continue;
+        }
+        lines.push(Line::Heading {
+            heading: Heading::Next(group),
+            count: grouped.len(),
+        });
+        lines.extend(grouped.into_iter().map(Line::Row));
+    }
+    lines
+}
+
+/// Issues under their priority, hottest first and none last. A Beads child
+/// stays under its parent, in its parent's group.
+pub(crate) fn issue_lines<'a>(rows: &[ItemRow], item: impl Fn(&ItemRow) -> &'a Item) -> Vec<Line> {
+    // Each top-level row with the children that follow it.
+    let mut blocks: Vec<(Option<i64>, Vec<ItemRow>)> = Vec::new();
+    for row in rows {
+        match blocks.last_mut() {
+            Some((_, block)) if row.depth > 0 => block.push(*row),
+            _ => blocks.push((item(row).priority, vec![*row])),
+        }
+    }
+    let mut priorities: Vec<Option<i64>> = blocks.iter().map(|(priority, _)| *priority).collect();
+    priorities.sort_by_key(|priority| (priority.is_none(), *priority));
+    priorities.dedup();
+    let mut lines = Vec::new();
+    for priority in priorities {
+        let inside: Vec<ItemRow> = blocks
+            .iter()
+            .filter(|(of, _)| *of == priority)
+            .flat_map(|(_, block)| block.iter().copied())
+            .collect();
+        lines.push(Line::Heading {
+            heading: Heading::Priority(priority),
+            count: inside.iter().filter(|row| row.depth == 0).count(),
+        });
+        lines.extend(inside.into_iter().map(Line::Row));
+    }
+    lines
 }

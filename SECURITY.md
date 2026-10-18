@@ -49,11 +49,12 @@ open a normal issue for those rather than a private advisory.
 
 ## Verifying a Release
 
-Each of the nineteen base artifacts (universal DMG; experimental x86_64 and ARM64
+Each of the twenty-three base artifacts (universal DMG; experimental x86_64 and ARM64
 manual Linux archives with their `.deb`, `.rpm` and Arch packages; experimental
-x86_64 and ARM64 Windows zips; CycloneDX SBOM; three updater archives; updater
-manifest JSON and its raw Ed25519 signature; Linux package manifest JSON and its
-raw Ed25519 signature) has checksums, a Sigstore
+x86_64 and ARM64 Windows zips and installers; CycloneDX SBOM; three updater archives;
+updater manifest JSON and its raw Ed25519 signature; Linux package manifest JSON and
+its raw Ed25519 signature; Windows installer manifest JSON and its raw Ed25519
+signature) has checksums, a Sigstore
 signature/certificate, and GitHub provenance.
 Checksums alone are not authentication:
 
@@ -82,9 +83,9 @@ than trusting the current tag mapping. These are manual **main-branch** runs;
 the certificate identity is not a tag ref. Verification requires network access
 to GitHub and Sigstore; no transparency-log checks are disabled.
 
-`SHA256SUMS` contains exactly 45 entries: the nine base files and each file's
+`SHA256SUMS` contains exactly 115 entries: the twenty-three base files and each file's
 `.sha256`, `.sha512`, `.sig`, and `.crt` sidecars. The immutable release has those
-45 files plus `SHA256SUMS`, for 46 published assets. Publication checks the complete
+115 files plus `SHA256SUMS`, for 116 published assets. Publication checks the complete
 set and downloaded draft bytes before making it public. Enable GitHub immutable releases before
 dispatch; the workflow never replaces a tag, release, or published asset.
 
@@ -93,8 +94,12 @@ embedded Ed25519 public key and raw `update-manifest.sig`. Sigstore sidecars
 `update-manifest.json.sig` and `update-manifest.sig.sig` are separate signatures,
 not the updater's trust anchor. Linux manual `Herdr-VERSION-TARGET.tar.gz` archives
 include desktop files and notices; `herdr-gpui-VERSION-TARGET-update.tar.gz`
-contains only the replacement executable. See [App Updates](docs/updating.md)
-for key configuration, archive validation, and native QA requirements.
+contains only the replacement executable. Linux packages and Windows installers
+are authenticated the same way through `package-manifest.json` and
+`windows-manifest.json`; a Windows installer must also carry a valid Authenticode
+signature from the publisher the app was built to expect before it runs. See
+[App Updates](docs/updating.md) for key configuration, archive validation, and
+native QA requirements.
 
 ### Optional GPG Approval
 

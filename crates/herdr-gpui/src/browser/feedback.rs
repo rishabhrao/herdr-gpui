@@ -13,12 +13,10 @@ const MAX_KEPT: usize = 16;
 /// Text one `take` hands out, measured as JSON, so the answer that carries
 /// it fits the control socket's message bound. Batches past it stay kept for
 /// the next take.
-#[cfg(any(unix, test))]
 pub(crate) const TAKE_BUDGET: usize = 240 * 1024;
 
 /// `text` cut, at a character, to fit `budget` as JSON, saying so: a batch
 /// over the budget could never be handed out in one answer.
-#[cfg(any(unix, test))]
 pub(crate) fn fit(text: String, budget: usize) -> String {
     const CUT: &str = "\n[Notes cut: too long for one answer]";
     if json_size(&text) <= budget {
@@ -38,7 +36,6 @@ pub(crate) fn fit(text: String, budget: usize) -> String {
 }
 
 /// `text`'s size inside a JSON string.
-#[cfg(any(unix, test))]
 pub(crate) fn json_size(text: &str) -> usize {
     serde_json::to_string(text).map_or(text.len() * 6, |json| json.len())
 }
@@ -69,7 +66,6 @@ pub(crate) struct Feedback {
 impl Global for Feedback {}
 
 impl Feedback {
-    #[cfg(any(unix, test))]
     pub(crate) fn waiting(&self) -> &[FeedbackKey] {
         &self.waiting
     }
@@ -79,13 +75,11 @@ impl Feedback {
     }
 
     /// Records which panes are waiting.
-    #[cfg(any(unix, test))]
     pub(crate) fn set_waiting(&mut self, panes: Vec<FeedbackKey>) {
         self.waiting = panes;
     }
 
     pub(crate) fn keep(&mut self, batch: Batch, pending: Option<Arc<()>>) {
-        #[cfg(any(unix, test))]
         let batch = Batch {
             text: fit(batch.text, TAKE_BUDGET),
             ..batch
@@ -100,7 +94,6 @@ impl Feedback {
     /// Keeps again, first in line, a batch that was taken but never reached
     /// its agent, so it still goes before every newer one. It is no new
     /// batch, so it raises no new event.
-    #[cfg(unix)]
     pub(crate) fn keep_again(&mut self, batch: Batch) {
         let batch = Batch {
             text: fit(batch.text, TAKE_BUDGET),
@@ -115,7 +108,6 @@ impl Feedback {
     /// What is kept for this daemon and pane, oldest first, joined into one
     /// text of at most [`TAKE_BUDGET`] (always at least one batch); the rest
     /// stays for the next take.
-    #[cfg(any(unix, test))]
     pub(crate) fn take(&mut self, target: &FeedbackKey) -> Option<String> {
         let mut used = 0;
         let mut taken = Vec::new();
@@ -149,14 +141,12 @@ impl Feedback {
     /// Whom the kept batches are for, oldest first, each with its number:
     /// numbers only grow, so a reader tells new batches from old ones even
     /// once the oldest are dropped.
-    #[cfg(unix)]
     pub(crate) fn kept(&self) -> impl Iterator<Item = (u64, &FeedbackKey)> {
         self.kept
             .iter()
             .map(|(batch, _, added)| (*added, &batch.target))
     }
 
-    #[cfg(any(unix, test))]
     pub(crate) fn has(&self, target: &FeedbackKey) -> bool {
         self.kept.iter().any(|(batch, ..)| &batch.target == target)
     }

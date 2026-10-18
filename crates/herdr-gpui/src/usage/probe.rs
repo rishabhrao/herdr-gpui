@@ -418,10 +418,28 @@ impl<'a> Probe<'a> {
         }
     }
 
-    /// A macOS keychain item's password on the probed host.
-    /// A macOS keychain generic password on the probed host (`security -w`).
+    /// A macOS keychain generic password on the probed host (`security -w`),
+    /// for an item `security` may read without asking, such as one its owner
+    /// wrote with the `security` tool itself, as Claude Code does.
     pub fn keychain(&mut self, service: &str, account: Option<&str>) -> Option<Secret> {
         self.security("find-generic-password", service, account)
+    }
+
+    /// Whether the probe may touch data another app keeps for itself on this
+    /// Mac, such as its folder under `~/Library/Application Support`, either
+    /// directly or through a command it runs. macOS counts a child's reads
+    /// against Herdr and may ask whether Herdr can access data from other
+    /// apps, so a detected provider leaves that data alone.
+    ///
+    /// Unlike a [`Probe::foreign_keychain`] read, a listed provider is not
+    /// held back for Allow ([`Consent::Ask`]): listing it is the consent. The
+    /// panel's Allow grants Keychain access and says so, while this dialog is
+    /// macOS's own, asked once per app and remembered by macOS, so there is
+    /// no refusal for Herdr to remember either. And unlike a keychain read,
+    /// remote hosts are unchanged: no such dialog reaches the user from an
+    /// SSH session, whereas a foreign Keychain item is gated on every host.
+    pub fn app_data(&self) -> bool {
+        self.requested() || self.is_remote() || !cfg!(target_os = "macos")
     }
 
     /// A macOS keychain internet password that another app owns, such as an
@@ -486,7 +504,7 @@ impl<'a> Probe<'a> {
                 if !cfg!(target_os = "macos") {
                     return None;
                 }
-                let mut command = Command::new("/usr/bin/security");
+                let mut command = herdr_client::new_command("/usr/bin/security");
                 command.args(&args);
                 let (success, bytes) =
                     output(&mut command, STEP_TIMEOUT, "read a keychain item").ok()?;
@@ -555,7 +573,7 @@ impl<'a> Probe<'a> {
     pub fn command(&mut self, program: &str, args: &[&str], timeout: Duration) -> Result<Output> {
         match self.exec {
             Exec::Local => {
-                let mut command = Command::new(program);
+                let mut command = herdr_client::new_command(program);
                 command
                     .args(args)
                     .env("PATH", local_path())

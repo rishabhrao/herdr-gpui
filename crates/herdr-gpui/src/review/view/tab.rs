@@ -251,6 +251,8 @@ impl HerdrWindow {
             scope: super::Scope::default(),
             layout: Layout::default(),
             ignore_whitespace: false,
+            base: None,
+            base_menu: None,
             split_ratio: rows::EVEN_SPLIT,
             agent,
             origin: crate::agent_notes::Origin::of(self),

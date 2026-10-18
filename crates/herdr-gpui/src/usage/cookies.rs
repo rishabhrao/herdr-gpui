@@ -189,7 +189,7 @@ impl Browser {
 
     #[cfg(target_os = "macos")]
     fn key(&self) -> Option<Zeroizing<[u8; 16]>> {
-        let mut command = std::process::Command::new("/usr/bin/security");
+        let mut command = herdr_client::new_command("/usr/bin/security");
         command.args(["find-generic-password", "-w", "-s", self.keychain]);
         let (success, password) = super::probe::output(
             &mut command,

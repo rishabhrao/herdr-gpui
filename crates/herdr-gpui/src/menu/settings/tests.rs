@@ -413,13 +413,12 @@ fn config_reload_rebinds_the_keymap(cx: &mut gpui::TestAppContext) {
     cx.update(|_, cx| {
         let keymap = cx.key_bindings();
         let keymap = keymap.borrow();
-        let console =
-            keymap.all_bindings_for_input(&[Keystroke::parse(if cfg!(target_os = "linux") {
-                "ctrl-l"
-            } else {
-                "cmd-l"
-            })
-            .unwrap()]);
+        let level = if crate::controls::CTRL_SHORTCUTS {
+            "ctrl-l"
+        } else {
+            "cmd-l"
+        };
+        let console = keymap.all_bindings_for_input(&[Keystroke::parse(level).unwrap()]);
         assert_eq!(console.len(), 1);
     });
     view.read_with(cx, |view, _| {

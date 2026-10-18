@@ -40,10 +40,20 @@ pub use sidebar_fixture::start_sidebar;
 mod notifications;
 use notifications::start_notifications;
 
+#[cfg(any(target_os = "macos", windows))]
+#[path = "smoke_page_fixture.rs"]
+mod page_fixture;
+
 #[cfg(target_os = "macos")]
 #[path = "smoke_pages.rs"]
 mod pages;
 #[cfg(target_os = "macos")]
+use pages::start_pages;
+
+#[cfg(windows)]
+#[path = "smoke_pages_windows.rs"]
+mod pages;
+#[cfg(windows)]
 use pages::start_pages;
 
 #[cfg(target_os = "macos")]
@@ -97,6 +107,24 @@ const STEPS: &[&str] = &[
     "input after reconnect",
     "external workspace pushed to idle GUI",
 ];
+
+/// What the integration steps type.
+#[derive(Clone, Copy)]
+enum Key {
+    /// A command, through its default shortcut on this platform.
+    Command(Command),
+    /// A key the terminal receives.
+    Terminal(&'static str),
+}
+
+/// This platform's first default shortcut for `command`.
+fn shortcut(command: Command) -> Result<&'static str> {
+    crate::controls::COMMANDS
+        .iter()
+        .find(|info| info.command == command)
+        .and_then(|info| info.default_shortcuts().first().copied())
+        .with_context(|| format!("no default shortcut for {command:?}"))
+}
 
 const EXTERNAL_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -256,12 +284,16 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                 let active = window.is_window_active();
                 let actions_ready = window.is_action_available(&RunCommand { command: Command::Tab }, cx);
                 let probe = view.read(cx).input_probe;
+                // A command sent while a focus change is fenced is dropped,
+                // as a user's would be, so each step waits for the fence.
+                let fenced = view.read(cx).activation_deadline.is_some();
+                let ready = view.read(cx).navigation_ready();
                 let (live, local_error, options, last_queued_options, bounds) = {
                     let view = view.read(cx);
                     (view.live.clone(), view.local_error.clone(), view.options, view.last_queued_options, view.bounds)
                 };
                 let diagnostic = || format!(
-                    "step={step} ({}) elapsed={:?} frames={frames} focus={focused} actions_ready={actions_ready} active={} probe={probe:?} status={:.160} local_error={:.240} live.error={:.240} connected={} snapshot={:?} surface={:?} size={:?} last_queued_options={last_queued_options:?}",
+                    "step={step} ({}) elapsed={:?} frames={frames} focus={focused} actions_ready={actions_ready} fenced={fenced} ready={ready} active={} probe={probe:?} status={:.160} local_error={:.240} live.error={:.240} connected={} snapshot={:?} surface={:?} size={:?} last_queued_options={last_queued_options:?}",
                     STEPS[step], since.elapsed(), active, live.status,
                     local_error.as_deref().unwrap_or("none"), live.error.as_deref().unwrap_or("none"), live.status.is_connected(),
                     live.snapshot.as_ref().map(|s| (s.revision, s.workspaces.len(), s.tabs.len())),
@@ -271,9 +303,12 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                     bail!(diagnostic());
                 }
                 if since.elapsed() > Duration::from_secs(20) {
-                    bail!("timeout: {}", diagnostic());
+                    // What the pane showed, so a CI timeout says what the
+                    // terminal did with the input.
+                    let screen = live.surface.as_ref().map(|s| screen_text(&s.frame)).unwrap_or_default();
+                    bail!("timeout: {}; screen:\n{screen}", diagnostic());
                 }
-                if !focused || !actions_ready { return Ok(false); }
+                if !focused || !actions_ready || fenced || !ready { return Ok(false); }
                 let (Some(snapshot), Some(surface)) = (&live.snapshot, &live.surface) else { return Ok(false) };
                 if !live.status.is_connected() || snapshot.boot_id != surface.boot_id || snapshot.revision != surface.projection_revision {
                     return Ok(false);
@@ -284,12 +319,19 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                 }
                 let focused_tab = snapshot.focused_tab_id.as_deref().unwrap_or_default();
                 let focused_workspace = snapshot.focused_workspace_id.as_deref().unwrap_or_default();
-                let key = |name: &str, window: &mut Window, cx: &mut App| -> Result<()> {
+                // A command is typed as this platform's own default shortcut
+                // (Cmd on macOS, Ctrl elsewhere) and must reach its action;
+                // any other key must reach the terminal.
+                let key = |input: Key, window: &mut Window, cx: &mut App| -> Result<()> {
+                    let name = match input {
+                        Key::Command(command) => shortcut(command)?,
+                        Key::Terminal(name) => name,
+                    };
                     let before = view.read(cx).input_probe;
                     let key = Keystroke::parse(name).with_context(|| format!("parsing keystroke {name}"))?;
                     if !window.dispatch_keystroke(key, cx) { bail!("unhandled keystroke {name}"); }
                     let after = view.read(cx).input_probe;
-                    let delivered = if name.starts_with("cmd-") {
+                    let delivered = if matches!(input, Key::Command(_)) {
                         after.actions == before.actions + 1
                     } else {
                         after.keys == before.keys + 1
@@ -302,19 +344,19 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                         boot = snapshot.boot_id.clone();
                         workspace = focused_workspace.into();
                         first_tab = focused_tab.into();
-                        key("cmd-t", window, cx)?;
+                        key(Key::Command(Command::Tab), window, cx)?;
                     }
                     1 if snapshot.tabs.len() == 2 && focused_tab != first_tab && surface.panes.len() == 1 => {
                         second_tab = focused_tab.into();
                         split_pane = snapshot.focused_pane_id.clone().unwrap_or_default();
-                        key("cmd-d", window, cx)?;
+                        key(Key::Command(Command::SplitRight), window, cx)?;
                     }
                     2 if surface.panes.len() == 2 => {
                         let old = surface.panes.iter().find(|p| p.pane_id == split_pane).context("original split pane missing")?;
                         let new = surface.panes.iter().find(|p| Some(&p.pane_id) == snapshot.focused_pane_id.as_ref()).context("focused split missing")?;
                         if new.rect.x <= old.rect.x || new.rect.y != old.rect.y { bail!("right split geometry: {}", diagnostic()); }
                         split_pane = new.pane_id.clone();
-                        key("cmd-shift-d", window, cx)?;
+                        key(Key::Command(Command::SplitDown), window, cx)?;
                     }
                     3 if surface.panes.len() == 3 => {
                         let old = surface.panes.iter().find(|p| p.pane_id == split_pane).context("original split pane missing")?;
@@ -326,7 +368,7 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                         window.dispatch_action(Box::new(RunCommand { command: Command::NextTab }), cx);
                     }
                     5 if focused_tab == second_tab && surface.panes.len() == 3 => {
-                        key("cmd-shift-n", window, cx)?;
+                        key(Key::Command(Command::Workspace), window, cx)?;
                     }
                     6 if snapshot.workspaces.len() == 2 && focused_workspace != workspace && surface.panes.len() == 1 => {
                         let before = view.read(cx).presentation.probe;
@@ -353,10 +395,12 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                         // Use the full-width tab so the exact output row cannot wrap in a split.
                         window.dispatch_action(Box::new(RunCommand { command: Command::PreviousTab }), cx);
                     }
-                    8 if focused_tab == first_tab && surface.panes.len() == 1 => {
+                    // Typed only at a prompt: a shell still starting (PowerShell
+                    // under emulation on Windows on ARM) can drop typed-ahead input.
+                    8 if focused_tab == first_tab && surface.panes.len() == 1 && shell_ready(&surface.frame) => {
                         let command = format!("echo HERDR_GUI_{}\"_OK\"", std::process::id());
                         type_text(&command, &view, window, cx)?;
-                        key("enter", window, cx)?;
+                        key(Key::Terminal("enter"), window, cx)?;
                     }
                     9 if has_output(&surface.frame, &marker) => {
                         eprintln!("GUI shell output verified (not command echo): {marker}");
@@ -371,7 +415,7 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                     11 if snapshot.boot_id == boot && snapshot.workspaces.len() == 2 && snapshot.tabs.len() == 3
                         && focused_workspace == workspace && focused_tab == first_tab && has_output(&surface.frame, &marker) => {
                         type_text(&format!("echo HERDR_GUI_{}\"_OK_RECONNECTED\"", std::process::id()), &view, window, cx)?;
-                        key("enter", window, cx)?;
+                        key(Key::Terminal("enter"), window, cx)?;
                     }
                     12 if has_output(&surface.frame, &reconnected_marker) => {
                         eprintln!("GUI input pipeline verified: frames={frames} focus={focused} active={active} probe={probe:?}");
@@ -694,9 +738,47 @@ fn has_output(frame: &FrameData, marker: &str) -> bool {
         })
 }
 
+/// The frame's non-blank rows, bounded for a failure message.
+fn screen_text(frame: &FrameData) -> String {
+    if frame.width == 0 {
+        return String::new();
+    }
+    frame
+        .cells
+        .chunks(usize::from(frame.width))
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+        })
+        .filter(|row| !row.trim().is_empty())
+        .map(|row| row.trim_end().chars().take(160).collect::<String>())
+        .take(40)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether the cursor sits after a shell prompt: the sandbox's `LIVE> ` for
+/// `sh`, or PowerShell's `PS C:\...> `.
+fn shell_ready(frame: &FrameData) -> bool {
+    let Some(cursor) = &frame.cursor else {
+        return false;
+    };
+    let width = usize::from(frame.width);
+    let start = usize::from(cursor.y) * width;
+    let end = start + usize::from(cursor.x).min(width);
+    frame.cells.get(start..end).is_some_and(|row| {
+        row.iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>()
+            .trim_end()
+            .ends_with('>')
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::create_external_workspace;
+    use super::{create_external_workspace, shell_ready};
     use anyhow::{Context as _, Result};
     use herdr_client::{ConnectOptions, ConnectTarget, protocol::ClientSurfaceSize};
 
@@ -721,5 +803,39 @@ mod tests {
         ));
         assert!(format!("{error:#}").contains("surface dimensions must be nonzero"));
         Ok(())
+    }
+
+    #[test]
+    fn a_shell_is_ready_once_its_prompt_precedes_the_cursor() {
+        use herdr_client::protocol::{CellData, CursorState, FrameData};
+        let frame = |text: &str, x: u16| FrameData {
+            width: 12,
+            height: 1,
+            cells: format!("{text:<12}")
+                .chars()
+                .map(|ch| CellData {
+                    symbol: ch.to_string(),
+                    skip: false,
+                    fg: 0,
+                    bg: 0,
+                    modifier: 0,
+                    hyperlink: None,
+                })
+                .collect(),
+            cursor: Some(CursorState {
+                x,
+                y: 0,
+                visible: true,
+                shape: 0,
+            }),
+            hyperlinks: vec![],
+            graphics: vec![],
+        };
+        assert!(shell_ready(&frame("LIVE> ", 6)));
+        assert!(shell_ready(&frame("PS C:\\h> ", 9)));
+        assert!(!shell_ready(&frame("", 0)));
+        assert!(!shell_ready(&frame("Loading", 7)));
+        // Text after the cursor is not the prompt.
+        assert!(!shell_ready(&frame("ab LIVE>", 2)));
     }
 }

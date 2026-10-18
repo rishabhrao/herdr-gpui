@@ -1,7 +1,7 @@
 //! The named local sessions one machine's Herdr installation owns, and which of
 //! them is running. A session socket outlives the daemon that created it, so a
 //! session's state can only come from a connect attempt, never the file itself.
-use crate::ssh::CANDIDATES;
+use crate::ssh::{CANDIDATES, script_command};
 use crate::{
     Error, Result, Stream,
     catalog::validate_target,
@@ -9,10 +9,7 @@ use crate::{
     session_socket,
 };
 #[cfg(unix)]
-use crate::{
-    limits::POLL,
-    ssh::{ChildGuard, script_command},
-};
+use crate::{limits::POLL, ssh::ChildGuard};
 use serde::Deserialize;
 use std::{
     fs, io,
@@ -35,7 +32,7 @@ const DEFAULT: &str = "default";
 pub fn delete_local_session(executable: &Path, name: &str) -> Result<()> {
     validate_delete(name)?;
     let command = |operation| {
-        let mut command = std::process::Command::new(executable);
+        let mut command = crate::new_command(executable);
         command.args(["session", operation, "--json", "--", name]);
         command
     };
@@ -49,17 +46,10 @@ pub fn delete_local_session(executable: &Path, name: &str) -> Result<()> {
 pub fn delete_remote_session(target: &str, name: &str) -> Result<()> {
     validate_target(target)?;
     validate_delete(name)?;
-    #[cfg(unix)]
-    {
-        delete_command(
-            script_command(target, &delete_script(name))?,
-            Duration::from_secs(45),
-        )
-    }
-    #[cfg(not(unix))]
-    {
-        Err(Error::SshUnsupported)
-    }
+    delete_command(
+        script_command(target, &delete_script(name))?,
+        Duration::from_secs(45),
+    )
 }
 
 fn stop_then_delete(
@@ -241,7 +231,6 @@ fn names(dir: &Path) -> io::Result<Vec<String>> {
 
 /// The whole remote probe's budget: the figure the bridge's discovery already
 /// allows, since a listing has to survive the same SSH handshake.
-#[cfg(unix)]
 const DEADLINE: Duration = Duration::from_secs(15);
 
 /// A host listing `LIMIT` sessions with full socket paths stays well under this.
@@ -268,16 +257,7 @@ struct SessionList {
 /// shorter list.
 pub fn list_remote_sessions(target: &str) -> Result<Vec<RemoteSession>> {
     validate_target(target)?;
-    #[cfg(unix)]
-    {
-        parse_session_list(&remote_stdout(target, &session_list_script())?)
-    }
-    // Handing a socket to a child as its stdout needs `OwnedFd`, which only Unix
-    // gives, so this mirrors `ssh::connect`: reject the platform, not the target.
-    #[cfg(not(unix))]
-    {
-        Err(Error::SshUnsupported)
-    }
+    parse_session_list(&remote_stdout(target, &session_list_script())?)
 }
 
 /// Ask the host for its own session list. Shares the bridge's discovery loop
@@ -315,6 +295,15 @@ fn remote_stdout(target: &str, script: &str) -> Result<Vec<u8>> {
     read_listing(&mut stream, DEADLINE, || {
         matches!(child.0.try_wait(), Ok(Some(_)))
     })
+}
+
+/// [`remote_stdout`] on Windows, where the child's stdout is a pipe that closes
+/// when `ssh` exits: there is no shared connection to hold it open, so the
+/// listing is everything printed before the exit, bounded as on Unix.
+#[cfg(windows)]
+fn remote_stdout(target: &str, script: &str) -> Result<Vec<u8>> {
+    let (_, output) = crate::ssh::run(&mut script_command(target, script)?, DEADLINE, || false)?;
+    Ok(output)
 }
 
 /// A host's listing off `stream`, stopping as soon as one has arrived and holding

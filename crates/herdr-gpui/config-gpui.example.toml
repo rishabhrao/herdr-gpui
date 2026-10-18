@@ -18,9 +18,13 @@
 # brings up a dismissible card naming a Nerd Font to install.
 # Saved changes to the local file reload automatically in every GUI window.
 
-# Built-ins: Default, Nord, Dracula, Catppuccin Mocha, Catppuccin Latte.
+# Built-ins: Default, Nord, Dracula, Catppuccin Mocha, Catppuccin Latte, plus
+# popular Ghostty themes compiled in, such as TokyoNight, Gruvbox Dark,
+# Rose Pine, Atom One Dark, and GitHub Light Default (Settings lists them all).
 # Also accepts a Ghostty theme name, an absolute path, or a ~/ path.
 # Set "Follow Herdr" in config-gpui.local.toml to follow the local Herdr theme.
+# On an Omarchy desktop, "Omarchy" follows its current theme as it switches,
+# and is what you get until config-gpui.local.toml names another theme.
 # To follow the system light/dark appearance, name a theme for each side, as
 # Ghostty does: theme = "light:Catppuccin Latte,dark:Catppuccin Mocha"
 theme = "Default"
@@ -30,6 +34,10 @@ theme = "Default"
 # "high" raises them and dim labels to 4.5:1 and makes selected rows stand out
 # more. Terminal output always keeps its program's colors.
 contrast = "standard"
+# The app's own accent (the current tab, selected rows): "theme" takes it from
+# the theme, "system" from Windows Settings > Personalization > Colors.
+# Other platforms keep the theme's. Terminal colors never change with it.
+accent = "theme"
 
 # Ask before closing a tab (closing terminates its terminal processes).
 confirm_close_tab = true
@@ -47,6 +55,15 @@ confirm_close_workspace = true
 remove_merged_worktrees = false
 # Show the Agents section below Spaces in the sidebar.
 show_agents = true
+# Show the Agents title row, with the sort toggle on its right. Hidden, the
+# order follows Herdr's `ui.agent_panel_sort` until you toggle it, unless a
+# plugin sets the agent view, which keeps the header shown. Also under
+# Settings > Sidebar.
+show_agents_header = true
+# Where the sidebar lists agents while show_agents is on: "panel", their own
+# section below Spaces, or "nested", under the workspace each one runs in.
+# Also under Settings > Sidebar.
+agents_placement = "panel"
 # Show the search field at the top of the sidebar, which finds devices,
 # worktrees, and branches. Also under Settings > Sidebar.
 show_sidebar_search = true
@@ -54,12 +71,14 @@ show_sidebar_search = true
 # name in the sidebar, in the layouts that draw one (not orca or minimal).
 # Also under Settings > Sidebar.
 show_repository_icons = true
-# Draw agent status as icons instead of Herdr's dots or symbols: "solid"
-# (filled discs), "tiles" (each mark on a tinted tile), or "rail" (outline
-# marks plus a bar on the edge of each working, done, or blocked row). Only
-# this app draws them; unset follows Herdr's `ui.status_indicators`.
-# Also under Settings > Notifications > Icons.
-# status_icons = "solid"
+# How agent status is drawn: "dots" (the default), "solid", "outline",
+# "tiles", "wave" (Superset's grid), "braille", or "orca". Only this app reads
+# it; Herdr's `ui.status_indicators` stays the terminal client's. Working always
+# moves. Also under Settings > Appearance > Indicators.
+# status_icons = "dots"
+# Draw a bar on the leading edge of each working, done, or blocked row, with
+# any set. Also under Settings > Appearance > Indicators.
+# edge_rail = false
 # Show a mark before each device's name in the sidebar for where it runs: this
 # machine, a cloud provider, Tailscale, or SSH. In the layouts that draw one
 # (not orca or minimal). Also under Settings > Sidebar.
@@ -190,18 +209,22 @@ project_roots = []
 
 # Native shortcuts. Each key is a command; the value is one keystroke or a list,
 # primary first. "" or [] unbinds it. Assigning a keystroke here takes it away
-# from its default command. Modifiers: cmd (super on Linux), ctrl, alt, shift,
-# fn; keystrokes need at least one of cmd, ctrl, alt, or fn, or a function key
-# F1 through F24. Herdr > Keyboard Shortcuts also edits, unbinds, and resets them.
+# from its default command. Modifiers: cmd (Super on Linux, Win on Windows),
+# ctrl, alt, shift, fn; keystrokes need at least one of cmd, ctrl, alt, or fn,
+# or a function key F1 through F24. Herdr > Keyboard Shortcuts also edits,
+# unbinds, and resets them.
 # Herdr's own [keys] in config.toml (prefix chords included) add to these
 # defaults; a command named here keeps only the keystrokes listed here.
-# The examples below use the macOS defaults. Linux has its own Ctrl+Shift
-# defaults (not Super): new_tab = "ctrl-shift-t", new_window = "ctrl-alt-n",
-# close_window = "ctrl-alt-w", new_workspace = "ctrl-alt-shift-n",
+# The examples below use the macOS defaults. Linux and Windows have their own
+# Ctrl+Shift defaults (not Super or Win): new_tab = "ctrl-shift-t",
+# new_window = "ctrl-alt-n", close_window = "ctrl-alt-w",
+# new_workspace = "ctrl-alt-shift-n",
 # new_worktree = "ctrl-shift-n",
 # split_right = "ctrl-shift-d", split_down = "ctrl-alt-shift-d",
 # command_palette = "ctrl-shift-p", resume_palette = "ctrl-alt-shift-r",
-# toggle_full_screen = "f11".
+# toggle_full_screen = "f11", quit = "ctrl-shift-q", and reset_font_size =
+# "ctrl-shift-0" on Linux but "ctrl-0" on Windows, which can take
+# Ctrl+Shift+0 for switching input languages.
 # See Keyboard Shortcuts for the full platform-specific list. Explicit values
 # are used literally on every platform; cmd is not translated to Ctrl+Shift.
 # Ctrl+Shift+U is left to GNOME/IBus Unicode character entry.
@@ -226,7 +249,7 @@ project_roots = []
 # focus_tab_1 = "cmd-1"   # through focus_tab_9 = "cmd-9"
 # toggle_sidebar = "cmd-b"
 # toggle_status_bar = "cmd-ctrl-b"   # unbound by default
-# toggle_zen_mode = "ctrl-cmd-z"   # Linux: "ctrl-alt-z"
+# toggle_zen_mode = "ctrl-cmd-z"   # Linux and Windows: "ctrl-alt-z"
 # increase_font_size = ["cmd-=", "cmd-+"]
 # decrease_font_size = "cmd--"
 # reset_font_size = "cmd-0"
@@ -311,6 +334,12 @@ size = 12
 # keep their shortcuts and command palette entries, and Devices Overview in
 # the palette still offers Add Device.
 # device_footer = "always"
+
+# The activity bar: an icon column at the window's left edge. Workspaces is
+# the sidebar beside the terminals; Orchestrator, Pull requests, and Issues
+# show the focused workspace's orchestrator across the window on that list.
+# Settings sits at its foot. false keeps the plain sidebar.
+# activity_bar = true
 
 # A colour per host, keyed by the host's name in the sidebar, as #rgb or
 # #rrggbb. It washes the host's header, its workspace rows, and its agents'
@@ -454,6 +483,19 @@ size = 12
 # is saved in its own 0600 daytona-api-key file. Default is false.
 # allow_plaintext_credentials = false
 
+# What a new cloud device runs the first time it connects, in a "setup" tab:
+# the agents listed (claude, codex, gemini, opencode), each skipped when already
+# installed, then these lines with sh -e. Settings > Cloud devices > New device
+# setup switches the agents. A provider's table, such as [cloud.coder], replaces
+# either key for that provider; an empty list or script there turns it off.
+# [cloud]
+# agents = ["claude", "opencode"]
+# setup = """
+# git config --global pull.rebase true
+# """
+# [cloud.coder]
+# agents = []
+
 # What shows behind the main window, also under Settings > Theme > Window. At the
 # default opacity the window paints as it always has.
 # [backdrop]
@@ -463,6 +505,9 @@ size = 12
 # Blur the desktop behind a translucent window: macOS, Windows, and Wayland
 # compositors with KDE's blur protocol.
 # blur = false
+# What blur paints on Windows 11: "acrylic" (the windows behind, blurred) or
+# "mica" (the wallpaper). Ignored elsewhere.
+# material = "acrylic"
 # A picture behind the window, absolute or under ~/. The window stays opaque
 # over it; lower opacity shows more of it.
 # image = "~/Pictures/wallpaper.jpg"
@@ -479,8 +524,13 @@ size = 12
 # usage = "detailed"
 # "detailed" draws a CPU graph and a memory meter; "compact" shows the shares.
 # system_load = "detailed"
-# The cup that keeps the display awake; it stays while holding, so it can stop.
+# The cup that keeps the machine awake; it stays while holding, so it can stop.
 # keep_awake = true
+# What the cup keeps awake: "display" holds the display and the system, so the
+# screen never locks; "system" holds only the system (like `caffeinate -i`) and
+# lets the display sleep and lock. A cup already on keeps its scope until it is
+# turned off and on again.
+# keep_awake_scope = "display"
 # Buttons: "label" for icon and name, "icon" for the icon alone, or "hidden".
 # theme = "label"
 # shortcuts = "label"
@@ -517,7 +567,10 @@ size = 12
 # topbar = true
 # Honor the daemon's [ui.sidebar] rows and plugin tokens; false uses native layouts.
 # inline = true
-# Show these even when no sign-in was found, with what to set up.
+# Show these even when no sign-in was found, with what to set up. On the Mac
+# running Herdr, JetBrains AI, Kiro, and Windsurf are only read when listed
+# here, as macOS may ask before Herdr reads another app's data. Muse's
+# keychain sign-in, like Zed's, also waits for Allow in its usage panel.
 # show_providers = ["cursor", "openrouter"]
 # Never show these, even when signed in.
 # hide_providers = []
@@ -831,7 +884,9 @@ size = 12
 #   Support/JetBrains/IntelliJIdea2025.3" on a Mac or
 #   "~/.config/JetBrains/PyCharm2025.3" on Linux. Its
 #   options/AIAssistantQuotaManager2.xml appears once AI Assistant has been
-#   used.
+#   used. On the Mac running Herdr the IDEs are only looked for when this is set
+#   or jetbrains is in show_providers, as macOS may ask before Herdr reads
+#   another app's data.
 # ide_path = ""
 #
 # Moonshot / Kimi Open Platform (moonshot)
@@ -926,7 +981,9 @@ size = 12
 #   and devin_primary_org_id into one JSON object: {"devin_session_token":
 #   "…", "devin_auth1_token": "…", "devin_account_id": "…",
 #   "devin_primary_org_id": "…"}. Without it, the plan the Windsurf editor
-#   cached at its last launch is shown.
+#   cached at its last launch is shown; on the Mac running Herdr only when
+#   windsurf is in show_providers, as macOS may ask before Herdr reads another
+#   app's data.
 # session = ""
 #
 # Zed (zed)
@@ -1286,8 +1343,10 @@ size = 12
 # [usage.providers.muse]
 #   A Muse CLI device-code access token (it starts with dca:), used when this
 #   host has no `muse login`. It is providers.meta.access_token in
-#   ~/.config/muse/auth.json on a machine where you ran `muse login`. Dashboard
-#   LLM_ keys and LLM| inference keys are not accepted.
+#   ~/.config/muse/auth.json on a machine where you ran `muse login`. On a Mac
+#   where `muse login` kept it in the keychain instead, list muse in
+#   show_providers and press Allow in its usage panel rather than setting this.
+#   Dashboard LLM_ keys and LLM| inference keys are not accepted.
 # token = ""
 #
 # CodeRabbit (coderabbit)

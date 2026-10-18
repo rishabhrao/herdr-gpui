@@ -64,7 +64,7 @@ mod unix {
             fd::OwnedFd,
             unix::{ffi::OsStringExt, net::UnixStream, process::CommandExt},
         },
-        process::{Command, Stdio},
+        process::Stdio,
         sync::{
             OnceLock,
             atomic::{AtomicU64, Ordering},
@@ -143,7 +143,7 @@ mod unix {
         let script = format!("printf '{start}\\0'; /usr/bin/env -0; printf '{end}\\0'");
         let (mut reader, writer) = UnixStream::pair()?;
         reader.set_nonblocking(true)?;
-        let mut child = Command::new(shell)
+        let mut child = herdr_client::new_command(shell)
             .args(["-l", "-i", "-c"])
             .arg(script)
             .stdin(Stdio::null())
@@ -433,7 +433,7 @@ mod unix {
             for pid in pids.split_whitespace() {
                 let deadline = Instant::now() + Duration::from_secs(2);
                 loop {
-                    let output = Command::new("/bin/ps")
+                    let output = std::process::Command::new("/bin/ps")
                         .args(["-o", "stat=", "-p", pid])
                         .output()
                         .unwrap();

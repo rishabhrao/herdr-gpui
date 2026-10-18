@@ -73,14 +73,14 @@ fn terminal_theme(view: &Entity<crate::HerdrWindow>, cx: &mut VisualTestContext)
 
 #[gpui::test]
 fn the_picker_previews_on_the_terminal_and_escape_restores_it(cx: &mut TestAppContext) {
-    if cfg!(windows) {
-        return;
-    }
     let (view, cx) = open_menu(None, cx);
     // Nothing set: the row shows no value and the picker starts on the app.
     assert!(cx.debug_bounds("host-menu-theme").is_none());
-    assert_eq!(SSH_ACTIONS[3].0, Action::Theme);
-    cx.simulate_keystrokes("down down down down enter");
+    let theme = SSH_ACTIONS
+        .iter()
+        .position(|(action, _)| *action == Action::Theme)
+        .unwrap();
+    cx.simulate_keystrokes(&format!("{}enter", "down ".repeat(theme + 1)));
     assert!(view.read_with(cx, |view, _| view.menu.page == Some(Page::DeviceTheme)));
     cx.run_until_parked();
     draw(cx);
@@ -110,9 +110,6 @@ fn the_picker_previews_on_the_terminal_and_escape_restores_it(cx: &mut TestAppCo
 
 #[gpui::test]
 fn the_picker_starts_on_the_saved_theme_and_filters_by_name(cx: &mut TestAppContext) {
-    if cfg!(windows) {
-        return;
-    }
     let (view, cx) = open_menu(Some("light:Catppuccin Latte,dark:Dracula"), cx);
     // The row names the saved value.
     assert!(cx.debug_bounds("host-menu-theme").is_some());
@@ -139,9 +136,6 @@ fn the_picker_starts_on_the_saved_theme_and_filters_by_name(cx: &mut TestAppCont
 
 #[gpui::test]
 fn another_device_previews_nothing_on_the_shown_terminal(cx: &mut TestAppContext) {
-    if cfg!(windows) {
-        return;
-    }
     let (view, cx) = open_menu(None, cx);
     view.update_in(cx, |view, window, cx| {
         view.selected_endpoint = 0;
@@ -156,9 +150,6 @@ fn another_device_previews_nothing_on_the_shown_terminal(cx: &mut TestAppContext
 
 #[gpui::test]
 fn a_theme_file_that_cannot_load_is_not_saved(cx: &mut TestAppContext) {
-    if cfg!(windows) {
-        return;
-    }
     let (view, cx) = open_menu(Some("/herdr-gpui-test/missing-theme"), cx);
     view.update_in(cx, |view, window, cx| {
         view.activate_host_menu(Action::Theme, window, cx)
@@ -180,9 +171,6 @@ fn a_theme_file_that_cannot_load_is_not_saved(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_theme_list_belongs_to_the_picker_that_asked(cx: &mut TestAppContext) {
-    if cfg!(windows) {
-        return;
-    }
     let (view, cx) = open_menu(None, cx);
     view.update_in(cx, |view, window, cx| {
         view.activate_host_menu(Action::Theme, window, cx)

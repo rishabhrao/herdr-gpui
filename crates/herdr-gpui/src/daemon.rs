@@ -46,7 +46,7 @@ pub fn connect(
         Duration::from_secs(20),
         || {
             on_start();
-            let mut command = Command::new(executable());
+            let mut command = herdr_client::new_command(executable());
             if let ConnectTarget::Session { name, .. } = target {
                 command.args(["--session", name]);
             }
@@ -104,6 +104,7 @@ pub(crate) fn executable() -> PathBuf {
             [
                 PathBuf::from("/opt/homebrew/bin/herdr"),
                 PathBuf::from("/usr/local/bin/herdr"),
+                PathBuf::from("/home/linuxbrew/.linuxbrew/bin/herdr"),
             ]
             .into_iter()
             .filter(|_| cfg!(unix)),
@@ -248,9 +249,8 @@ fn detach(command: &mut Command) {
 fn detach(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    // The server is a console program; launched from the GUI it must not flash one.
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    // Replaces the flags `new_command` set, so keep the one that opens no window.
+    command.creation_flags(CREATE_NEW_PROCESS_GROUP | herdr_client::CREATE_NO_WINDOW);
 }
 
 fn connect_or_start(

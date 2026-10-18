@@ -53,6 +53,7 @@ fn setup_in_another_main_window_blocks_overlapping_boat_jobs(cx: &mut TestAppCon
                 main.start_cloud_job(
                     CloudProvider::Boat,
                     "fixture sandbox".into(),
+                    None,
                     move |_, _| {
                         let _ = wait.recv_timeout(std::time::Duration::from_secs(10));
                         Err(crate::cloud::Error::Cancelled.into())

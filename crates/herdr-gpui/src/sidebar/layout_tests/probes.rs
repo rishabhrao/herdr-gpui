@@ -26,16 +26,18 @@ fn native_child_probe_reports_geometry_and_glyph_failures_without_panicking() {
             width: px(94.),
             clipped: false,
         };
-        probe.verify_child("sidebar-child", mode).unwrap();
+        probe.verify_child("sidebar-child", mode, 0., 1.).unwrap();
         probe.bounds.size.width -= px(1.);
-        let error = probe.verify_child("sidebar-child", mode).unwrap_err();
+        let error = probe
+            .verify_child("sidebar-child", mode, 0., 1.)
+            .unwrap_err();
         assert!(error.to_string().contains("child label width: actual"));
         assert!(error.to_string().contains("expected"));
         probe.bounds = bounds;
         probe.clipped = true;
         assert!(
             probe
-                .verify_child("sidebar-child", mode)
+                .verify_child("sidebar-child", mode, 0., 1.)
                 .unwrap_err()
                 .to_string()
                 .contains("clipped")
@@ -44,7 +46,7 @@ fn native_child_probe_reports_geometry_and_glyph_failures_without_panicking() {
         probe.glyph_text = "sidebar-chil".into();
         assert!(
             probe
-                .verify_child("sidebar-child", mode)
+                .verify_child("sidebar-child", mode, 0., 1.)
                 .unwrap_err()
                 .to_string()
                 .contains("cached text")
@@ -53,12 +55,22 @@ fn native_child_probe_reports_geometry_and_glyph_failures_without_panicking() {
         probe.cached.clone_from(&probe.glyph_text);
         probe.width = px(width - 5.);
         probe
-            .verify_child("sidebar-child-with-a-long-readable-branch-name", mode)
+            .verify_child(
+                "sidebar-child-with-a-long-readable-branch-name",
+                mode,
+                0.,
+                1.,
+            )
             .unwrap();
         probe.width = px(50.);
         assert!(
             probe
-                .verify_child("sidebar-child-with-a-long-readable-branch-name", mode)
+                .verify_child(
+                    "sidebar-child-with-a-long-readable-branch-name",
+                    mode,
+                    0.,
+                    1.
+                )
                 .unwrap_err()
                 .to_string()
                 .contains("did not fill")

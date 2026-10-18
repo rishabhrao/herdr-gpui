@@ -1,3 +1,6 @@
+// Build-time tools (git, gh) run under Cargo, not beside the app: no window to avoid.
+#![allow(clippy::disallowed_methods)]
+
 // The launcher carries the same icon (worktree variant included) and "Herdr UI"
 // version information as herdr-gpui, from herdr-gpui's own build modules.
 // `release_version` sits at the root so `crate::release_version` in

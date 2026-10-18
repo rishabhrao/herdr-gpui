@@ -1,6 +1,6 @@
 //! The `[sidebar]` table beyond its font: spacing that overrides the layout
-//! preset, a colour per host, how a selection marks its host's group, and
-//! when the device footer is drawn.
+//! preset, a colour per host, how a selection marks its host's group, when
+//! the device footer is drawn, and whether the activity bar leads it.
 
 use super::fonts::FontSettings;
 use crate::{Error, Result};
@@ -98,13 +98,29 @@ impl DeviceFooter {
 }
 
 /// Sidebar styling the config file adds to a layout preset.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SidebarStyle {
-    pub overrides: SidebarOverrides,
-    pub select: SelectMode,
+    /// `activity_bar`: the icon column that picks what the window shows:
+    /// the sidebar and terminals, or an orchestrator section. On unless
+    /// turned off.
+    pub activity_bar: bool,
     pub device_footer: DeviceFooter,
     /// A colour per host, keyed by the host's display name, as `0xRRGGBB`.
     pub hosts: BTreeMap<String, u32>,
+    pub overrides: SidebarOverrides,
+    pub select: SelectMode,
+}
+
+impl Default for SidebarStyle {
+    fn default() -> Self {
+        Self {
+            activity_bar: true,
+            device_footer: DeviceFooter::default(),
+            hosts: BTreeMap::new(),
+            overrides: SidebarOverrides::default(),
+            select: SelectMode::default(),
+        }
+    }
 }
 
 /// `#rgb` or `#rrggbb`, in either case.
@@ -131,6 +147,7 @@ pub(super) struct SidebarSettings {
     pub(super) select: SelectMode,
     pub(super) device_footer: DeviceFooter,
     pub(super) hosts: BTreeMap<String, String>,
+    pub(super) activity_bar: Option<bool>,
 }
 
 impl SidebarSettings {
@@ -150,10 +167,11 @@ impl SidebarSettings {
             })
             .collect::<Result<_>>()?;
         Ok(SidebarStyle {
-            overrides: self.overrides,
-            select: self.select,
+            activity_bar: self.activity_bar.unwrap_or(true),
             device_footer: self.device_footer,
             hosts,
+            overrides: self.overrides,
+            select: self.select,
         })
     }
 }
@@ -188,6 +206,7 @@ impl<'de> Deserialize<'de> for SidebarSettings {
                         "host_gap" => settings.overrides.host_gap = Some(map.next_value()?),
                         "select" => settings.select = map.next_value()?,
                         "device_footer" => settings.device_footer = map.next_value()?,
+                        "activity_bar" => settings.activity_bar = Some(map.next_value()?),
                         "hosts" => settings.hosts = map.next_value()?,
                         _ => {
                             map.next_value::<serde::de::IgnoredAny>()?;

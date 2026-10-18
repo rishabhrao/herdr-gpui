@@ -141,7 +141,21 @@ fn forwarding_target<'a>(view: &'a HerdrWindow, place: &Place) -> Result<&'a str
     if let Some(target) = ssh_target(view, place) {
         return Ok(target);
     }
-    Err(if local(view, place) {
+    let wsl = view.endpoints.get(place.index).is_some_and(|endpoint| {
+        matches!(
+            endpoint.connection.target,
+            herdr_client::ConnectTarget::Wsl { .. }
+        )
+    });
+    Err(if wsl {
+        Response::error(
+            ErrorCode::InvalidRequest,
+            format!(
+                "WSL already forwards {}'s ports to this machine; open them at localhost",
+                place.label
+            ),
+        )
+    } else if local(view, place) {
         Response::error(
             ErrorCode::InvalidRequest,
             "Local ports need no forwarding; open them at localhost",

@@ -6,7 +6,7 @@ use super::{STATUS_DOT_UNKNOWN, STATUS_WIDTH, first_text, label_text, line_heigh
 use crate::{
     HerdrWindow,
     config::{FontConfig, StatusIcons, Theme},
-    herdr_settings::{IndicatorStyle, Settings},
+    herdr_settings::Settings,
 };
 use gpui::{prelude::*, *};
 use herdr_client::protocol::{AgentStatus, ClientShellAgent, ClientShellSnapshot};
@@ -24,6 +24,15 @@ pub(super) fn agents_sort(window: &HerdrWindow, cx: &mut Context<HerdrWindow>) -
     div()
         .id("agents-sort")
         .debug_selector(|| "agents-sort".into())
+        // A plugin's view only names itself; the sort is a button.
+        .map(|sort| match &view {
+            Some(view) => sort.role(Role::Label).aria_value(format!("Agents: {view}")),
+            None => window.chrome_stop(
+                crate::window::chrome_focus::Region::Sidebar,
+                sort.role(Role::Button)
+                    .aria_label(format!("Sort agents: {}", window.agent_sort)),
+            ),
+        })
         .flex_none()
         .min_w_0()
         .truncate()
@@ -194,22 +203,29 @@ pub(super) fn agent_labels<'a>(
 /// Prepared, comparable props for the cached sidebar, never loaded during render.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Indicators {
-    pub(super) style: IndicatorStyle,
-    /// This client's drawn icons, which replace `style` wherever a status shows.
-    pub(super) icons: Option<StatusIcons>,
+    /// The set every status is drawn with.
+    pub(super) icons: StatusIcons,
+    /// Whether busy and finished rows carry a bar on their leading edge.
+    pub(super) edge_rail: bool,
     colors: [u32; 5],
+    /// The opacity of the row a mark sits in, as `f32` bits: moving marks
+    /// draw in the window's mark layer, outside the row's own opacity.
+    fade: u32,
 }
 
 impl Indicators {
+    /// Herdr's settings supply only the status colors; its indicator style
+    /// is the terminal client's, and this app draws `icons` instead.
     pub(crate) fn new(
         settings: Option<&Settings>,
-        icons: Option<StatusIcons>,
+        icons: StatusIcons,
+        edge_rail: bool,
         light: bool,
         theme: &Theme,
     ) -> Self {
         Self {
-            style: settings.map_or(IndicatorStyle::Dots, |settings| settings.indicators),
             icons,
+            edge_rail,
             colors: [
                 AgentStatus::Unknown,
                 AgentStatus::Idle,
@@ -223,7 +239,25 @@ impl Indicators {
                     |settings| theme.ink(settings.status_color(status, light)),
                 )
             }),
+            fade: 1f32.to_bits(),
         }
+    }
+
+    /// The same marks in a row drawn at `opacity`.
+    pub(super) fn faded(self, opacity: f32) -> Self {
+        Self {
+            fade: opacity.to_bits(),
+            ..self
+        }
+    }
+
+    pub(super) fn fade(self) -> f32 {
+        f32::from_bits(self.fade)
+    }
+
+    /// The same colors drawn with another set, as a preview of it.
+    pub(crate) fn with_icons(self, icons: StatusIcons) -> Self {
+        Self { icons, ..self }
     }
 
     pub(crate) fn color(self, status: AgentStatus) -> u32 {
@@ -237,24 +271,23 @@ impl Indicators {
     }
 
     pub(crate) fn width(self, font: &FontConfig) -> f32 {
-        match (self.icons, self.style) {
-            (Some(StatusIcons::Tiles), _) => tile_size(font),
-            (Some(_), _) => icon_size(font),
-            (None, IndicatorStyle::Dots) => STATUS_WIDTH,
-            (None, IndicatorStyle::Symbols) => font.size.ceil().max(STATUS_WIDTH),
+        match self.icons {
+            StatusIcons::Dots => STATUS_WIDTH,
+            StatusIcons::Tiles => tile_size(font),
+            _ => icon_size(font),
         }
     }
 
     /// Whether a row centers the mark across all its lines. Drawn icons are
     /// taller than a line and read as the row's status, not its first line's.
     pub(crate) fn centered(self) -> bool {
-        self.icons.is_some()
+        self.icons != StatusIcons::Dots
     }
 
-    /// The bar the rail style draws on a row's leading edge, for the statuses
-    /// worth noticing. Absolutely placed, so the row must be `relative`.
+    /// The edge rail's bar on a row's leading edge, for the statuses worth
+    /// noticing. Absolutely placed, so the row must be `relative`.
     pub(super) fn rail(self, status: AgentStatus, key: &str) -> Option<Div> {
-        if self.icons != Some(StatusIcons::Rail)
+        if !self.edge_rail
             || !matches!(
                 status,
                 AgentStatus::Working | AgentStatus::Done | AgentStatus::Blocked
@@ -294,16 +327,6 @@ fn tile_size(font: &FontConfig) -> f32 {
     icon_size(font)
 }
 
-pub(super) fn status_symbol(status: AgentStatus) -> &'static str {
-    match status {
-        AgentStatus::Working => "\u{25d0}",
-        AgentStatus::Blocked => "\u{d7}",
-        AgentStatus::Done => "\u{2713}",
-        AgentStatus::Idle => "\u{25cb}",
-        AgentStatus::Unknown => "\u{b7}",
-    }
-}
-
 pub(crate) fn status_indicator(
     status: AgentStatus,
     font: &FontConfig,
@@ -312,7 +335,8 @@ pub(crate) fn status_indicator(
     status_mark(status, font, indicators, indicators.color(status), false)
 }
 
-/// Configured tokens can override color and weight without changing indicator style.
+/// Configured tokens can override color and weight without changing the set;
+/// only dots have a weight to change.
 pub(super) fn status_mark(
     status: AgentStatus,
     font: &FontConfig,
@@ -320,38 +344,34 @@ pub(super) fn status_mark(
     color: u32,
     bold: bool,
 ) -> Div {
-    if let Some(icons) = indicators.icons {
-        return status_icon(status, font, icons, color);
+    if indicators.icons != StatusIcons::Dots {
+        return status_icon(status, font, indicators, color);
     }
-    // Upstream dots: working/blocked/done filled, idle hollow, unknown a small dot.
+    // Upstream dots: blocked/done filled, idle hollow, unknown a small dot.
+    // Working spins instead, so busy agents read apart from settled ones.
     let (diameter, filled) = match status {
         AgentStatus::Unknown => (STATUS_DOT_UNKNOWN, true),
         AgentStatus::Idle => (STATUS_WIDTH, false),
         _ => (STATUS_WIDTH, true),
     };
-    let symbol = indicators.style == IndicatorStyle::Symbols;
-    let height = if symbol {
-        line_height(font)
-    } else {
-        STATUS_WIDTH
-    };
     div()
         .w(px(indicators.width(font)))
-        .h(px(height))
-        .mt(px((line_height(font) - height) / 2.))
+        .h(px(STATUS_WIDTH))
+        .mt(px((line_height(font) - STATUS_WIDTH) / 2.))
         .flex_none()
         .flex()
         .items_center()
         .justify_center()
-        .when(symbol, |slot| {
-            slot.overflow_hidden()
-                .text_size(px(font.size))
-                .line_height(px(line_height(font)))
-                .text_color(rgb(color))
-                .when(bold, |slot| slot.font_weight(FontWeight::BOLD))
-                .child(status_symbol(status))
+        .when(status == AgentStatus::Working, |slot| {
+            slot.child(icon_mark(
+                StatusIcons::Dots,
+                status,
+                STATUS_WIDTH,
+                color,
+                indicators.fade(),
+            ))
         })
-        .when(!symbol, |slot| {
+        .when(status != AgentStatus::Working, |slot| {
             slot.child(
                 div()
                     .size(px(if bold { STATUS_WIDTH } else { diameter }))
@@ -364,24 +384,98 @@ pub(super) fn status_mark(
         })
 }
 
+/// A working dot: a faint ring with a spinning arc, `size` across. Rows draw
+/// it at the dot's size, so they keep their geometry.
+fn working_orbit(size: f32, color: u32) -> impl IntoElement {
+    spin(
+        svg()
+            .debug_selector(|| "status-orbit".into())
+            .path("icons/status-orbit.svg")
+            .size(px(size))
+            .flex_none()
+            .text_color(rgb(color)),
+        "status-orbit",
+        900,
+    )
+}
+
+/// Turns `mark` once every `period_ms`. Every spinner of one kind shares an
+/// id and the app's synced clock, so all working agents turn in step, and
+/// repaints are capped because a sidebar can show many at once. GPUI holds
+/// it still under reduced motion.
+fn spin(mark: Svg, id: &'static str, period_ms: u64) -> impl IntoElement {
+    mark.with_animation(
+        id,
+        Animation::new(std::time::Duration::from_millis(period_ms))
+            .repeat_synced()
+            .with_max_fps(30.),
+        |mark, delta| mark.with_transformation(Transformation::rotate(percentage(delta))),
+    )
+}
+
 /// A drawn status icon, centered in its slot. Configured weights do not
 /// apply: the icon's strokes are fixed by its asset.
-fn status_icon(status: AgentStatus, font: &FontConfig, icons: StatusIcons, color: u32) -> Div {
+fn status_icon(status: AgentStatus, font: &FontConfig, indicators: Indicators, color: u32) -> Div {
+    let (icons, fade) = (indicators.icons, indicators.fade());
     let size = icon_size(font);
-    let mark = svg()
-        .path(crate::icons::status_icon(icons, status))
-        .flex_none()
-        .text_color(rgb(color));
     let slot = div().flex_none().flex().items_center().justify_center();
     if icons != StatusIcons::Tiles {
-        return slot.size(px(size)).child(mark.size(px(size)));
+        return slot
+            .size(px(size))
+            .child(icon_mark(icons, status, size, color, fade));
     }
     slot.size(px(tile_size(font)))
         .rounded(px(crate::config::corners::SMALL))
         .bg(rgba((color << 8) | 0x30))
         .border_1()
         .border_color(rgba((color << 8) | 0x70))
-        .child(mark.size(px(size - 4.)))
+        .child(icon_mark(icons, status, size - 4., color, fade))
+}
+
+/// One set's mark for `status` at `size`: its asset, turning while working,
+/// or the mark drawn for the sets without assets. The working assets are
+/// rings around a turnable center, so spinning the whole icon keeps its
+/// outline still. A mark that moves draws in the window's mark layer, so its
+/// frames never rebuild the sidebar; `fade` is the opacity of its row.
+pub(super) fn icon_mark(
+    icons: StatusIcons,
+    status: AgentStatus,
+    size: f32,
+    color: u32,
+    fade: f32,
+) -> AnyElement {
+    // Working always moves; of the settled statuses only a drawn blocked
+    // mark can.
+    let moves = status == AgentStatus::Working
+        || (status == AgentStatus::Blocked && crate::icons::status_icon(icons, status).is_none());
+    if !moves {
+        return drawn_mark(icons, status, size, color);
+    }
+    crate::mark_layer::layered(size, fade, move || drawn_mark(icons, status, size, color))
+        .into_any_element()
+}
+
+fn drawn_mark(icons: StatusIcons, status: AgentStatus, size: f32, color: u32) -> AnyElement {
+    if icons == StatusIcons::Dots && status == AgentStatus::Working {
+        return working_orbit(size, color).into_any_element();
+    }
+    let Some(path) = crate::icons::status_icon(icons, status) else {
+        return super::animated::mark(icons, status, size, color);
+    };
+    let mark = svg()
+        .path(path)
+        .size(px(size))
+        .flex_none()
+        .text_color(rgb(color));
+    if status != AgentStatus::Working {
+        return mark.into_any_element();
+    }
+    spin(
+        mark.debug_selector(|| "status-spin".into()),
+        "status-spin",
+        1400,
+    )
+    .into_any_element()
 }
 
 /// The word the daemon's `state_text` token shows for a status when its
@@ -440,13 +534,14 @@ pub(super) fn status_style(status: AgentStatus, theme: &Theme) -> (f32, bool, u3
 
 #[cfg(test)]
 mod tests {
-    use super::{Indicators, sorted_agents, state_label, status_indicator};
-    use crate::{config::FontConfig, herdr_settings::IndicatorStyle};
-    use gpui::{Styled, rgb};
+    use super::{Indicators, sorted_agents, state_label};
+    use crate::config::StatusIcons;
     use herdr_client::protocol::AgentStatus;
 
+    /// Herdr's settings supply the status colors; its indicator style is the
+    /// terminal client's, so the chosen set is drawn whatever it says.
     #[test]
-    fn shared_palette_props_keep_style_and_follow_chrome_contrast() -> anyhow::Result<()> {
+    fn shared_palette_props_keep_the_set_and_follow_chrome_contrast() -> anyhow::Result<()> {
         use crate::{config::Theme, contrast::Contrast, herdr_settings::Settings};
         use anyhow::Context as _;
         let settings = Settings::parse_text(
@@ -457,12 +552,13 @@ mod tests {
                 let theme = Theme::builtin(name)
                     .context("builtin theme")?
                     .with_contrast(Contrast::High);
-                let indicators = Indicators::new(Some(&settings), None, light, &theme);
+                let indicators =
+                    Indicators::new(Some(&settings), StatusIcons::Wave, true, light, &theme);
                 assert_eq!(
                     indicators,
-                    Indicators::new(Some(&settings), None, light, &theme)
+                    Indicators::new(Some(&settings), StatusIcons::Wave, true, light, &theme)
                 );
-                assert_eq!(indicators.style, IndicatorStyle::Symbols);
+                assert_eq!(indicators.icons, StatusIcons::Wave);
                 for status in [
                     AgentStatus::Unknown,
                     AgentStatus::Idle,
@@ -488,32 +584,24 @@ mod tests {
 
     #[test]
     fn prepared_custom_palette_keeps_each_authoritative_status_color() {
-        let font = FontConfig {
-            family: "Menlo".into(),
-            size: 16.,
-            fallbacks: None,
-            line_height_multiple: None,
-            weight: gpui::FontWeight::NORMAL,
+        let indicators = Indicators {
+            icons: StatusIcons::Dots,
+            edge_rail: false,
+            colors: [0x112233, 0x223344, 0x334455, 0x445566, 0x556677],
+            fade: 1f32.to_bits(),
         };
-        for style in [IndicatorStyle::Dots, IndicatorStyle::Symbols] {
-            let indicators = Indicators {
-                style,
-                icons: None,
-                colors: [0x112233, 0x223344, 0x334455, 0x445566, 0x556677],
-            };
-            for (status, expected) in [
-                (AgentStatus::Unknown, 0x112233),
-                (AgentStatus::Idle, 0x223344),
-                (AgentStatus::Working, 0x334455),
-                (AgentStatus::Done, 0x445566),
-                (AgentStatus::Blocked, 0x556677),
-            ] {
-                assert_eq!(indicators.color(status), expected);
-                if style == IndicatorStyle::Symbols {
-                    let mut slot = status_indicator(status, &font, indicators);
-                    assert_eq!(slot.text_style().color, Some(rgb(expected).into()));
-                }
-            }
+        for (status, expected) in [
+            (AgentStatus::Unknown, 0x112233),
+            (AgentStatus::Idle, 0x223344),
+            (AgentStatus::Working, 0x334455),
+            (AgentStatus::Done, 0x445566),
+            (AgentStatus::Blocked, 0x556677),
+        ] {
+            assert_eq!(indicators.color(status), expected);
+            assert_eq!(
+                indicators.with_icons(StatusIcons::Orca).color(status),
+                expected
+            );
         }
     }
 

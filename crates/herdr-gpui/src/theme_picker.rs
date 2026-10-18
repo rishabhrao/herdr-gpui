@@ -234,7 +234,7 @@ impl HerdrWindow {
                 .desired
                 .as_deref()
                 .and_then(|name| Theme::builtin(name.trim()))
-                .map(|theme| theme.with_contrast(self.config.contrast))
+                .map(|theme| theme.styled_for(&self.config))
             {
                 self.theme = theme;
                 picker.loaded = picker.desired.clone();

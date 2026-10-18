@@ -838,7 +838,7 @@ pub(super) fn pick_request(
 /// validation a typed branch does; only the base and the label differ, and
 /// neither widens what may be created.
 ///
-/// A pull request's head may exist only on `origin`, so its base names the
+/// A pull request's head may exist only on its remote, so its base names the
 /// ref the fetch just updated (a dedicated PR ref for forks). The daemon checks out a branch
 /// that already exists locally and ignores the base in that case. An issue's
 /// branch is new, so it keeps the dialog's default base of `HEAD`.

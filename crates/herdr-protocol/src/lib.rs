@@ -9,6 +9,7 @@ mod clipboard;
 mod codec;
 mod error;
 mod frame;
+mod surface_prefix;
 mod wire;
 
 pub use clipboard::{
@@ -20,4 +21,5 @@ pub use codec::{
     write_message,
 };
 pub use error::{Error, Result};
+pub use surface_prefix::has_current_surface_prefix;
 pub use wire::*;

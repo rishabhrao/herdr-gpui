@@ -19,6 +19,7 @@ use std::{
     rc::Rc,
 };
 
+mod base_menu;
 mod colours;
 pub(crate) use rows::code as styled_code;
 mod file_rows;
@@ -117,6 +118,11 @@ pub(crate) struct Review {
     scope: Scope,
     layout: Layout,
     ignore_whitespace: bool,
+    /// The branch's ref a branch review is compared with, as the user
+    /// picked it; None leaves the choice to the pull request and the remote.
+    base: Option<String>,
+    /// The list of branches to pick the base from, while it is open.
+    base_menu: Option<base_menu::BaseMenu>,
     /// The share of a side-by-side row the old side takes.
     split_ratio: f32,
     agent: Option<Agent>,
@@ -302,14 +308,21 @@ impl HerdrWindow {
         review.state = State::Loading;
         review.draft = None;
         review.seen = status;
-        let (request, checkout, scope, whitespace) = (
+        let (request, checkout, scope, base, whitespace) = (
             review.request,
             review.checkout.clone(),
             review.scope,
+            review.base.clone(),
             review.ignore_whitespace,
         );
         let loading = cx.background_executor().spawn(async move {
-            super::diff::load(&checkout, scope, base_hint.as_deref(), whitespace)
+            super::diff::load(
+                &checkout,
+                scope,
+                base.as_deref(),
+                base_hint.as_deref(),
+                whitespace,
+            )
         });
         cx.spawn(async move |this, cx| {
             let result = loading.await;

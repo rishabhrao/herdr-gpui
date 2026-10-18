@@ -55,15 +55,18 @@ mod page_results;
 mod middle_click;
 
 /// Pages a control request opens, only in a workspace the window shows.
-#[cfg(unix)]
 mod requests;
 
 /// Notes a control request sends, only to a pane the window shows.
-#[cfg(unix)]
 mod requested_notes;
 
 /// Browser tabs in a group's strip: reordering and growing in.
 mod tab_strip;
+
+/// Next Tab, Previous Tab, and tabs by number step through pages too. Needs
+/// a build that shows pages: elsewhere a new tab opens nothing.
+#[cfg(any(target_os = "macos", windows))]
+mod tab_steps;
 
 /// The VS Code tab's server checks. No native page is created, so this
 /// runs on every platform, except the checks only builds that show pages

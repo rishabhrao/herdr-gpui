@@ -1,11 +1,15 @@
 use super::*;
 
+#[cfg(unix)]
 mod command;
 mod forward;
 mod incompatible;
 mod probe_failure;
 mod windows_host;
+#[cfg(windows)]
+mod windows_pipes;
 
+#[cfg(unix)]
 #[test]
 fn discovery_and_bridge_stdio_work_with_quoted_install_paths() {
     let root =
@@ -82,6 +86,7 @@ fn probe_classifies_only_finished_output() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn probe_script_reports_the_session_server_without_starting_it() {
     let root = std::env::temp_dir().join(format!("herdr-probe-{}-a ' b", std::process::id()));
@@ -109,6 +114,7 @@ esac
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn origin_command_reads_only_the_named_repository() {
     let root = std::env::temp_dir().join(format!("herdr-origin-{}-a ' $(b)", std::process::id()));
@@ -222,12 +228,19 @@ fn command_is_noninteractive_and_target_is_one_argument() {
     ] {
         assert!(args.contains(&option));
     }
-    // The user's SSH config decides agent forwarding and which master to share.
-    assert!(
-        !args
-            .iter()
-            .any(|arg| arg.starts_with("ForwardAgent=") || arg.starts_with("ControlPath="))
-    );
+    // The user's SSH config decides agent forwarding and, on Unix, which
+    // master to share. Windows OpenSSH cannot share one, and a configured
+    // `ControlPath` would fail every connection there.
+    assert!(!args.iter().any(|arg| arg.starts_with("ForwardAgent=")));
+    let control_paths: Vec<_> = args
+        .iter()
+        .filter(|arg| arg.starts_with("ControlPath="))
+        .collect();
+    if cfg!(windows) {
+        assert_eq!(control_paths, [&"ControlPath=none"]);
+    } else {
+        assert!(control_paths.is_empty());
+    }
     assert_eq!(args[args.len() - 3], "--");
     assert_eq!(args[args.len() - 2], "user@host;not-a-command");
     assert_eq!(quote("a'b"), "'a'\\''b'");

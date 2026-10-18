@@ -51,7 +51,6 @@ fn a_batch_that_does_not_fit_holds_back_every_newer_one() {
     assert!(feedback.take(&p1).is_none());
 }
 
-#[cfg(unix)]
 #[test]
 fn a_batch_kept_again_goes_first_and_an_oversized_one_is_cut_to_fit() {
     let mut feedback = Feedback::default();

@@ -117,7 +117,7 @@ pub(super) fn materialise(
         Source::Folder => fs::create_dir(&project.path).map_err(claim_error)?,
         Source::Clone { url } => clone(url, root, &project.path, &project.label, cancelled)?,
     }
-    let path = fs::canonicalize(&project.path)
+    let path = super::canonical::canonicalize(&project.path)
         .map_err(|error| Error::from(error).at_path(&project.path))?;
     Ok(projects::Project {
         path,
@@ -208,7 +208,7 @@ fn claim_error(source: std::io::Error) -> Error {
 /// The `git clone` invocation, kept apart so its arguments can be asserted
 /// without a network or a repository.
 pub(super) fn clone_command(url: &str, destination: &Path) -> Command {
-    let mut command = Command::new("git");
+    let mut command = herdr_client::new_command("git");
     // The GUI has nowhere to show a credential prompt, so never block on one.
     command.env("GIT_TERMINAL_PROMPT", "0");
     command

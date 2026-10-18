@@ -32,7 +32,7 @@ fn private_key() -> Result<key::Identity> {
     let directory =
         crate::preferences::state_dir().ok_or(Error::Cloud(crate::cloud::Error::StateDirectory))?;
     key::snapshot(&directory, |generated| {
-        let status = Command::new("ssh-keygen")
+        let status = herdr_client::new_command("ssh-keygen")
             .args(["-q", "-t", "ed25519", "-N", "", "-f"])
             .arg(generated)
             .stdin(Stdio::null())
@@ -48,7 +48,7 @@ fn private_key() -> Result<key::Identity> {
 }
 
 fn public_key(private: &Path) -> Result<String> {
-    let output = Command::new("ssh-keygen")
+    let output = herdr_client::new_command("ssh-keygen")
         .args(["-y", "-f"])
         .arg(private)
         .stdin(Stdio::null())
@@ -135,7 +135,7 @@ impl Gateway {
             .and_then(|()| known_hosts.flush())
             .map_err(Error::GatewayFile)?;
         let known_hosts_path = quoted_path(known_hosts.path())?;
-        let mut command = Command::new("ssh");
+        let mut command = herdr_client::new_command("ssh");
         command
             .args(["-F", "/dev/null", "-T"])
             .arg("-o")
@@ -178,7 +178,7 @@ pub(crate) fn prepare(request: &super::http::Request, id: &str) -> Result<Gatewa
 
 pub(crate) fn check_ssh() -> Result<()> {
     for program in ["ssh", "ssh-keygen"] {
-        Command::new(program)
+        herdr_client::new_command(program)
             .arg("-V")
             .stdin(Stdio::null())
             .stdout(Stdio::null())

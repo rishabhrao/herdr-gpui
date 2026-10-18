@@ -1,4 +1,5 @@
-//! A deduplicated Dock attention count across all windows, with a QA preview.
+//! A deduplicated attention count across all windows, with a QA preview: the
+//! Dock badge on macOS and the taskbar overlay on Windows.
 
 use crate::endpoint::Endpoint;
 use gpui::{App, Global, WindowId};
@@ -94,6 +95,8 @@ pub(super) fn install(cx: &mut App) {
     });
     cx.on_window_closed(|cx, _| {
         let open = cx.windows();
+        #[cfg(windows)]
+        crate::taskbar::button::retain(&open);
         let badge = cx.default_global::<Badge>();
         badge
             .windows
@@ -127,7 +130,7 @@ pub(super) fn sync(window: WindowId, endpoints: &[Endpoint], cx: &mut App) {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), target_os = "macos"))]
 fn set_native(count: usize) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSApplication;
@@ -142,6 +145,11 @@ fn set_native(count: usize) {
         .setBadgeLabel(label.as_deref());
 }
 
+#[cfg(all(not(test), windows))]
+fn set_native(count: usize) {
+    crate::taskbar::button::set_overlay(count);
+}
+
 // Headless tests must never initialize AppKit or change the test runner's Dock icon.
 #[cfg(test)]
 fn set_native(_: usize) {}
@@ -152,7 +160,7 @@ fn set_native(_: usize) {}
 /// set but never drawn. This request asks for the union: whichever request
 /// macOS answers first decides the permission, and a later request with other
 /// options is not prompted for again.
-#[cfg(not(test))]
+#[cfg(all(not(test), target_os = "macos"))]
 fn request_permission() {
     use block2::RcBlock;
     use objc2::runtime::Bool;
@@ -178,6 +186,10 @@ fn request_permission() {
             &completion,
         );
 }
+
+/// Windows asks no permission for a taskbar overlay.
+#[cfg(all(not(test), windows))]
+fn request_permission() {}
 
 #[cfg(test)]
 thread_local! {

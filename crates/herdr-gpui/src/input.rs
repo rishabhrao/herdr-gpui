@@ -6,15 +6,15 @@ use gpui::*;
 use herdr_client::protocol::ClientPaneInputEvent;
 use std::ops::Range;
 
-#[cfg(target_os = "linux")]
-mod linux;
+#[cfg(any(target_os = "linux", windows))]
+mod weak;
 // The platform input handler for every view-backed text field. It is not named
 // ElementInputHandler, so a `gpui::*` glob cannot silently replace it with
-// GPUI's strong handler on Linux.
-#[cfg(not(target_os = "linux"))]
+// GPUI's strong handler on Linux or Windows.
+#[cfg(not(any(target_os = "linux", windows)))]
 pub(crate) use gpui::ElementInputHandler as ViewInputHandler;
-#[cfg(target_os = "linux")]
-pub(crate) use linux::WeakInputHandler as ViewInputHandler;
+#[cfg(any(target_os = "linux", windows))]
+pub(crate) use weak::WeakInputHandler as ViewInputHandler;
 
 /// Which Option keys the keystroke being handled was made with. GPUI's
 /// modifiers merge the two, so macOS's event in progress is asked; a key

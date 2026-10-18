@@ -93,24 +93,20 @@ const SESSIONS_TIMEOUT: Duration = Duration::from_secs(30);
 /// on a WSL share that has since disappeared makes the spawn itself fail.
 #[cfg(windows)]
 fn wsl_exe() -> Command {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let system = std::env::var_os("SystemRoot")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
-    let mut command = Command::new(system.join("System32").join("wsl.exe"));
-    command
-        .env("WSL_UTF8", "1")
-        .current_dir(&system)
-        .creation_flags(CREATE_NO_WINDOW);
+    let mut command = crate::new_command(system.join("System32").join("wsl.exe"));
+    command.env("WSL_UTF8", "1").current_dir(&system);
     command
 }
 
 /// `script` under the distribution's `/bin/sh` in the default user's home.
 /// `--exec` hands the arguments to the program untouched; without it `wsl.exe`
-/// expands `$VARIABLES` in them first, which would rewrite the script.
+/// expands `$VARIABLES` in them first, which would rewrite the script. The
+/// caller has validated `distro`.
 #[cfg(windows)]
-fn command(distro: &str, script: &str) -> Command {
+pub(crate) fn command(distro: &str, script: &str) -> Command {
     let mut command = wsl_exe();
     command.args([
         "--distribution",
@@ -123,6 +119,36 @@ fn command(distro: &str, script: &str) -> Command {
         script,
     ]);
     command
+}
+
+/// A `wsl.exe` child running `/bin/sh -s` in the default user's home inside
+/// `distro`, reading its script from standard input, as `ssh::script_command`
+/// does on a host. Nothing is started but the distribution. The caller owns
+/// the child: its streams, deadline, and reaping.
+#[cfg(windows)]
+pub fn wsl_shell_command(distro: &str) -> Result<Command> {
+    if !valid_distro(distro) {
+        return Err(Error::InvalidWslDistro);
+    }
+    let mut command = wsl_exe();
+    command.args([
+        "--distribution",
+        distro,
+        "--cd",
+        "~",
+        "--exec",
+        "/bin/sh",
+        "-s",
+    ]);
+    Ok(command)
+}
+
+#[cfg(not(windows))]
+pub fn wsl_shell_command(distro: &str) -> Result<std::process::Command> {
+    if !valid_distro(distro) {
+        return Err(Error::InvalidWslDistro);
+    }
+    Err(Error::WslUnsupported)
 }
 
 /// The distributions installed for this user, the default first. Blocks for at
@@ -211,18 +237,19 @@ pub(crate) fn connect(
     stop: &AtomicBool,
 ) -> Result<(Stream, ChildGuard)> {
     validate(distro, session)?;
+    let (mut stream, stdin, stdout) = Stream::child()?;
+    stream.set_read_timeout(Some(POLL))?;
+    stream.set_write_timeout(Some(Duration::from_secs(1)))?;
     let mut command = command(distro, &ssh::bridge_script(session));
     command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdin(stdin)
+        .stdout(stdout)
         // Distribution diagnostics are unbounded and may carry secrets.
         .stderr(Stdio::null());
-    let mut child = ChildGuard(command.spawn()?);
-    let (Some(stdin), Some(stdout)) = (child.0.stdin.take(), child.0.stdout.take()) else {
-        return Err(Error::WslClosed);
-    };
-    let mut stream = Stream::from_child(stdin, stdout);
-    stream.set_read_timeout(Some(POLL))?;
+    let child = ChildGuard(command.spawn()?);
+    // The command still owns the child's ends of the pipes; while it lives,
+    // a bridge that exits early never reads as closed, only as timed out.
+    drop(command);
     ssh::handshake(&mut stream, stop).map_err(wsl_error)?;
     Ok((stream, child))
 }
@@ -249,9 +276,11 @@ fn wsl_error(error: Error) -> Error {
 }
 
 mod catalog;
+mod paths;
 pub use catalog::{
     WslHost, WslHosts, add_wsl_host, load_wsl_hosts, remove_wsl_host, store_wsl_selection,
 };
+pub use paths::wsl_paths;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

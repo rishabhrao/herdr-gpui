@@ -1,5 +1,7 @@
 use super::*;
 
+mod flush;
+
 #[test]
 fn timestamp_and_left_aligned_levels_have_exact_columns() {
     let time = chrono::DateTime::parse_from_rfc3339("2025-09-26T15:03:45-07:00").unwrap();
@@ -22,7 +24,7 @@ fn timestamp_and_left_aligned_levels_have_exact_columns() {
     }
 }
 
-fn sink(capacity: usize) -> (Capture, Receiver<Vec<u8>>, Arc<Counters>) {
+fn sink(capacity: usize) -> (Capture, Receiver<Queued>, Arc<Counters>) {
     let (lines, queued) = mpsc::sync_channel(capacity);
     let counters = Arc::new(Counters::default());
     let capture = Capture {
@@ -32,9 +34,20 @@ fn sink(capacity: usize) -> (Capture, Receiver<Vec<u8>>, Arc<Counters>) {
     (capture, queued, counters)
 }
 
-fn queued_records(queued: &Receiver<Vec<u8>>) -> Vec<Record> {
+/// The queued lines; a test queues no flush markers.
+fn queued_lines(queued: &Receiver<Queued>) -> Vec<Vec<u8>> {
     queued
         .try_iter()
+        .map(|item| match item {
+            Queued::Line(line) => line,
+            Queued::Flush(_) => panic!("unexpected flush marker"),
+        })
+        .collect()
+}
+
+fn queued_records(queued: &Receiver<Queued>) -> Vec<Record> {
+    queued_lines(queued)
+        .into_iter()
         .map(|line| {
             assert_eq!(line.last(), Some(&b'\n'));
             assert_eq!(line.iter().filter(|byte| **byte == b'\n').count(), 1);
@@ -115,7 +128,7 @@ fn json_escaping_and_many_fields_share_one_record_budget() {
             a21=1,a22=2,a23=3,a24=4,a25=5,a26=6,a27=7,a28=8,a29=9,a30=10,
             a31=1,a32=2,a33=3,a34=4);
     });
-    let lines: Vec<_> = queued.try_iter().collect();
+    let lines = queued_lines(&queued);
     assert_eq!(lines.len(), 2);
     for line in &lines {
         // The budget covers the JSON; the newline is framing.

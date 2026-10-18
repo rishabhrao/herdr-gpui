@@ -2,7 +2,7 @@
 
 A GPUI 0.3.6 (`gpui-pre`) client for a Local daemon and saved SSH hosts, with macOS
 support, experimental Linux x86_64/ARM64 builds, and an experimental Windows build with
-headless CI coverage. See [Windows](#windows) for what is unavailable there.
+native CI coverage. See [Windows](#windows) for what is unavailable there.
 It starts an installed local `herdr server` when absent; explicit socket and
 development targets remain attach-only. On Unix, GUI launches resolve the login-shell
 environment once on the connection worker so daemon plugins can find tools such as
@@ -220,12 +220,12 @@ The picker refreshes after success or
 failure, including timeouts whose result is uncertain. File, process and SSH
 work runs off the UI thread, with one deletion outstanding per window.
 Local add/delete is unavailable with explicit sockets or development catalogs;
-saved-device management is unavailable on Windows or for disabled devices.
+saved-device management is unavailable for disabled devices.
 Remote hosts need an installed Herdr supporting the session commands and
 noninteractive SSH authentication. The GUI does not install or update it.
 
 **Add Device…** opens one dialog for every kind of device. A rail on its left
-lists SSH hosts (WSL distributions on Windows) and, under **Cloud**, each cloud
+lists SSH hosts (then WSL distributions on Windows) and, under **Cloud**, each cloud
 provider the build includes, shown by its logo: a green dot marks a provider
 whose account is configured, and **Set up** one that is not. Each entry keeps
 its own form, so switching between them keeps what was typed. **Ctrl-Tab** and
@@ -353,7 +353,9 @@ setup; complete any prompts in that workspace. The saved device appears
 automatically on the next catalog refresh. No credentials are collected by the
 GUI. Closing the workspace hangs the setup up, and so does quitting the app,
 since the setup belongs to it. Explicit-socket and development-catalog windows
-do not offer setup, and saved SSH devices remain unsupported on Windows.
+do not offer setup. Windows has no terminal setup yet: there the dialog names
+what needs a terminal and asks you to run `herdr machine add TARGET` in one
+(see [Windows](#ssh-hosts)).
 
 #### Local Network access
 
@@ -518,10 +520,50 @@ host key on first use (`railway_known_hosts`). The VM is temporary: Railway
 limits its lifetime and how many a network can create. Needs
 `ssh` and `ssh-keygen` on the PATH; unavailable on Windows.
 
+### Setup scripts for new cloud devices
+
+A new cloud device can install coding agents and run your own setup the first
+time it connects. Settings > **Cloud devices** > **New device setup** has one
+switch per agent (Claude Code, Codex, Gemini CLI, OpenCode), saved to
+`[cloud] agents`, and previews your own lines from `[cloud] setup`, which
+**Edit setup script in config file** opens:
+
+```toml
+[cloud]
+agents = ["claude", "opencode"]
+setup = """
+git config --global pull.rebase true
+"""
+
+# Replaces either key for one provider; an empty list or script turns it off.
+[cloud.coder]
+agents = []
+```
+
+The script is the agents' installs, in that order and each skipped when the
+tool is already on the machine, then your lines, run with `sh -e` so the first
+failing command stops it. Claude Code and OpenCode use their official
+installers, downloaded before they run so a failed download stops the script;
+Codex and Gemini CLI need `npm` on the device and
+are skipped with a note when it is missing (a system Node may also need root
+for `npm install -g`). Open a new tab afterwards to pick up PATH changes.
+
+Each provider's form has a **Run the setup script when it connects** switch,
+shown when a script is configured: on for a new machine, and in Coder's form
+off when attaching an existing workspace. Boat's **Finish setup** on a saved
+sandbox does not run it again. When the device is ready the script
+waits, for up to 30 minutes, until a window shows that device, then runs in a
+new, focused `setup` tab of the device's first workspace, like a worktree's
+setup script; nothing runs in the background. The script is yours, from this
+computer's config, so no trust question is asked. Waiting scripts are kept in
+memory only, at most eight at once; one that never ran, or a later run, is
+started from **Run setup script** in the device's sidebar menu or with
+`herdr-gpui cloud setup ID`. Reconnecting never runs it again by itself.
+
 Each provider is a Cargo feature of `herdr-gpui`, on by default: `boat`, `coder`,
 `daytona`, and `railway`. A build with `--no-default-features` has no Cloud
 Devices section and no provider rows in the device picker; it still accepts
-the `[boat]`, `[coder]`, and `[daytona]` tables, so one config file serves every
+the `[boat]`, `[cloud]`, `[coder]`, and `[daytona]` tables, so one config file serves every
 build, but never reads them.
 
 Switching revokes the old host's focus before releasing its surface, then resizes
@@ -612,7 +654,10 @@ a sidebar. General lists every optional `[features]` flag with a switch and a
 description of what it does.
 The terminal stays usable while Settings is open. Cmd-W (or Ctrl-W) closes only
 Settings; reopening activates the existing window instead of creating a duplicate.
-Local preferences remain editable if the originating session window closes.
+Herdr UI's own settings remain editable if the originating session window closes.
+Each row is tagged with the app that reads it: **Herdr** for settings in
+Herdr's shared config, which its terminal client follows too, and **Herdr UI**
+for settings only this app reads, kept in `config-gpui.local.toml`.
 
 Appearance provides a large live preview and a searchable, virtualized grid of
 theme cards, including every discovered Ghostty theme rather than a small
@@ -636,7 +681,12 @@ preserves these drafts. Theme, font, and layout writes from Settings are seriali
 **Ghostty** and **Herdr** are independent library filters, both enabled initially.
 Turn either off to show only the other; search text is preserved, and changing a
 filter does not change the live theme or pending draft. Ghostty includes native
-built-ins and theme files. Every card identifies its source, including themes
+built-ins and theme files. The built-ins bundle popular Ghostty themes from
+iTerm2-Color-Schemes under their Ghostty names, so a platform without Ghostty
+still lists them; when Ghostty is installed, its copy of a built-in, including
+an older spelling such as `tokyonight` or `catppuccin-mocha`, is listed once,
+as the built-in. A theme saved under such a spelling stays listed and loads
+from its file. Every card identifies its source, including themes
 with the same name in both libraries. Herdr selections edit the shared theme,
 which changes the GUI only when it follows Herdr rather than a native override.
 Follow Herdr and high contrast remain available independently.
@@ -746,17 +796,32 @@ Existing native theme selections remain overrides. Choose **Follow Herdr** to
 use the shared theme, all 18 upstream palettes, custom colors, and automatic
 light/dark selection. Selecting a shared theme disables upstream auto-switching,
 as in the TUI. Status indicators always use the shared status colors,
-independent of a native terminal theme override, and the shared indicator style
-unless **Settings > Notifications > Icons** picks one of this app's own icon sets: Solid,
-Tiles, or Edge rail, saved as `status_icons` in `config-gpui.local.toml`. Herdr
-accepts only `dots` or `symbols` in `ui.status_indicators`, so these never reach
-the shared file, and the TUI keeps its own choice. The icons are about a line
+independent of a native terminal theme override, drawn with the set picked on
+**Settings > Appearance > Indicators** and saved as `status_icons` in
+`config-gpui.local.toml`. This app draws only its own sets and ignores Herdr's
+`ui.status_indicators`, which the TUI keeps for itself; unset means **Dots**.
+The page shows each set as a card previewing all five statuses with the
+sidebar's own marks:
+
+- **Dots**: Herdr's dots, with a ring and a turning arc while working.
+- **Solid**: filled discs with a cut-out mark and a crescent for idle.
+- **Outline**: the same marks in outline.
+- **Tiles**: each mark on a tile tinted with its status color.
+- **Wave**: after Superset, every status in one 3×3 grid of cells. Working is
+  Superset's wave, and a gap runs round the frame while an agent is blocked.
+- **Braille**: every status a braille cell. Working spins, and a blocked cell
+  empties and fills dot by dot.
+- **Orca**: after Orca, a stepping ring, a question bubble when blocked, and a
+  ringed check when done.
+
+Working always moves, and moving marks turn in step on one shared clock. They
+hold still when the system asks to reduce motion. Drawn icons are about a line
 tall and replace the dot wherever one shows, tabs and the collapsed sidebar
 included. Herdr's own rows and Orca's cards center them across all of a row's
-lines, and Superset badges its icon slot with them. Edge rail also draws a bar
-on the leading edge of each working, done, or blocked row, in every layout.
-Choosing Dots or Symbols again removes `status_icons`; where the shared file is
-read-only, as on Windows, the style Herdr already uses stays available for that.
+lines, and Superset badges its icon slot with them. The **Edge rail** switch at
+the top of the page (`edge_rail`) draws a bar on the leading edge of each
+working, done, or blocked row, in every layout and with any set. The retired
+`status_icons = "rail"` reads as Outline with the edge rail on.
 Terminal/default reset colors are projected to opaque native colors.
 
 A saved SSH device can paint its terminal with a theme of its own, so the host
@@ -838,6 +903,17 @@ The pane dialog's **Do not ask again** checkbox (click it or press Space) saves
 `confirm_close_pane = false` to `config-gpui.local.toml` once the close is sent. Saved edits apply automatically. The
 **Show agents** control in **Settings > Sidebar** saves
 `show_agents` immediately, independently of the layout draft saved on close.
+Set `show_agents_header = false` (**Settings > Sidebar > Show agents header**)
+to hide the Agents title row and its sort toggle while keeping the list. The
+order then follows Herdr's `ui.agent_panel_sort` (`priority` or `grouped`)
+unless it was toggled earlier or a plugin sets the agent view, which keeps the
+header shown while that view is active.
+
+Agents list in their own section below Spaces by default. Set top-level
+`agents_placement = "nested"`, or pick **Under workspaces** for **Agents
+placement** in **Settings > Sidebar**, to list each agent under the workspace
+it runs in instead; Spaces then takes the full sidebar height. The collapsed
+rail keeps its own agents section either way.
 
 A search field at the top of the sidebar finds devices, worktrees, and
 branches by name; while it holds text, results grouped by kind replace the
@@ -878,8 +954,7 @@ machine is read in process; each connected Linux or macOS remote host is read
 every two seconds over its own SSH shell, kept open while the host is connected
 (`/proc` on Linux; `vm_stat` and a one-second `iostat` on macOS; `df -Pk
 "$HOME"` on both, with `/proc/uptime` on Linux and `kern.boottime` on macOS).
-Other remote systems, and remote hosts from a Windows client, show it as
-unavailable. Set top-level `show_system_load = false`, or turn off **Show CPU
+Other remote systems show it as unavailable. Set top-level `show_system_load = false`, or turn off **Show CPU
 and memory** in Settings, to hide it and stop sampling while no
 [Devices overview](#devices-overview) is open.
 
@@ -900,8 +975,9 @@ every pane, so system services and servers started outside Herdr never show,
 and its `HERDR_SOCKET_PATH` names the same daemon, so two sessions on one
 machine never claim each other's servers.
 Every five seconds each host runs `ss -ltnp` (Linux) or `lsof -iTCP
--sTCP:LISTEN` (macOS) in its own shell, this machine's locally and a connected
-remote host's over SSH, listing only your own processes. A remote server
+-sTCP:LISTEN` (macOS) in its own shell, this machine's locally, a connected
+remote host's over SSH, and a WSL distribution's through `wsl.exe` (see
+[WSL distributions](#wsl-distributions)), listing only your own processes. A remote server
 always opens at `http://127.0.0.1:<port>` through an SSH tunnel started on the
 first click, never at the address SSH reaches the host by (a Tailscale
 `HostName`, say): `ssh -N -L` from this machine's loopback, with the same
@@ -985,6 +1061,12 @@ graphics) to 4.5:1 (the level for text), lifts dim labels to it too, and makes
 selected rows stand further off the surface. Terminal output is never
 adjusted; programs keep the colors they asked for.
 
+On Windows, top-level `accent = "system"` takes the app's own accent (the
+current tab, selected rows, focus marks) from **Settings > Personalization >
+Colors** instead of the theme. It is read whenever a theme loads, so a new
+accent shows at the next theme or appearance change, or the next start. Other
+platforms keep the theme's accent.
+
 **Settings > Theme > Window** offers three backdrop tiles: **Solid** (the
 default), **Translucent**, and **Picture**, each showing only its own controls.
 Translucent starts at 85%, and its **Background opacity** stepper moves in 5%
@@ -1001,6 +1083,12 @@ opaque.
 translucent window, through GPUI's public window API: macOS and Windows blur;
 on Linux only Wayland compositors with KDE's blur protocol do, and X11 needs a
 compositing window manager for any translucency at all.
+
+On Windows 11 (22H2 and later) the blur is a DWM system backdrop that also
+covers the title bar: acrylic by default, which blurs the windows behind, or
+Mica (the **Mica** switch, `material = "mica"`), which tints the window with
+the wallpaper the way Windows' own apps do. Windows 10 keeps the older blur,
+and other platforms ignore `material`.
 
 The **Picture** tile opens a file chooser and puts an image behind the window
 instead (`image`, an absolute path or one under `~/`), and starts it at 75%
@@ -1108,7 +1196,7 @@ padding_y = [4, 8]   # top, then bottom
 
 - One number pads both sides of the axis. A pair of numbers pads each side: left then right for `padding_x`, top then bottom for `padding_y`.
 - Each side is a finite number of logical pixels from 0 to 64. The default is `0`, which keeps the cells against the edges.
-- Every terminal takes the padding, in every tab group, whether the sidebar shows or not. A browser, VS Code, review, or orchestrator tab pads its own content and takes none.
+- Every terminal takes the padding, in every tab group, whether the sidebar shows or not. A browser, VS Code, or review tab pads its own content and takes none.
 - The terminal keeps the remaining size, so the daemon is resized to the columns and rows it actually has.
 - The padding shows the theme background.
 - **Settings > Theme > Terminal padding** sets each of the four sides with a slider, a typed value, or one-pixel steps. It writes one number when the two sides of an axis agree, and a pair when they differ.
@@ -1452,7 +1540,8 @@ buttons. Typing in the terminal or clicking elsewhere dismisses the pill.
 The whole selection must be visible on screen.
 This also works with copying on selection disabled or the highlight set to clear
 after copying. For an existing selection, use **Annotate Selection for the Agent**
-in the command palette (Cmd+Shift+A on macOS, Ctrl+Alt+Shift+A on Linux).
+in the command palette (Cmd+Shift+A on macOS, Ctrl+Alt+Shift+A on Linux and
+Windows).
 Notes go to the agent in that pane, falling back to the first agent in its
 workspace; with no agent, they are copied to the clipboard.
 
@@ -1508,13 +1597,18 @@ macOS terminals do, with a backslash before each space, quote, bracket, comma,
 colon, or other character a shell would interpret (`/tmp/Shot\ 1.png`), and
 before a final period, separated by spaces; the drop never presses Enter. The
 escapes keep a dropped path one Cmd-clickable link. Local drops only paste paths; SSH drops
-read and transfer the selected files.
+read and transfer the selected files. The exception is a live macOS screenshot
+thumbnail, dragged before it saves: macOS lets only Herdr UI read its temporary
+file, not the pane's processes, so its image goes through the
+[image bridge](#images), as a pasted clipboard image does.
 Drops are limited to 256 paths and 64 KiB of escaped text. Non-UTF-8 paths and
 paths containing control characters are rejected rather than altered.
 
 On an SSH endpoint, a single supported image is transferred as described below.
 Other regular files and multiple-file drops are streamed using the SSH file-copy
-path below. POSIX shell escaping is not intended for Windows command shells.
+path below. A WSL distribution is given its own paths for the files instead,
+with nothing copied; see [WSL distributions](#wsl-distributions). POSIX shell
+escaping is not intended for Windows command shells.
 
 Files copied in the file manager (Cmd-C in Finder) and pasted into the focused
 pane or popup with Cmd-V are handled the same way as a drop. Finder also puts
@@ -1837,27 +1931,72 @@ Where new checkouts went is kept in `dispatch-history.json` in the state
 directory, by repository name and host. Like Teleport, dispatch needs a Linux
 or macOS client and the local session or a saved SSH host on both ends.
 
+## Activity bar
+
+An icon column at the window's left edge picks what the window shows. Every
+section but Workspaces takes the window's body, keeping the title bar and the
+status bar; zen mode keeps the terminals. `[sidebar] activity_bar = false`
+turns it off, and `herdr-gpui ui panel NAME` shows a section.
+
+- **Workspaces** is the sidebar beside the terminals. Clicking it while shown
+  folds the sidebar to its rail.
+- **Overview** shows what needs you on every connected host: agents waiting on
+  you and failed runs first, in a card of their own, then finished agents
+  ready for review, working agents by host, and idle ones. Hovering a row
+  offers **Snooze** (until a preset time), **Settle**, **Pin**, and **Open**;
+  snoozed and settled rows fold away at the bottom and come back once their
+  time comes or the agent works or asks again. These marks are this client's
+  own. A column beside the list shows each host's CPU, memory, agents, and
+  ports; each host folds, and the column folds to a strip of load dots. The
+  icon counts what needs you.
+- **Pull requests** and **Issues** list every repository the connected hosts'
+  workspaces hold (see [Orchestrator](#orchestrator)). Refresh spins while a
+  sync runs.
+- **Usage** shows every host's plan limits, one card per signed-in agent. Only
+  the selected host is read; another host shows what was read while it was
+  selected.
+
+When Overview or a section opens an agent's pane, the title bar's Back returns
+to it before walking back through panes.
+
 ## Orchestrator
 
-The Orchestrator row of a group's "…" menu, the Open Orchestrator command, or
-the Orchestrator row of a workspace's popover opens a tab listing that
-workspace's repository: its GitHub issues and pull requests or GitLab issues, its
-[Beads](https://github.com/steveyegge/beads) issues when the main checkout has
-a `.beads` folder, and the agent runs dispatched for them. It works for the
-local session and saved SSH hosts.
+The activity bar's **Pull requests** and **Issues** sections list, across the
+window, every repository the workspaces of every connected local or SSH host
+hold: their GitHub issues and pull requests or GitLab issues, their
+[Beads](https://github.com/steveyegge/beads) issues when a main checkout has a
+`.beads` folder, and the agent runs dispatched for them. Worktrees of one
+repository count once, and each repository syncs on its own, so up to 32 are
+listed. A row shows its project while several are listed. Under the search, a
+row of pills picks backends (GitHub, GitLab, Beads) and projects, each with its
+count; none picked lists all. The Issues row of a group's "…" menu or of a
+workspace's popover, the Show Issues command, and `herdr-gpui orchestrator`
+open the Issues section narrowed to that workspace's project. A repository
+without a GitHub remote has no GitHub source; the header says "no GitHub
+remote" when none of them has one.
 
-- **Issues** lists open GitHub or GitLab issues and beads together. A bead's children sit
-  under it; filters narrow to Beads, items with a run, or blocked ones; five
-  sorts are offered. Search matches every word you type across title, id,
-  author, labels, state, and body, case-insensitively unless a word has a
-  capital, and keeps a match's parents in view.
-- **Pull requests** lists open ones and the 50 most recently closed or merged,
-  with their diff size and activity.
-- **Runs** lists every run, grouped by what needs you first. Its status comes
-  from Herdr's live view of each connected host.
+- **Issues** lists open GitHub or GitLab issues and beads together, grouped by
+  priority. A bead's children sit under it. The **Filters** button unfolds a
+  column narrowing to items with a run, blocked ones, one source, or one
+  label; folded, the filters in use show as chips that clear them. Five sorts
+  are offered. Search matches every word you type across title, id, author,
+  labels, state, and body, case-insensitively unless a word has a capital, and
+  keeps a match's parents in view. **Start agent** on a row opens the dispatch
+  dialog.
+- **Pull requests** is a table grouped by what each waits on: a review asked
+  of you, your own to fix (changes requested or failing checks), those ready to
+  merge, the rest, and recently closed or merged ones. Each row shows its
+  branch, author, review state, its checks as colored pills, diff size, its
+  run, and age. Review state, review requests, and checks are read from GitHub
+  after every sync and kept in memory only, never in the shared database.
 
-Selecting a row shows it in the preview, whose left edge drags to resize or
-close it; Enter or a double-click opens its page. An issue's page shows its
+Runs have no list of their own: the [Overview](#activity-bar) shows the agents and
+failed runs that need you, and an item's **Agent** page shows its runs. Their
+status comes from Herdr's live view of each connected host.
+
+A click selects a row; Enter or a double-click opens its page in a pane beside
+the list, which keeps only the columns that fit. The pane's left edge drags to
+resize or close it, and × closes it. An issue's page shows its
 description as plain text with Markdown structure, its runs, and its details. A
 pull request's page also has its conversation, read as on GitHub: authors'
 avatars, Markdown comments, each review holding its inline threads with
@@ -1879,8 +2018,8 @@ request's **Review with agent** does the same on an `agent/review-…` branch wi
 read-only prompt: the agent verifies the pull request, reads its diff, and
 reports findings without writing to GitHub. A run's card sends it messages, stops
 it, or removes its worktree; a bead's details can delete it with `bd`. Each of
-those asks first. Closing the Orchestrator tab or its detached window leaves
-an already-started dispatch running; it does not remove the new worktree.
+those asks first. Leaving the section leaves an already-started dispatch
+running; it does not remove the new worktree.
 
 The hash at the end of a branch name is the item's own, so the Orchestrator
 finds work without its database, such as on another machine: a Herdr workspace
@@ -1912,9 +2051,11 @@ image-paste shortcut). Ctrl-V retains its normal terminal meaning when the
 clipboard has no image. A pasted absolute image-file path is also recognized,
 including the backslash-escaped paths used by terminal file drops.
 
-Local endpoints on macOS and Linux use the same bridge for Cmd-V clipboard
-images, because a GUI text paste cannot carry image data. Local drops and pasted
-paths stay ordinary path pastes, and local Ctrl-V is sent to the terminal
+Local endpoints on macOS, Linux, and Windows use the same bridge for Cmd-V
+clipboard images (Ctrl-Shift-V or Shift-Insert on Windows), because a GUI text
+paste cannot carry image data. Local drops and pasted
+paths stay ordinary path pastes, except a live screenshot thumbnail (see
+[File Drops](#file-drops)), and local Ctrl-V is sent to the terminal
 unchanged so agents can read the shared clipboard themselves.
 
 The daemon writes a temporary file and pastes its path into the
@@ -1958,10 +2099,21 @@ chunks and a three-second deadline between reads, but an OS-blocked network/FUSE
 filesystem operation cannot be forcibly interrupted. Such a read stays isolated
 from the UI and holds its bounded preparation slot until it returns.
 
-Windows SSH and image uploads, including local clipboard images, remain
-unsupported. Native clipboard/drop
-and real SSH behavior require explicit desktop/host verification in addition to
-the mock-peer and headless tests.
+Windows reads the clipboard on a thread of its own, for every paste: copied
+files (`CF_HDROP`), then text, then the `PNG`, `JFIF`, and `GIF` formats other
+programs register, a device-independent bitmap (`CF_DIB`, sent as BMP), and
+`CF_TIFF`. Each format's size is checked before any of it is copied, and the
+whole read has a three-second deadline. A program that renders its clipboard
+data on request and never answers stalls only that thread: the paste reports a
+timeout, and no second reader starts until the stuck one returns. WSL
+distributions are the remote endpoints there, so dropped images, pasted image
+paths, and Ctrl-V images reach a distribution's panes through the same bridge.
+A pasted Windows path keeps its backslashes as separators; only matching quotes
+around it are removed, as Explorer's "Copy as path" adds them.
+Files and images dropped or pasted on an SSH host's pane are not uploaded from
+a Windows client yet.
+Native clipboard/drop and real SSH behavior require explicit desktop/host
+verification in addition to the mock-peer and headless tests.
 
 ### Native Clipboard Regression Test (macOS)
 
@@ -2218,7 +2370,7 @@ a window.
 
 The search field narrows the lanes and the table to devices whose name,
 address, agents, or workspaces match every word typed. Load columns wrap in
-narrow tabs. **Add Device** opens SSH setup, or WSL setup on Windows; it is
+narrow tabs. **Add Device** opens SSH setup, with WSL beside it on Windows; it is
 unavailable in explicit-socket and development-catalog windows.
 
 The window keeps the activity history from the snapshots it already receives,
@@ -2318,7 +2470,8 @@ come back after a restart; closing a workspace in Herdr removes its tabs.
   `localhost:3000` becomes `http://localhost:3000/`.
 - Close Tab and Close Pane close the browser tab being shown, without asking.
   Clicking a Herdr tab, or switching Herdr tabs in the workspace, shows its
-  terminal again.
+  terminal again. Next Tab, Previous Tab, and the tab numbers count browser
+  tabs too, after the workspace's Herdr tabs.
 - Only `http` and `https` pages open, plus local files an agent shows (below).
   Pages cannot navigate to other schemes
   (so `file:` and applications' custom URL schemes stay closed), downloads are
@@ -2390,10 +2543,8 @@ them to the agent that opened it, so it can change the page.
   working after two minutes). It is never typed into a pane where Herdr sees no
   running agent, since Enter there would run it in a shell, nor into an agent
   that is asking you a question; those notes wait for `browser feedback`, as
-  do notes for a pane this window does not show.
-  Windows has no `browser feedback` listener: notes that cannot be pasted
-  are copied instead, and the tab can send again. Notes written in a session
-  that is no longer shown are also copied, never handed to another session's
+  do notes for a pane this window does not show. Notes written in a session
+  that is no longer shown are copied, never handed to another session's
   agent.
 - Feedback is scoped to the caller's daemon socket and pane together, so two
   local sessions with the same pane ID cannot take each other's notes. Use the
@@ -2441,6 +2592,12 @@ comments on a pull request.
   uncommitted work together. The base is the pull request's base branch when
   GitHub reported one, else `origin/HEAD`, then `main` or `master`, whichever
   exists locally; nothing is fetched. The choice is remembered.
+- Click the base after "against" in a branch review to compare with another
+  branch, such as an older release branch or the feature branch this one was
+  cut from. The list holds the checkout's local and remote-tracking branches,
+  those this branch left most recently first; **Automatic** goes back to the
+  base above. The pick holds while the review tab is open, and a picked
+  branch that no longer exists falls back to the automatic base.
 - The two icons in the header draw the diff **unified**, removed lines above
   the ones that replaced them, or **side by side**, the old version on the
   left and the new on the right, each run of removed lines paired with the
@@ -2562,7 +2719,9 @@ The tab joins the caller's own workspace, which Herdr names in the pane's
 `HERDR_WORKSPACE_ID`, and remembers the caller's `HERDR_PANE_ID` so notes on
 the page go back to it. The command talks to the running app over a socket at
 `$XDG_STATE_HOME/herdr/gpui/control.sock`, readable only by you, and exits with
-3 when the app is not running. Only processes on this machine can reach it.
+3 when the app is not running. On Windows it is a named pipe only your user
+can open ([details](../../docs/cli.md#windows)). Only processes on this
+machine can reach it.
 
 Agents on a saved SSH host open pages another way, since that host cannot
 reach this machine. The app writes a small `herdr-gpui` shim there, at
@@ -2646,8 +2805,7 @@ removed; a skill of the same name you wrote yourself is left alone.
   or `~/.agents`. As here, a shim or skill file without the app's marker is
   left alone. A host without a POSIX shell is skipped. Removing the skill
   takes the shim and those copies off each host again, the next time a
-  window connects to it. Windows has no saved SSH hosts, so it installs
-  nothing.
+  window connects to it.
 
 `herdr-gpui browser skill` prints the same text, for example to install it
 elsewhere:
@@ -2771,7 +2929,10 @@ the page's storage, which belongs to one address.
   browser tab's, the page's own shortcuts win, as a terminal program's do
   while its pane has focus. On macOS, Cut, Copy, and Paste act on the page,
   and the keys macOS keeps for the app (quit, hide, minimize, and cycling
-  windows) still reach the app. Click a terminal to take the keyboard back.
+  windows) still reach the app. So do the keys bound to Next Tab, Previous
+  Tab, the tab numbers, and moving to another workspace or agent, as a web
+  browser keeps its tab keys from its pages. Click a terminal to take the
+  keyboard back.
 
 ## System Notifications
 
@@ -2811,11 +2972,15 @@ while the GUI runs: a click cannot reopen a closed window.
   compositor's focus policy. Notifications are neither replaced nor retracted, so
   each event shows separately, and each keeps a small waiting thread until the
   server closes it.
-- **Windows** uses WinRT toasts. The first notification sets the process
-  AppUserModelID to `so.pen.herdr-gpui` and registers its display name under
-  `HKCU\Software\Classes\AppUserModelId`. Because this changes taskbar grouping,
-  it happens only once system delivery posts. Native Windows behavior has not been
-  verified.
+- **Windows** uses WinRT toasts under the AppUserModelID `so.pen.herdr-gpui`,
+  which the app sets at startup and registers, with its display name, under
+  `HKCU\Software\Classes\AppUserModelId`. Once the installer has registered
+  `herdr-gpui://` links, a toast opens through one: clicking the banner, or the
+  toast later in the notification center, starts the launcher with
+  `herdr-gpui://notification?tag=…`; `herdr-gpui.exe` hands the click to the
+  running app, and its window comes forward. A click after the app quit only starts it.
+  Without that registration (a build run from `target`), toasts answer clicks
+  only while the app runs and still holds them, as GPUI posts them.
 
 ## macOS Dock Badge
 
@@ -2835,7 +3000,9 @@ seen. The daemon may acknowledge all panes in a viewed tab together. Blocked
 agents remain counted until their status changes, even after you view them.
 Disconnecting a host or closing a window removes its contribution, while other
 windows can keep the badge visible. Quitting the GUI stops monitoring; this is
-not a background notification service. Linux and Windows do not show this badge.
+not a background notification service. Windows shows the same count as an
+overlay on the taskbar button (see [Windows shell](#windows-shell)); Linux shows
+no badge.
 
 macOS draws the badge only when **Badges** is allowed in **System Settings >
 Notifications > Herdr**. The first time the count rises above zero, Herdr asks
@@ -2847,7 +3014,7 @@ that list and relaunch it to be asked again. A bare `target/*/herdr-gpui`
 binary cannot ask for permission.
 
 To preview it without waiting for an agent, choose **QA > Enable badge** in the
-macOS menu bar. The preview shows at least `2` and stays on until you choose **QA > Disable badge preview**
+macOS menu bar (on Windows, in the window's menu). The preview shows at least `2` and stays on until you choose **QA > Disable badge preview**
 or quit. Disabling the preview restores daemon-driven behavior, so real agent
 attention can keep the badge visible. This QA setting is not saved.
 
@@ -2868,13 +3035,35 @@ waits on the disk; lines that cannot be queued or written are counted as dropped
 in the window's status bar. If none of these state-directory variables is
 available, nothing is saved and the window says so.
 
+### Crash reports
+
+If the app panics, it writes `crash-YYYYMMDD-HHMMSS.mmm-PID.txt` (the time in UTC) beside the log
+before it exits. The report has the version, platform, thread, panic message,
+source location, and a backtrace. The app also writes a `Herdr UI panicked`
+error record to the log, naming the report, and waits up to two seconds for the
+log writer to save it. Release builds ship without debug symbols, so their
+backtraces are mostly addresses; the message and location are exact. On Windows
+it also writes a minidump, `crash-….dmp`, for a panic and for a crash Rust never
+sees, such as an access violation or a stack overflow (an unhandled-exception
+filter; `src/crash/windows.rs`). Such a crash gets a short `.txt` report with the
+exception code and address, and a `Herdr UI crashed` record. A dump holds every
+thread's stack and registers but not the heap. A thread started at launch writes
+it, because the crashing thread may have no stack left. Windows Error Reporting
+still runs afterwards. Only the five newest reports and three newest dumps are
+kept. On macOS and Linux a signal such as `SIGSEGV` leaves no report here. Crash
+files never leave the machine. `herdr-gpui diagnostics bundle PATH` includes the
+three newest reports, redacted like the log records, and lists dumps by name and
+size without including them: they hold the app's memory, so attach one only
+when asked.
+
 Local Windows connections are supported through the daemon's named pipe; pass
 the binary client socket path to `--socket`, not the JSON API socket. No debug
 build or `RUST_LOG` setting is needed: client debug records are captured in
 release builds too. For a connection failure, inspect `operation`, `kind`, and
 `raw_os_error` in the log: `pipe_name` is name conversion, `pipe_connect` is the
-pipe library's open/wait operation, and `pipe_peek` is `PeekNamedPipe` after
-connection. Config failures distinguish `config_lock_open` from
+pipe library's open/wait operation, `pipe_read` is a read that failed after
+connection, and `pipe_cancel` is a cancelled operation the kernel did not
+finish within five seconds of the connection closing. Config failures distinguish `config_lock_open` from
 `config_lock_acquire`. These operation records omit paths and retain native
 error codes (for example, `5` for Windows access denied). A successful plain
 pipe client alone does not establish why the GUI was denied; include these
@@ -2908,14 +3097,19 @@ shortcuts remain visible in the reference and are configured in Herdr's own
 `[keys]` / `[[keys.command]]` tables. Clipboard shortcuts are fixed Edit actions.
 
 Defaults are selected independently for Linux, macOS, and Windows. macOS uses
-Cmd; the experimental Windows profile currently retains its existing bindings.
-Linux uses **Ctrl+Shift** for terminal-facing application actions, keeping Super
-available to the desktop and plain Ctrl keys available to terminal programs.
-This follows terminal conventions alongside the
+Cmd. Linux uses **Ctrl+Shift** for terminal-facing application actions, keeping
+Super available to the desktop and plain Ctrl keys available to terminal
+programs. This follows terminal conventions alongside the
 [GNOME keyboard guidelines](https://developer.gnome.org/hig/reference/keyboard.html),
 whose plain Ctrl editing shortcuts also work in the app's text fields.
 
-| Action | Linux default |
+Windows starts from the Linux profile, which matches Windows Terminal's
+Ctrl+Shift conventions: no default uses the Win key, which Windows keeps for
+itself, and plain Ctrl keys still reach terminal programs. Reset font size is
+Ctrl+0 there, as in Windows Terminal, because Windows can take Ctrl+Shift+0 for
+switching input languages. Alt+F4 closes a window through Windows itself.
+
+| Action | Linux and Windows default |
 | --- | --- |
 | New tab / New window | Ctrl+Shift+T / Ctrl+Alt+N |
 | New workspace / New worktree | Ctrl+Alt+Shift+N / Ctrl+Shift+N |
@@ -2927,6 +3121,9 @@ whose plain Ctrl editing shortcuts also work in the app's text fields.
 | Next / Previous tab | Ctrl+PageDown / Ctrl+PageUp |
 | Toggle sidebar / New browser tab | Ctrl+Shift+B / Ctrl+Alt+Shift+B |
 | Settings / Keyboard Shortcuts | Ctrl+Shift+, / Ctrl+Shift+/ |
+| Larger / Smaller text | Ctrl+Shift+= / Ctrl+Shift+- |
+| Reset text size | Ctrl+Shift+0 (Linux) / Ctrl+0 (Windows) |
+| Quit | Ctrl+Shift+Q |
 | Full screen | F11 |
 
 The in-app reference lists all platform defaults and current overrides. The
@@ -3021,9 +3218,17 @@ Ctrl+Shift+U is left unbound for
   cancels; dialog input never reaches terminals or native creation actions.
   Context menus and dialogs anchor to the pointer and clamp to the viewport.
   Rename trims surrounding whitespace and rejects blank labels inline.
+  The PR and issues tabs need a GitHub account signed in to Herdr itself; until
+  then they are faded, and hovering one says to sign in from the account
+  button. A `gh` or browser login is not picked up by itself, and a development build
+  (`just run`) keeps its sign-in apart from the installed app's Keychain entry.
   The PR tab supports fork pull requests: it fetches GitHub's PR head ref from
-  the repository's origin and creates a local `pr/<number>` branch. Existing
-  local branches are preserved; repository trust is not granted.
+  the listed repository's remote and creates a local `pr/<number>` branch.
+  Existing local branches are preserved; repository trust is not granted. In a
+  fork checkout whose `upstream` remote is on GitHub.com, the tabs list the
+  upstream repository: its own branches are fetched from `upstream`, pull
+  requests from the fork behind `origin` check out their real branch from
+  `origin`, and other forks use the PR head ref fetched from `upstream`.
 - Open worktree... asynchronously lists the clicked parent's existing checkouts
   through `worktree.list`, including already-open and detached checkouts but
   excluding bare/prunable entries. Use Up/Down and Enter, the Open button, or
@@ -3071,6 +3276,11 @@ Ctrl+Shift+U is left unbound for
    branch, so renamed local branches can identify fork PRs. Without an upstream,
    lookup uses the local branch name and requires the origin owner as before.
    Unsupported upstreams fail closed rather than matching an unrelated fork.
+   A checkout with a GitHub.com `upstream` remote is treated as a fork: lookup
+   queries the upstream repository, an untracked branch's head defaults to the
+   fork behind `origin`, and **Create pull request** pushes to `origin` and
+   opens the pull request against upstream's default branch with an
+   `owner:branch` head.
   On macOS and Linux, all socket modes (including explicit/inherited sockets)
   require a same-user kernel peer (`getpeereid` on macOS, `SO_PEERCRED` on
   Linux) at the standard configured session socket. The socket must be owned by
@@ -3091,18 +3301,19 @@ Ctrl+Shift+U is left unbound for
   verified or it is world-writable; check ownership, remove world-write access
   with `chmod o-w` on it, and reconnect.
   On a saved SSH device, the checkout lives on that host, so local Git cannot
-  verify it. The worker instead reads the repository's `remote.origin.url` over
-  the same noninteractive SSH options as the bridge (`BatchMode=yes`, strict host
-  keys, no master connection), keeping stdout bounded and discarding stderr.
-  Each resolved origin repository is reused for ten minutes. Upstream configuration
-  is read over SSH on each lookup using the daemon-reported local branch. Sidebar PR badges
-  show only on the selected device's rows, because the cache holds that device's
-  lookups and the same path and branch may exist on another host.
+  verify it. The worker instead reads the repository's `remote.upstream.url` or
+  `remote.origin.url` over the same noninteractive SSH options as the bridge
+  (`BatchMode=yes`, strict host keys, no master connection), keeping stdout
+  bounded and discarding stderr. Each resolved origin repository is reused for
+  ten minutes. Upstream configuration is read over SSH on each lookup using the
+  daemon-reported local branch. Sidebar PR badges show only on the selected
+  device's rows, because the cache holds that device's lookups and the same path
+  and branch may exist on another host.
 - Each saved SSH device can have its own GitHub account, for hosts whose
   repositories another account owns. Select the device, open the GitHub panel,
   and choose **Use another account** to run the same device sign-in for that
-  device only. It is stored with the main account's mechanism (the app's Keychain
-  or Secret Service entry under a per-device account name, or its own private
+  device only. It is stored with the main account's mechanism (the app's Keychain,
+  Secret Service, or Credential Manager entry under a per-device account name, or its own private
   `github-credentials-<device-id>` file) and renewed the same way. Pull requests on
   that device then use it; a device without one uses the main account. Signing
   out in that panel removes only the device's credential. `GH_TOKEN` /
@@ -3157,6 +3368,11 @@ Ctrl+Shift+U is left unbound for
   Service (GNOME Keyring, KWallet, KeePassXC), under service
   `dev.herdr.gpui.github`; the desktop may ask to unlock it. With no Secret
   Service running, restore finds nothing saved and saving a sign-in says so.
+  Windows builds keep tokens in Windows Credential Manager as generic
+  credentials named `dev.herdr.gpui.github/github.com` (and
+  `dev.herdr.gpui.github/github.com/host/<device-id>` per device), persisted for
+  your Windows account on this computer only, never roamed; see
+  [Windows](#windows).
   `GH_TOKEN` / `GITHUB_TOKEN` override any of them. Access tokens and retained device/user codes use redacted, zeroizing
   `secrecy` types; HTTP headers are sensitive and application-owned raw OAuth
   buffers are wiped. The user code is intentionally exposed for rendering.
@@ -3167,9 +3383,8 @@ Ctrl+Shift+U is left unbound for
   is not moved to the other, so changing the opt-in means signing in again; macOS
   development builds use that same store, enabled by default and warned about in
   the profile panel. Signed macOS release builds still use Keychain. Windows has
-  neither store: the opt-in does not select the file there, saving a token
-  reports `CredentialUnsupported`, and sign-in says to use `GH_TOKEN` /
-  `GITHUB_TOKEN`. Sign-out suppresses environment tokens for this app session and
+  no private file store, so the opt-in does not select the file there and
+  Credential Manager stays in use. Sign-out suppresses environment tokens for this app session and
   fences late profile/avatar/PR results. Plaintext policy reloads re-evaluate the
   active credential, without reactivating an explicitly signed-out session.
   Disabling plaintext stops its session use but keeps the file; explicit sign-out
@@ -3193,8 +3408,7 @@ Ctrl+Shift+U is left unbound for
   panel asks `gh auth token --hostname github.com` on a background thread, at
   most every 30 seconds while it is open and signed out, and drops the answer.
   Choosing it reads the token again, verifies it with GitHub, and saves only a
-  marker in the credential store, never the token; Windows, which has no store,
-  keeps the choice for the app session. Every load and five-minute session check
+  marker in the credential store, never the token. Every load and five-minute session check
   asks `gh` again, so `gh auth logout`, a revoked token, or an uninstalled `gh`
   signs the app out at the next check with an error naming the fix, and a token
   `gh` refreshed is picked up. The panel reads "Connected with GitHub CLI", warns
@@ -3356,7 +3570,7 @@ Ctrl+Shift+U is left unbound for
   Rows chosen often and recently rise among the matches for a typed query, and
   the Projects filter lists the most frecent projects first before anything is
   typed; that history stays on this machine in `palette-frecency.json`.
-  **Resume Palette** (Cmd-Shift-R, Ctrl+Alt+Shift+R on Linux) reopens the
+  **Resume Palette** (Cmd-Shift-R, Ctrl+Alt+Shift+R on Linux and Windows) reopens the
   palette with its last query, filters, and selected row. Navigation
   (Go To) also filters agents by the status the daemon reports, like Herdr's
   navigator: click **All agents**, **Blocked**, **Working**, **Idle**, or
@@ -3639,9 +3853,13 @@ Ctrl+Shift+U is left unbound for
 
 Socket I/O belongs to `herdr-client`'s worker. A separate event thread drains all
 ordered events into a bounded latest-state cache. The UI samples changed state
-at most once per 16 ms without blocking. Snapshots invalidate surfaces with a
-different boot/projection revision; input waits for a coherent surface. Reconnect
-replaces the cache, so late events from an old connection cannot affect the UI.
+at most once per 16 ms without blocking. A metadata-only snapshot is staged
+while the displayed snapshot and surface stay coherent, so input keeps flowing;
+a boot, focus, pane-layout, zoom, keybinding, or command change invalidates the
+surface, and input waits for a coherent one. Notices, sounds, and agent
+checkpoints judge agent status from the staged metadata, so a status change
+that arrives before its surface still counts. Reconnect replaces the cache, so
+late events from an old connection cannot affect the UI.
 
 ### Scrolling Semantics
 
@@ -3692,14 +3910,22 @@ GPUI native action/menu/keybinding patterns.
 
 ## Windows
 
-Windows is experimental, not a supported platform. CI checks formatting, lints
-every target and feature, and runs workspace tests with default and all features
-on `windows-2025` (x86_64) and `windows-11-arm` (ARM64), including headless UI
-and CLI tests. The release workflow builds and CLI-tests the optimized
-executable natively for each architecture and publishes
+Windows is experimental. CI checks formatting, lints every target and feature,
+and runs workspace tests with default and all features on `windows-2025` (x86_64)
+and `windows-11-arm` (ARM64), including headless UI and CLI tests. Its
+`windows-native` job then runs the native tests in both runners' desktop
+sessions: `just test-sidebar`'s fixtures, and on x86_64 `just test-gui` against
+a pinned Herdr `herdr.exe` (0.9.5) in the shared test sandbox, with PowerShell
+as the pane shell. Herdr publishes no ARM64 Windows build; emulated on
+`windows-11-arm`, its panes echo typed text but never act on Enter, so CI skips
+`native_gui_live` there. Both runners then run the release-mode performance
+budget, whose hover and scroll arrive as Win32 messages sent to the fixture's own
+window. The paint probes accept the sub-pixel offsets layout snapping gives at
+fractional display scales such as 150%. The release workflow builds and
+CLI-tests the optimized executable natively for each architecture, publishes
 `Herdr-VERSION-x86_64-pc-windows-msvc.zip` and
-`Herdr-VERSION-aarch64-pc-windows-msvc.zip`; native window, rendering, input, and
-live-daemon behavior remain unproven. Each zip also holds
+`Herdr-VERSION-aarch64-pc-windows-msvc.zip`, and installs and uninstalls both
+signed installers. Each zip also holds
 `herdr-gpui-launcher.exe` (`crates/herdr-gpui-launcher`), a windowed program
 that starts the console-subsystem `herdr-gpui.exe` from its own directory with
 `CREATE_NO_WINDOW` and exits. The GUI then shows no console window, and console
@@ -3714,12 +3940,66 @@ launcher sits beside it, every Herdr window carries the AppUserModelID
 share one taskbar button. The properties are cleared as each window closes. Local
 connections use the named pipe the Windows
 daemon binds, derived from the same socket path string upstream uses, so
-discovery and framing are the same code as on Unix. Receive deadlines are
-emulated with `PeekNamedPipe`, an `unsafe` call, because a
-named pipe has no receive timeout; send timeouts cannot be enforced at all
-there. Configuration and state
+discovery and framing are the same code as on Unix. The pipe, and a WSL
+bridge's standard streams, are driven with overlapped I/O, so receive and send
+timeouts hold as they do on a socket, and clipboard and dropped images upload
+as on macOS and Linux. Configuration and state
 follow upstream's Windows layout: `%APPDATA%\herdr` and `%LOCALAPPDATA%\herdr`,
 still overridden by `XDG_CONFIG_HOME` / `XDG_STATE_HOME` when they are set.
+
+`herdr-gpui COMMAND` and the managed agent skill reach the running app over
+`\\.\pipe\herdr-gpui-control-SID`, named for the Windows user. The app creates
+it owned by that user with a DACL granting only that user's SID, as the first
+instance, and with remote clients rejected; the command line opens it at
+identification level and checks its owner before sending anything, since any
+user could create a pipe of that name first. `docs/cli.md` has the details.
+Reading the user's SID and the pipe's owner takes two `unsafe` Win32 calls
+(`GetTokenInformation`, `GetSecurityInfo`), which neither the standard library
+nor `interprocess` wraps.
+
+### SSH hosts
+
+Saved SSH hosts work as they do on macOS and Linux, through OpenSSH for
+Windows: the copy Windows installs as an optional feature,
+`%SystemRoot%\System32\OpenSSH\ssh.exe`, or without it the first `ssh.exe` in
+an absolute `PATH` directory. The system copy comes first because `PATH` often
+leads with Git's MSYS `ssh`, which reads another home's config and known hosts.
+`ssh-keygen.exe` is found the same way. No console window opens for either.
+The `ssh` child's standard streams are two private pipes rather than a socket
+pair, driven with the same overlapped read and write deadlines as the daemon's
+named pipe. **Add Device** lists **SSH host** first, then **WSL**. It checks the
+host, asks before trusting an unknown host key (appended to the first user
+known hosts file `ssh -G` names, normally `%USERPROFILE%\.ssh\known_hosts`),
+and saves a host that already runs a compatible Herdr through `herdr machine
+add`. Sessions on the host can be listed, created, and deleted.
+
+Where this differs from macOS and Linux:
+
+- **No terminal setup.** A host that needs a password or passphrase prompt,
+  your key installed, or Herdr installed, updated, or restarted is set up in a
+  local workspace on macOS and Linux. On Windows the dialog says which of
+  these it needs and asks you to run `herdr machine add TARGET` in a terminal,
+  then add the device again.
+- **No connection sharing.** Windows OpenSSH has no `ControlMaster`, and with
+  any `ControlPath` set it fails every connection ("getsockname failed: Not a
+  socket"). The bridge passes `ControlPath=none`, so each connection
+  authenticates on its own: keep a key in the OpenSSH Authentication Agent
+  service (`ssh-agent`), since a master you authenticated interactively cannot
+  carry these connections.
+- **`ProxyJump` and `ProxyCommand`** come from your SSH config and run as
+  Windows OpenSSH runs them. A jump host that cannot be reached is reported as
+  an unreachable host.
+- **Forward port…** is not offered in a device's menu: each of those forwards
+  holds its listener in a private control master. A listening port found on
+  the host still opens, through its own `ssh -N -L` child.
+- **Uploads.** Files and images dropped or pasted on an SSH host's pane are
+  not uploaded yet.
+- **Steps that also run here.** Agent checkpoints, teleport, fan-out, process
+  lists, and pane moves also run this machine's `/bin/sh` and stay
+  unavailable from Windows.
+
+CPU and memory, plan usage, listening ports, and the agent skill's install run
+on the host's `/bin/sh` through `ssh`, as they do from macOS and Linux.
 
 ### WSL distributions
 
@@ -3739,33 +4019,249 @@ catalog (`%LOCALAPPDATA%\herdr\client`), never in the catalog itself, whose
 strict schema cannot name one. The device you last chose, a distribution
 included, is selected again at startup.
 
-What still runs a shell on the host is not wired into a distribution yet and
-says so: plan usage, CPU and memory, listening ports, agent checkpoints,
-teleport, file transfers, and port forwards. WSL already forwards a
-distribution's `localhost` ports to Windows.
+CPU and memory are sampled as for an SSH host running Linux: one `/bin/sh`
+per distribution, started with `wsl.exe --distribution NAME --exec /bin/sh -s`
+and kept open between samples, which reads `/proc`. The status bar and the
+distribution's sidebar row show them. A distribution shares the machine's
+CPUs, so its CPU figure is what its processes use, and its memory is what
+WSL has given that distribution.
 
-These features are unavailable on Windows and say so rather than failing quietly:
+Plan usage is read through its own `wsl.exe` shell in the same way, as on an
+SSH host: the distribution's own agent sign-ins, read with its `python3` or
+`jq` and sent with its `curl`, so they never leave it.
 
-- **Saved SSH hosts.** The bridge gives the `ssh` child a socket pair as its
-  standard streams, which requires `OwnedFd`. Connecting to an SSH endpoint
-  reports `SSH endpoints are not supported on this platform`.
-- **In-app updates.** `release::target()` has no Windows updater asset (the
-  release zip is for manual download only), so the updater
-  stays disabled and reports that no standalone updater exists for this platform.
-  Homebrew delegation is macOS-only regardless.
-- **Saved GitHub credentials.** Neither the Keychain nor the private `0600` file
-  exists here, so `GH_TOKEN` / `GITHUB_TOKEN` are the only sources of a token.
-- **The avatar disk cache.** It depends on `openat`, `flock`, and POSIX
-  ownership and mode checks, so avatars stay in memory for the process lifetime.
+Listening ports are scanned with the distribution's own `ss` (or `lsof`)
+through another `wsl.exe` shell. WSL forwards a distribution's `localhost`
+ports to Windows, so a port opens at `http://localhost:<port>` on this machine
+with no tunnel.
+
+Agent checkpoints run Git inside the distribution, one `wsl.exe --exec
+/bin/sh -c SCRIPT` per step under the same output and idle limits as on an SSH
+host, so its checkouts are snapshotted and restored as an SSH host's are.
+Stopping a step kills its `wsl.exe`, which ends the shell it started.
+
+Files dropped onto a distribution's pane, or copied in Explorer and pasted
+there, paste as the distribution's own paths for them, as its `wslpath -u`
+maps them: `C:\Users\me\a.txt` becomes `/mnt/c/Users/me/a.txt` (or wherever
+`wsl.conf` mounts drives), and a file from inside the distribution
+(`\\wsl.localhost\NAME\home\me\a.txt`) becomes `/home/me/a.txt`. Nothing is
+copied: a distribution already reads this machine's drives, so a file of any
+size is ready at once, an image is pasted as its path rather than through the
+image bridge, and nothing is left in a temporary directory. The paths travel
+on `wsl.exe`'s standard input, at most 256 per drop. Keys typed while they
+are mapped are held and sent after the paths, so Enter cannot run a command
+ahead of them, and one drop maps at a time. The paths are not pasted if the
+pane is covered by a popup or the window moves to another device meanwhile;
+paths that arrive while the terminal waits for its next frame wait with the
+held keys and are pasted once it arrives.
+A file the distribution
+cannot reach, such as another distribution's or one on a network share, is
+named in the error and nothing is pasted.
+
+Ports need no forwarding: a distribution's device menu offers none, and
+`herdr-gpui ports forward` refuses with that reason, since WSL already forwards
+its `localhost` ports to Windows. Teleport is not offered. It runs only on
+Linux and macOS clients, which cannot reach a distribution, and a Windows
+client cannot script its own checkouts, so the only move left would be between
+two distributions on the same machine.
+
+### Window chrome on Windows
+
+Every window keeps the title bar Windows draws, so its buttons, double-click,
+drag-to-snap, and the window menu are the system's own, and hovering the
+maximize button opens the Snap Layouts flyout. The title bar is light or dark
+with the window's theme rather than with the system's app mode, so a dark
+theme under light Windows no longer sits under a white bar. A translucent
+window's blur is DWM acrylic or Mica on Windows 11 (see
+**Settings > Theme > Window** under
+[Configuration](#configuration)), and `accent = "system"` takes the app's
+accent from Windows.
+
+### Screen readers on Windows
+
+GPUI reports the window to UI Automation through AccessKit, which is what
+Narrator and NVDA read. Checked against the UI Automation tree of a running
+window, the main window exposes:
+
+- the terminal as a document named **Terminal**, whose text pattern holds the
+  rows on screen and the selection (see `terminal/accessibility.rs`), so
+  Narrator's reading commands and selection tools work on it;
+- the in-window menu bar as a menu bar whose headings expand and collapse, and
+  an open menu as a menu: each item by its name and shortcut, a checked item
+  as a checked menu item, an unavailable one as unavailable, and the
+  highlighted one reported as focused as the arrows move;
+- the title bar's **Sidebar** (expanded or collapsed), **Back**, **Forward**
+  (unavailable without history), and **GitHub account** buttons;
+- the tab strip as a tab list named **Tabs**: each tab by its label, with the
+  current one selected, its **Close tab** button, **New tab**, **Split**, and
+  **Tab actions**;
+- the activity bar as a tab list of its sections, each named with its count,
+  and **Settings**;
+- the sidebar as a navigation group: its search field, the **Workspaces** (or
+  **Devices**) list and the **Agents** list, whose rows are list items named
+  by what they show (a workspace's label and status, an agent's name, state,
+  and place, a device's name and connection), selected when focused, and
+  expandable when they fold others, which Expand and Collapse do; **New
+  workspace**, **Menu**, the agents' sort, the device picker, and **Sessions**;
+- the status bar as a status bar: the connection message, the model, usage,
+  CPU and memory, and network readings by what they say, and its buttons
+  (**Keep the display awake** as a switch);
+- every popup as a menu (context menus) or a dialog named by its title, with
+  its menu rows, its text field, and the workspace dialogs' **Cancel** and
+  submit buttons.
+
+The other windows are named the same way: Settings as a navigation list of
+sections (a tab list, the open page a tab panel named for it), each setting a
+group named by its title with its description as help text, and its switches,
+choices, buttons, and fields by name and state; Logs as its search field,
+buttons, a list of entries, the level menu, and its status line; Orchestrator
+as its buttons, filters (switches), and its rows by identifier, title, and
+state.
+
+Each button can be invoked from the screen reader. With a Windows contrast
+theme on (Settings > Accessibility > Contrast themes), the app's own marks and
+labels use the **High contrast** level whatever `contrast` says; terminal
+colors and the theme itself are unchanged, since GPUI does not paint with the
+system's contrast colors.
+
+#### The keyboard in the chrome
+
+Tab belongs to the terminal, so the chrome is reached a region at a time, as
+in other Windows apps. **F6** (Focus Next Region) moves the keyboard from the
+terminal to the title bar, the sidebar (from its activity bar), and the status
+bar, then back to the terminal; **Shift+F6** (Focus Previous Region) goes the
+other way. Inside a region, Tab and Shift+Tab move between its controls and
+wrap, the arrows also move in the sidebar, Enter or Space uses the control, and
+Escape returns to the terminal. The focused control has an accent ring.
+**F10** opens the menu bar. Both region commands can be rebound in Keyboard
+Shortcuts (Cmd+F6 and Cmd+Shift+F6 on macOS). A region's controls are tab
+stops only while it holds the keyboard, so clicking a chrome button never pulls
+typing away from the terminal.
+
+`tests/accessibility_windows.rs` reads a running window's tree and checks
+these names and where F6 and Tab move focus:
+
+```bash
+HERDR_TEST_BINARY=C:/path/to/herdr.exe cargo test -p herdr-gpui --test accessibility_windows -- --ignored --nocapture
+```
+
+Still missing, and not faked with labels that do nothing:
+
+- inside the larger dialogs and pickers (Add Device, the command palette's
+  results, themes, checkpoints, fan-out, teleport, pull requests), most rows
+  and buttons other than the shared field have no role yet, so a screen reader
+  hears the dialog's name and its field but not every choice in it;
+- the Orchestrator's detail pane, conversation, and dispatch dialogs, and the
+  Settings controls built from arbitrary elements (font and color pickers)
+  are not named yet;
+- Settings, Logs, and Orchestrator have no region keys: there Tab follows
+  GPUI's own order only where a control registers a tab stop;
+- when the app starts in the background (from a script rather than the Start
+  menu), AccessKit can miss the first activation and report the window rather
+  than the terminal as focused until the window is activated again. This is
+  in GPUI's Windows adapter setup, not in this app.
+
+### Saved sign-ins and the avatar cache
+
+GitHub sign-ins are kept in Windows Credential Manager, which plays the part
+of the Keychain and the Secret Service. Each account is one generic credential,
+`dev.herdr.gpui.github/github.com` for the main account,
+`dev.herdr.gpui.github/github.com/host/<device-id>` for a device's own, and
+`dev.herdr.gpui.github/github.com/account/<id>` for an additional account, holding
+exactly what the other keyrings hold: the device-flow token pair with its
+expiry, or only the GitHub CLI marker, never the CLI's token. Entries are
+persisted for your Windows account on this computer only
+(`CRED_PERSIST_LOCAL_MACHINE`), so they survive restarts and sign-outs of
+Windows but never roam to other computers in a domain, and other Windows users
+cannot read them. They are listed under **Windows Credentials** in Control
+Panel's Credential Manager; signing out in the app removes them. All windows
+share one credential through the same in-process lock as elsewhere, so a
+single-use refresh token is rotated once. Boat, Coder, and Daytona sign-ins use
+the same store under their own service names. A secret larger than Credential
+Manager's 2,560-byte limit is refused with an error rather than truncated. There
+is no private-file store here, so `allow_plaintext_credentials` changes nothing,
+and `GH_TOKEN` / `GITHUB_TOKEN` still take precedence for the main account. The
+`Cred*` calls are the only `unsafe` code involved (`github/credential_manager.rs`):
+neither the standard library nor the workspace's dependencies wrap them, and the
+maintained wrapper crates would add a second `windows-sys` version.
+
+Profile and owner avatars are cached on disk in
+`%LOCALAPPDATA%\herdr\gpui\cache\avatars-v1`, with the same 128 slots, 1 MB
+entry limit, and 24-hour stale-while-refresh behavior as on Unix.
+`XDG_CACHE_HOME` is not honoured for it. A non-blocking `File::try_lock` on the
+directory's `lock` file keeps one writer at a time, and a contended cache is a
+miss rather than a wait. Entries are opened without following reparse points,
+and a symbolic link or junction, whether an entry or the directory itself, is
+refused. There is no ownership or mode check, unlike Unix: the directory is
+always inside your profile, whose inherited access list lets only you, SYSTEM,
+and Administrators create, replace, or link files there, and anyone else who
+could would already be able to replace the app itself.
+
+
+In-app updates download the release's signed per-user installer, check it
+against `windows-manifest.json` and its Authenticode publisher, and run it
+silently; Setup restarts the app (see
+[App Updates](../../docs/updating.md#windows-installers)). Only the copy in
+`%LOCALAPPDATA%\Programs\Herdr UI` updates itself. The app registers with Restart
+Manager, never after a crash or hang; the `herdr-gpui.exe --restart-manager`
+Windows starts hands off to the launcher (`src/restart_manager.rs`). A crash
+leaves a minidump and a report beside the log; see [crash reports](#crash-reports).
+
+#### Launch at login
+
+**Settings > General > Launch at login**, off by default, writes
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Herdr UI`, naming the
+`herdr-gpui-launcher.exe` beside the running app, so it opens without a console
+window when you sign in; turning it off removes the value. The registry is the
+setting, so nothing goes in the config file, and the switch shows what Windows
+will do: it is read when Settings opens and each time it comes to the front. A copy with no launcher beside it
+cannot turn it on and says so. Task Manager's **Startup apps** and **Settings >
+Apps > Startup** can switch the entry off without removing it (a mark under
+`Explorer\StartupApproved\Run`). The app never overrides that: the row then
+says where to turn it back on. The installer's uninstaller removes both values;
+an `install.ps1` copy has no uninstaller, so turn the setting off before
+deleting its folder. macOS and Linux have no launch-at-login setting yet
+(`src/launch_at_login.rs`).
+
+The app runs once per user. A plain second launch, such as the Start menu
+entry or the launcher with no link, sends `app focus` over the control pipe,
+so the running app's window comes forward and the new process exits. The
+launcher and the new process pass on the shell's foreground right, so the
+window comes forward instead of flashing in the taskbar. A launch with
+`--socket` or `--session` still starts a separate app. So does a plain launch
+when the running app cannot answer, for example one that hangs.
 
 Starting a local `herdr server` looks for `herdr.exe` and uses
 `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW` in place of `process_group(0)`, so
 the daemon survives the GUI and no console window appears.
 
+Console children (git, ssh, `wsl.exe`, a shell) must not open a window of
+their own either: every child is built with `herdr_client::new_command`, which
+sets `CREATE_NO_WINDOW` on Windows, and clippy's `disallowed_methods`
+(`clippy.toml`) rejects `Command::new` elsewhere outside tests and the build
+script. Started by the launcher, they would share its hidden console anyway;
+run as `herdr-gpui.exe` from Explorer or another app, they still open none.
+
 The build script embeds the Herdr icon as icon resource 1, which GPUI loads for
 its windows, and version information that Explorer and Task Manager show as
 **Herdr UI** with the release version, or `dev` for a local build. See
 [the icon README](../../assets/icons/README.md#windows).
+
+Both executables also carry one application manifest,
+[`windows.manifest`](windows.manifest): per-monitor DPI awareness, long paths
+(once Windows allows them), the UTF-8 code page for ANSI APIs, Windows 10 and
+11 as supported systems, and no elevation. It replaces GPUI's own manifest,
+which GPUI's platform crate always asks for and an executable cannot hold
+beside a second one, so the workspace patches GPUI's `embed-resource` build
+dependency with the no-op in `crates/embed-resource`.
+
+Each release also has a per-user Inno Setup installer,
+`Herdr-VERSION-TARGET-setup.exe` (`scripts/release/herdr-gpui.iss`), which
+installs the zip's files where `site/install.ps1` does, adds the directory to
+the user `PATH`, points the Start menu shortcut at the launcher with the app's
+AppUserModelID, and adds an uninstaller under **Settings > Apps**. See
+[`scripts/release/README.md`](../../scripts/release/README.md) for building,
+signing, and smoke-testing it.
 
 Cross type-check it from a Mac or Linux machine with `just lint-windows`, which
 targets `x86_64-pc-windows-gnu` because those hosts cannot supply the MSVC C
@@ -3774,6 +4270,42 @@ the icon resource. CI lints the MSVC target on a Windows runner. `just lint-linu
 the matching check for Linux, in the Ubuntu 24.04 container CI uses, because a
 `cfg` gate that is wrong only on Linux is invisible from both macOS and the
 Windows cross-check.
+
+### Windows shell
+
+- **Taskbar badge.** While agents are `Done` or `Blocked`, the taskbar button
+  carries a red overlay with their number, `9+` past nine: the count the macOS
+  Dock badge shows, from the same deduplicated source. It is drawn at the
+  system's small-icon size, set on every window (windows group into one
+  button), and cleared at zero. Screen readers hear "N agents need attention".
+- **Taskbar progress.** A window's button fills in while it copies dropped
+  files to an SSH host, teleports a worktree, moves a pane to another host, or
+  downloads and installs an app update. Copies and downloads show their real
+  fraction; steps without one show the moving bar. Checks the app runs on its
+  own, and dialogs waiting for you, show nothing.
+- **Jump list.** Right-click the taskbar button, or the Start menu entry, for
+  the Git checkouts of the workspaces you last focused on this computer, under
+  **Recent workspaces**, and a **Show DEVICE** task for each device. Each entry
+  is a `herdr-gpui://` link (below) opened through the launcher, so it reaches
+  the running app, or starts it. Windows shows recent workspaces only while **Settings > Personalization >
+  Start > Show recently opened items in Start, Jump Lists, and File Explorer**
+  is on; with it off, only the devices are listed. An entry you remove from the
+  list is forgotten. The recent checkouts are kept in `jump-list.json` in the
+  state directory.
+- **`herdr-gpui://` links.** The installer and `site/install.ps1` register the
+  scheme for the current user (`HKCU\Software\Classes\herdr-gpui`) and remove
+  it on uninstall.
+  `herdr-gpui://open?path=C:\src\repo` shows a local Git checkout or worktree:
+  the workspace already open there, or, after you agree in the window, a new
+  one (the repository's scripts are not trusted). `herdr-gpui://device?id=ID`
+  switches to a device by the ID `host list` prints. A link is untrusted input:
+  only those shapes are accepted, paths must be absolute drive paths (never
+  `\\server\share`, which would send your credentials to that server, nor
+  `..`), and a link never runs a command. Windows starts
+  `herdr-gpui-launcher.exe` with the link as its only argument, so no console
+  window opens; `herdr-gpui.exe` hands the link to the running app over the
+  control pipe, or starts the app and follows it once connected. See
+  [the command line](../../docs/cli.md#links).
 
 ## Build And Test
 

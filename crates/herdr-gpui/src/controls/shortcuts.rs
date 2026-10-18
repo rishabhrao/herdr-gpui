@@ -4,6 +4,10 @@ mod linux;
 mod macos;
 mod windows;
 
+/// Linux and Windows leave the platform key (Super, Win) to the desktop, so
+/// their shortcuts and text-field edit keys take Ctrl where macOS takes Cmd.
+pub(crate) const CTRL_SHORTCUTS: bool = cfg!(any(target_os = "linux", windows));
+
 impl CommandInfo {
     pub(crate) fn default_shortcuts(&self) -> &'static [&'static str] {
         if cfg!(target_os = "linux") {
@@ -33,3 +37,6 @@ pub(crate) fn platform_default(base: &str) -> &str {
         })
         .unwrap_or(base)
 }
+
+#[cfg(test)]
+mod tests;

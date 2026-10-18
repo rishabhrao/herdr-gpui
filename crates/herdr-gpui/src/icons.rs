@@ -91,20 +91,22 @@ macro_rules! status_icons {
     };
 }
 
-// Solid, then tiles' inner mark, then the rail's outline.
+// Solid, then tiles' inner mark, then the outline set.
 status_icons!("solid", "mark", "outline");
 
-/// The asset that draws `status` in a `status_icons` set.
+/// The asset that draws `status` in a `status_icons` set, or `None` for the
+/// sets whose marks are drawn rather than loaded.
 pub(crate) fn status_icon(
     icons: crate::config::StatusIcons,
     status: herdr_client::protocol::AgentStatus,
-) -> &'static str {
+) -> Option<&'static str> {
     use crate::config::StatusIcons;
     use herdr_client::protocol::AgentStatus;
     let set = match icons {
         StatusIcons::Solid => 0,
         StatusIcons::Tiles => 1,
-        StatusIcons::Rail => 2,
+        StatusIcons::Outline => 2,
+        _ => return None,
     };
     let status = match status {
         AgentStatus::Idle => 0,
@@ -113,7 +115,7 @@ pub(crate) fn status_icon(
         AgentStatus::Blocked => 3,
         AgentStatus::Unknown => 4,
     };
-    STATUS_ICONS[set * 5 + status].0
+    Some(STATUS_ICONS[set * 5 + status].0)
 }
 
 /// Shared working-tree marker, distinct from the daemon's activity dots.
@@ -199,6 +201,7 @@ embedded_icons! {
     // keep-sorted start
     "arrow-left.svg",
     "arrow-right.svg",
+    "beads.svg",
     "bell.svg",
     "chart.svg",
     "check.svg",
@@ -206,6 +209,7 @@ embedded_icons! {
     "chevron-right.svg",
     "chevron-up.svg",
     "close.svg",
+    "cloud/azure.svg",
     "cloud/coder.svg",
     "cloud/daytona.svg",
     "cloud/railway.svg",
@@ -224,6 +228,7 @@ embedded_icons! {
     "git-branch.svg",
     "github.svg",
     "globe.svg",
+    "issue.svg",
     "keyboard.svg",
     "lock.svg",
     "more.svg",
@@ -236,6 +241,7 @@ embedded_icons! {
     "play.svg",
     "plug.svg",
     "plus.svg",
+    "pull-request.svg",
     "pulse.svg",
     "refresh.svg",
     "search.svg",
@@ -243,6 +249,9 @@ embedded_icons! {
     "settings.svg",
     "split.svg",
     "status-bar.svg",
+    "status-orbit.svg",
+    "status-orca-blocked.svg",
+    "status-orca-working.svg",
     "teleport-back.svg",
     "teleport.svg",
     "terminal.svg",

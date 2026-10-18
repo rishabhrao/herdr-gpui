@@ -256,7 +256,6 @@ impl Tunnels {
     /// The local port of a live tunnel to `key`, leaving a dead one for
     /// [`Tunnels::local`] or [`Tunnels::retain`] to drop. Only the control
     /// server, which is Unix-only, reads it.
-    #[cfg(unix)]
     pub(crate) fn live(&self, key: &Key) -> Option<u16> {
         self.open
             .get(key)

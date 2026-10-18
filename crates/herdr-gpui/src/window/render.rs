@@ -81,14 +81,21 @@ impl Render for HerdrWindow {
         // Registers the window for surface-only redraws; see `redraw_terminal`.
         self.surface_signal.read(cx);
         let sidebar = self
-            .sidebar_mode()
-            .width(self.sidebar_width, f32::from(window.viewport_size().width))
+            .sidebar_column_width(f32::from(window.viewport_size().width))
             .map(|width| {
                 (
                     crate::sidebar::cached_view(&self.sidebar_view, width),
                     width,
                 )
             });
+        // The tab strip reserves its moving marks afresh; a hidden sidebar
+        // leaves none behind.
+        if let Some(marks) = crate::mark_layer::Marks::of(window, cx) {
+            marks.begin_frame(cx.entity_id());
+            if sidebar.is_none() {
+                marks.forget(self.sidebar_view.entity_id());
+            }
+        }
         // Paints the frame on screen, which during a focus change is the one
         // presented before it: the terminal area never blanks between two
         // projections. What the client knows to be current stays in `live`.
@@ -276,6 +283,7 @@ impl Render for HerdrWindow {
             // the selection among them. The rows are built while GPUI
             // prepaints, and only while an assistive client is listening.
             .role(Role::Terminal)
+            .aria_label("Terminal")
             .when(
                 window.is_a11y_active() && self.live.surface_ready(),
                 |terminal| {
@@ -636,9 +644,13 @@ impl Render for HerdrWindow {
             .then(|| self.active_group())
             .flatten();
         let mut terminal = Some(terminal);
-        let merged = slots
-            .first()
-            .is_some_and(|first| self.tabs_in_titlebar(first.id, cx));
+        // An activity bar section takes the body; its title bar is the
+        // window's own, with no group's tab strip in it.
+        let section = self.render_activity_section(cx);
+        let merged = section.is_none()
+            && slots
+                .first()
+                .is_some_and(|first| self.tabs_in_titlebar(first.id, cx));
         let count = slots.len();
         let mut groups = Vec::with_capacity(count);
         for (slot, shown) in slots.into_iter().zip(shown) {
@@ -658,14 +670,14 @@ impl Render for HerdrWindow {
                 (Shown::Terminal, _) if self.shows_parked_terminal(slot.id, cx) => {
                     self.render_parked_terminal(slot, parked_font.clone(), cell_height, cx)
                 }
-                // Review and orchestrator tabs are drawn by the app, never pages.
+                // Orchestrator tabs are dropped on load and never opened.
                 (Shown::Page(_), Some(tab))
                     if matches!(
                         tab.location,
                         Some(crate::browser::Location::Orchestrator { .. })
                     ) =>
                 {
-                    self.render_orchestrator_tab(slot, &tab)
+                    div().into_any_element()
                 }
                 (Shown::Page(_), Some(tab))
                     if tab
@@ -701,7 +713,7 @@ impl Render for HerdrWindow {
             groups.push(self.render_group(slot, body, ends, reach, window, cx));
         }
         let content = self.render_groups(groups, cx);
-        let content = self.zen_column(content);
+        let content = section.unwrap_or_else(|| self.zen_column(content));
         // Not `||`: asking forgets group motion that has finished.
         if self.groups_moving()
             | self.tabs_growing()
@@ -720,6 +732,7 @@ impl Render for HerdrWindow {
         let zen = self.zen_layout();
         let root = div()
             .capture_key_down(cx.listener(Self::application_menu_shortcut))
+            .capture_key_down(cx.listener(Self::chrome_focus_key))
             .on_modifiers_changed(cx.listener(Self::double_shift_modifiers))
             .capture_any_mouse_down(cx.listener(|this, _, _, _| this.shift_taps.cancel()))
             .child({
@@ -826,7 +839,7 @@ impl Render for HerdrWindow {
             .text_color(rgb(self.theme.foreground))
             .text_font(&self.config.ui)
             .text_size(px(self.config.ui.size))
-            .when(cfg!(target_os = "linux") && !zen, |root| {
+            .when(crate::menus::IN_WINDOW && !zen, |root| {
                 root.child(self.render_application_bar(window, cx))
             })
             .when(!merged && !zen, |root| {
@@ -834,11 +847,6 @@ impl Render for HerdrWindow {
             })
             .when(zen, |root| {
                 root.children(crate::titlebar::zen_inset(fill.ground(), window))
-            })
-            // Under the traffic lights a banner would hide them, so with no
-            // header it moves to the window's foot.
-            .when(!merged && !zen, |root| {
-                root.children(self.render_worktree_banner())
             })
             .child(
                 div()
@@ -874,9 +882,12 @@ impl Render for HerdrWindow {
                     )
                     .children(self.render_drawer(cx)),
             )
-            .when(merged && !zen, |root| {
-                root.children(self.render_worktree_banner())
-            })
+            // After the body, whose rows reserve the marks it draws, and under
+            // everything that covers the body.
+            .child(AnyView::from(self.mark_layer.clone()))
+            // At the window's foot in every layout: under the traffic lights
+            // it would hide them, and one place is easier to find.
+            .when(!zen, |root| root.children(self.render_worktree_banner()))
             .children(self.render_tab_ghost(cx))
             .children(self.render_toasts(window, cx))
             .children(self.render_file_transfer(window, cx))

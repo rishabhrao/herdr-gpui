@@ -19,8 +19,10 @@ pub(in crate::menu) const HEIGHT: f32 = 620.;
 /// One entry of the rail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::menu) enum Source {
-    /// SSH hosts, or WSL distributions on Windows.
+    /// SSH hosts.
     Host,
+    /// WSL distributions on this machine, listed only on Windows.
+    Wsl,
     #[cfg(feature = "cloud")]
     Cloud(crate::cloud::CloudProvider),
 }
@@ -29,7 +31,8 @@ impl Source {
     /// The rail entry a page belongs to, if it is part of Add Device.
     pub(in crate::menu) fn of(page: Page) -> Option<Self> {
         match page {
-            Page::AddDevice | Page::AddWsl => Some(Self::Host),
+            Page::AddDevice => Some(Self::Host),
+            Page::AddWsl => Some(Self::Wsl),
             #[cfg(feature = "coder")]
             Page::AddCoder => Some(Self::Cloud(crate::cloud::CloudProvider::Coder)),
             #[cfg(feature = "cloud")]
@@ -40,8 +43,8 @@ impl Source {
 
     fn name(self) -> &'static str {
         match self {
-            Self::Host if cfg!(windows) => "WSL",
             Self::Host => "SSH host",
+            Self::Wsl => "WSL",
             #[cfg(feature = "cloud")]
             Self::Cloud(provider) => crate::cloud::name(provider),
         }
@@ -50,6 +53,7 @@ impl Source {
     fn icon(self) -> &'static str {
         match self {
             Self::Host => "icons/terminal.svg",
+            Self::Wsl => "icons/computer.svg",
             #[cfg(feature = "cloud")]
             Self::Cloud(provider) => crate::cloud::icon(provider),
         }
@@ -58,6 +62,9 @@ impl Source {
     fn id(self) -> &'static str {
         match self {
             Self::Host => "add-device-source-host",
+            Self::Wsl => "add-device-source-wsl",
+            #[cfg(feature = "azure")]
+            Self::Cloud(crate::cloud::CloudProvider::Azure) => "add-device-source-azure",
             #[cfg(feature = "boat")]
             Self::Cloud(crate::cloud::CloudProvider::Boat) => "add-device-source-boat",
             #[cfg(feature = "coder")]
@@ -67,6 +74,14 @@ impl Source {
             #[cfg(feature = "railway")]
             Self::Cloud(crate::cloud::CloudProvider::Railway) => "add-device-source-railway",
         }
+    }
+
+    /// Whether this source starts the rail's cloud section.
+    fn is_cloud(self) -> bool {
+        #[cfg(feature = "cloud")]
+        return matches!(self, Self::Cloud(_));
+        #[cfg(not(feature = "cloud"))]
+        false
     }
 }
 
@@ -86,8 +101,8 @@ enum State {
 /// The Devices picker's line under "Add Device…".
 pub(super) fn add_device_offer(cloud: bool) -> &'static str {
     match (cfg!(windows), cloud) {
-        (true, true) => "A WSL distribution or a cloud machine",
-        (true, false) => "Attach to Herdr in a WSL distribution",
+        (true, true) => "An SSH host, a WSL distribution, or a cloud machine",
+        (true, false) => "An SSH host or a WSL distribution",
         (false, true) => "An SSH host or a cloud machine",
         (false, false) => "Set up a remote host over SSH",
     }
@@ -103,19 +118,22 @@ impl HerdrWindow {
         false
     }
 
+    /// This platform's own hosts first, then each offered cloud provider.
     fn rail_sources(&self) -> Vec<Source> {
+        let mut sources = vec![Source::Host];
+        if cfg!(windows) {
+            sources.push(Source::Wsl);
+        }
         #[cfg(feature = "cloud")]
         if self.cloud_offered() {
-            return std::iter::once(Source::Host)
-                .chain(
-                    crate::cloud::CloudProvider::ALL
-                        .iter()
-                        .copied()
-                        .map(Source::Cloud),
-                )
-                .collect();
+            sources.extend(
+                crate::cloud::CloudProvider::ALL
+                    .iter()
+                    .copied()
+                    .map(Source::Cloud),
+            );
         }
-        vec![Source::Host]
+        sources
     }
 
     fn source_state(&self, source: Source, cx: &App) -> State {
@@ -131,6 +149,7 @@ impl HerdrWindow {
                 })
                 .filter(|count| *count > 0)
                 .map_or(State::None, State::Nearby),
+            Source::Wsl => State::None,
             #[cfg(feature = "cloud")]
             Source::Cloud(provider) if self.cloud_providers().contains(&provider) => State::Ready,
             #[cfg(feature = "cloud")]
@@ -150,7 +169,7 @@ impl HerdrWindow {
         }
         self.menu.error = None;
         match source {
-            Source::Host if cfg!(windows) => {
+            Source::Wsl => {
                 if self.menu.wsl_setup.is_some() {
                     self.menu.page = Some(Page::AddWsl);
                     window.focus(&self.menu.focus.clone(), cx);
@@ -319,7 +338,7 @@ impl HerdrWindow {
             .border_r_1()
             .border_color(rgb(theme.active));
         for (index, &source) in sources.iter().enumerate() {
-            if index == 1 {
+            if source.is_cloud() && index > 0 && !sources[index - 1].is_cloud() {
                 rail = if compact {
                     rail.child(div().my(px(6.)).h(px(1.)).bg(rgb(theme.active)))
                 } else {

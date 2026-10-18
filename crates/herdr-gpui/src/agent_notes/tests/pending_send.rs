@@ -7,29 +7,6 @@ fn key(pane: &str) -> FeedbackKey {
     }
 }
 
-#[cfg(windows)]
-#[gpui::test]
-fn unavailable_feedback_copies_notes_and_releases_the_send(cx: &mut gpui::TestAppContext) {
-    let mut sending = PendingSend::default();
-    cx.update(|cx| {
-        let (_, delivered) = keep_or_copy(
-            crate::browser::Batch {
-                target: key("p1"),
-                text: "Recoverable notes".into(),
-            },
-            sending.start(),
-            "Could not reach the agent",
-            cx,
-        );
-        assert_eq!(delivered, Delivered::Copy("Recoverable notes".into()));
-        assert!(!cx.default_global::<Feedback>().has(&key("p1")));
-        assert!(
-            sending.start().is_some(),
-            "the tab can send again without a control listener"
-        );
-    });
-}
-
 #[test]
 fn feedback_holds_a_pending_send_until_taken_or_evicted() {
     let mut sending = PendingSend::default();

@@ -209,6 +209,7 @@ fn a_crowded_branch_keeps_only_its_own_heads_pull_request() {
     let node = |number: u64, owner: &str| {
         serde_json::json!({
             "number": number,
+            "state": "OPEN",
             "headRepositoryOwner": {"login": owner},
             "headRepository": {"name": "project"},
         })

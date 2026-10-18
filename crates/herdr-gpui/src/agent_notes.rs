@@ -204,28 +204,18 @@ fn enter() -> ClientPaneInputEvent {
     }
 }
 
-/// Only Unix has a control listener that can collect feedback. Elsewhere,
-/// return the text for the caller to copy together with other fallback batches.
-fn keep_or_copy(
+/// Keeps notes no agent took for the agent to collect with `browser feedback`.
+fn keep_for_feedback(
     batch: crate::browser::Batch,
     pending: Option<Arc<()>>,
     reason: &str,
     cx: &mut App,
 ) -> (Flash, Delivered) {
-    if cfg!(unix) {
-        cx.default_global::<Feedback>().keep(batch, pending);
-        (
-            Flash::warning(format!("{reason}; notes kept for `browser feedback`")),
-            Delivered::Kept,
-        )
-    } else {
-        (
-            Flash::warning(format!(
-                "{reason}; notes copied (browser feedback is unavailable)"
-            )),
-            Delivered::Copy(batch.text),
-        )
-    }
+    cx.default_global::<Feedback>().keep(batch, pending);
+    (
+        Flash::warning(format!("{reason}; notes kept for `browser feedback`")),
+        Delivered::Kept,
+    )
 }
 
 impl HerdrWindow {
@@ -249,10 +239,9 @@ impl HerdrWindow {
             );
             return Delivered::Copy(text);
         };
-        let waiting = cfg!(unix)
-            && cx
-                .try_global::<Feedback>()
-                .is_some_and(|feedback| feedback.is_waiting(&target));
+        let waiting = cx
+            .try_global::<Feedback>()
+            .is_some_and(|feedback| feedback.is_waiting(&target));
         let here = crate::browser::scope(&self.endpoints[self.selected_endpoint]) == target.scope;
         let snapshot = self.live.snapshot.clone();
         let shown = snapshot.as_deref().filter(|snapshot| {
@@ -297,7 +286,7 @@ impl HerdrWindow {
             (flash, Delivered::Agent)
         } else if shown.is_some() {
             // A shell, not an agent: Enter there would run the notes.
-            keep_or_copy(
+            keep_for_feedback(
                 crate::browser::Batch { target, text },
                 pending,
                 "No agent runs in that pane",
@@ -306,7 +295,7 @@ impl HerdrWindow {
         } else {
             // Kept notes are keyed by their daemon, so they wait for the
             // agent there even when this window shows another one.
-            keep_or_copy(
+            keep_for_feedback(
                 crate::browser::Batch { target, text },
                 pending,
                 "The agent's pane is not here",
@@ -351,7 +340,6 @@ impl HerdrWindow {
     /// Delivers notes a control request sent, if this window shows the
     /// caller's pane on its selected endpoint, the only one it types into.
     /// `None` leaves them to another window, or to the request to keep.
-    #[cfg(unix)]
     pub(crate) fn deliver_requested_notes(
         &mut self,
         target: &crate::control::Target<'_>,
@@ -407,10 +395,9 @@ impl HerdrWindow {
                 stale = true;
                 continue;
             }
-            let waiting = cfg!(unix)
-                && cx
-                    .try_global::<Feedback>()
-                    .is_some_and(|feedback| feedback.is_waiting(&delivery.target));
+            let waiting = cx
+                .try_global::<Feedback>()
+                .is_some_and(|feedback| feedback.is_waiting(&delivery.target));
             let snapshot = self.live.snapshot.clone();
             let present = snapshot.as_deref().filter(|snapshot| {
                 snapshot.boot_id == delivery.origin.boot_id
@@ -440,7 +427,7 @@ impl HerdrWindow {
                 if waiting && present.is_some() {
                     self.request_reveal(delivery.origin.clone(), &delivery.target.pane_id);
                 }
-                let (flash, delivered) = keep_or_copy(
+                let (flash, delivered) = keep_for_feedback(
                     crate::browser::Batch {
                         target: delivery.target,
                         text: delivery.text,
@@ -492,7 +479,7 @@ impl HerdrWindow {
             });
         if let Err(error) = pasted {
             tracing::warn!(%error, "Could not paste notes into the agent's pane");
-            let (flash, delivered) = keep_or_copy(
+            let (flash, delivered) = keep_for_feedback(
                 crate::browser::Batch {
                     target: delivery.target,
                     text: delivery.text,

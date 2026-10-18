@@ -125,9 +125,7 @@ pub(super) fn deliver(
         Err(error) => error,
     };
     let rejected = match &unreached {
-        crate::Error::ControlUnavailable { .. }
-        | crate::Error::ControlUnsupported
-        | crate::Error::MissingStateRoot => true,
+        crate::Error::ControlUnavailable { .. } | crate::Error::MissingStateRoot => true,
         crate::Error::ControlRejected { code, .. } => *code != crate::control::ErrorCode::Timeout,
         _ => false,
     };
@@ -232,7 +230,7 @@ mod tests {
     }
 
     fn unreachable(_: String) -> crate::Result<NotesTo> {
-        Err(crate::Error::ControlUnsupported)
+        Err(crate::Error::MissingStateRoot)
     }
 
     #[test]
@@ -271,7 +269,7 @@ mod tests {
             panic!("expected the file, got {sent:?}");
         };
         assert_eq!(written, &path);
-        assert!(matches!(unreached, crate::Error::ControlUnsupported));
+        assert!(matches!(unreached, crate::Error::MissingStateRoot));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "Picked: B\n");
         assert!(sent.status().starts_with("Saved to "), "{}", sent.status());
         let printed = deliver("x".into(), None, unreachable).unwrap();

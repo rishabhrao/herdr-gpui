@@ -70,7 +70,7 @@ impl HerdrWindow {
             tracing::warn!("a dispatched worktree's host was never shown for its setup");
             self.show_flash(Flash::warning(GAVE_UP), cx);
         }
-        if self.worktree_script.is_some() || !self.live.status.is_connected() {
+        if self.script_slot_busy() || !self.live.status.is_connected() {
             return;
         }
         let shown = &self.endpoints[self.selected_endpoint].id;

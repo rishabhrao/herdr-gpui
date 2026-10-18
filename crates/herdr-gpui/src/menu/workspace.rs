@@ -507,7 +507,10 @@ impl HerdrWindow {
             items.push((Dialog(WorkspaceAction::Note), "Note..."));
         }
         if target.worktree.is_some() && self.orchestrator_host() {
-            items.push((WorkspaceMenuAction::Orchestrator, "Orchestrator"));
+            items.push((
+                WorkspaceMenuAction::Orchestrator,
+                "Issues and pull requests",
+            ));
         }
         if target.can_create() {
             items.push((Dialog(WorkspaceAction::OpenWorktree), "Open worktree..."));

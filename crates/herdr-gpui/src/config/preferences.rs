@@ -4,6 +4,7 @@ use herdr_client::protocol::ToastHerdrPosition;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Preference {
+    AgentsPlacement(AgentsPlacement),
     ConfirmCloseTab(bool),
     ConfirmClosePane(bool),
     ConfirmCloseWorkspace(bool),
@@ -12,10 +13,13 @@ pub(crate) enum Preference {
     ShowNetworkQuality(bool),
     AgentCheckpoints(bool),
     ShowListeningPorts(bool),
+    ShowAgentsHeader(bool),
     ShowSidebarSearch(bool),
     ShowRepositoryIcons(bool),
-    /// `status_icons`; `None` removes it, following Herdr's indicator style.
-    StatusIcons(Option<StatusIcons>),
+    /// `status_icons`: the set agent status is drawn with.
+    StatusIcons(StatusIcons),
+    /// `edge_rail`: the bar on busy and finished rows.
+    EdgeRail(bool),
     ShowDeviceIcons(bool),
     SmoothScroll(bool),
     FocusFollowsMouse(bool),
@@ -88,6 +92,9 @@ impl Config {
             };
             let mut document = text.parse::<toml_edit::DocumentMut>()?;
             let (table, key, value) = match edit {
+                Preference::AgentsPlacement(placement) => {
+                    (None, "agents_placement", Some(placement.as_str().into()))
+                }
                 Preference::ConfirmCloseTab(value) => {
                     (None, "confirm_close_tab", Some(value.into()))
                 }
@@ -110,6 +117,9 @@ impl Config {
                 Preference::ShowListeningPorts(value) => {
                     (None, "show_listening_ports", Some(value.into()))
                 }
+                Preference::ShowAgentsHeader(value) => {
+                    (None, "show_agents_header", Some(value.into()))
+                }
                 Preference::ShowSidebarSearch(value) => {
                     (None, "show_sidebar_search", Some(value.into()))
                 }
@@ -120,11 +130,10 @@ impl Config {
                     (None, "show_device_icons", Some(value.into()))
                 }
                 Preference::SmoothScroll(value) => (None, "smooth_scroll", Some(value.into())),
-                Preference::StatusIcons(value) => (
-                    None,
-                    "status_icons",
-                    value.map(|icons| icons.as_str().into()),
-                ),
+                Preference::StatusIcons(value) => {
+                    (None, "status_icons", Some(value.as_str().into()))
+                }
+                Preference::EdgeRail(value) => (None, "edge_rail", Some(value.into())),
                 Preference::FocusFollowsMouse(value) => {
                     (None, "focus_follows_mouse", Some(value.into()))
                 }

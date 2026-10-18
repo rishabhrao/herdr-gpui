@@ -219,15 +219,21 @@ impl HerdrWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // The toggle leads the bar so it stays put whether or not the sidebar
-        // below it is showing, and can always bring the sidebar back. Back
-        // and Forward follow it, as in Finder and Files.
+        // Without the activity bar, the toggle leads the bar so it stays put
+        // whether or not the sidebar below it is showing, and can always
+        // bring the sidebar back. The bar keeps it in the left column instead,
+        // which never leaves the screen. Back and Forward follow, as in
+        // Finder and Files.
+        let toggle = !self.activity_bar_leads();
         let leading = div()
             .flex()
             .flex_none()
             .items_center()
             .h_full()
-            .child(self.sidebar_toggle(cx))
+            .when(toggle, |leading| leading.child(self.sidebar_toggle(cx)))
+            // No toggle precedes Back here, so its inset is not there to
+            // complete the room before it.
+            .when(!toggle, |leading| leading.pl(px(SIDEBAR_TOGGLE_INSET)))
             .when(
                 navigation::shown()
                     && f32::from(window.viewport_size().width) >= NAVIGATION_MIN_WIDTH,
@@ -252,10 +258,14 @@ impl HerdrWindow {
         .child(self.titlebar_end(window, cx))
     }
 
-    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn sidebar_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .id("toggle-sidebar")
             .debug_selector(|| "toggle-sidebar".into())
+            .role(Role::Button)
+            .aria_label("Sidebar")
+            .aria_expanded(self.sidebar_visible)
+            .map(|control| self.chrome_stop(crate::window::chrome_focus::Region::TitleBar, control))
             .flex_none()
             .self_center()
             .size(px(SIDEBAR_TOGGLE_SIZE))
@@ -298,6 +308,14 @@ impl HerdrWindow {
                     .child(
                         div()
                             .id("titlebar-avatar")
+                            .role(Role::Button)
+                            .aria_label("GitHub account")
+                            .map(|control| {
+                                self.chrome_stop(
+                                    crate::window::chrome_focus::Region::TitleBar,
+                                    control,
+                                )
+                            })
                             .group("titlebar-account")
                             .debug_selector(|| "titlebar-avatar".into())
                             .flex()
@@ -349,7 +367,8 @@ impl HerdrWindow {
                             ),
                     ),
             )
-            .when(!cfg!(target_os = "linux"), |end| {
+            // The in-window menu bar carries the window controls instead.
+            .when(!crate::menus::IN_WINDOW, |end| {
                 end.children(controls(window, &self.theme, |window, _| {
                     window.remove_window();
                 }))
@@ -611,14 +630,10 @@ mod tests {
                     size(px(28.), px(28.))
                 )
             );
-            let banner_height = if env!("HERDR_BUILD_WORKTREE") == "1" {
-                22.
-            } else {
-                0.
-            };
+            // A worktree build's banner sits at the window's foot, not here.
             assert_eq!(
                 cx.debug_bounds("window-body").unwrap().top(),
-                menu_bottom + px(34. + banner_height)
+                menu_bottom + px(34.)
             );
         }
         let bounds = cx.debug_bounds("titlebar-avatar").unwrap();
@@ -735,12 +750,8 @@ mod native_chrome_tests {
                     )
                 );
                 let body = cx.debug_bounds("window-body").unwrap();
-                let banner_height = if env!("HERDR_BUILD_WORKTREE") == "1" {
-                    22.
-                } else {
-                    0.
-                };
-                assert_eq!(body.top(), px(34. + banner_height));
+                // A worktree build's banner sits at the window's foot.
+                assert_eq!(body.top(), px(34.));
                 assert_eq!(body.size.width, px(width));
                 assert!(body.bottom() <= px(height));
             }

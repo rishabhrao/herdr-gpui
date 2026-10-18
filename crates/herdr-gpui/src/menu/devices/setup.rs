@@ -368,7 +368,7 @@ fn setup_command(
     request: &Request,
     install_key: bool,
 ) -> Command {
-    let mut command = Command::new(app);
+    let mut command = herdr_client::new_command(app);
     command.arg(crate::setup_relay::SESSION);
     if install_key {
         command.args(["/bin/sh", "-c", INSTALL_KEY_THEN, "sh", request.target()]);
@@ -528,7 +528,7 @@ fn run_bounded_untraced(
     timeout: Duration,
     limit: u64,
 ) -> Result<(ExitStatus, Vec<u8>, Vec<u8>)> {
-    let mut command = Command::new(executable);
+    let mut command = herdr_client::new_command(executable);
     cli_environment(&mut command);
     let mut child = command
         .args(args)
@@ -638,10 +638,12 @@ fn relay_line(app: &std::path::Path, socket: &std::path::Path) -> Result<String>
     ))
 }
 
+/// Windows has no relay for a terminal setup yet; the dialog asks the user to
+/// run `herdr machine add` in a terminal instead and never calls this.
 #[cfg(windows)]
 pub(super) fn terminal_setup(_: &Request, _: bool) -> Result<TerminalSetup> {
     Err(Error::DeviceSetupInput(
-        "Saved SSH devices are unavailable on Windows.",
+        "Setting up a device in a terminal is unavailable on Windows.",
     ))
 }
 

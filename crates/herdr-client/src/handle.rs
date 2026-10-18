@@ -4,8 +4,9 @@
 
 use crate::{
     Error, Result, SendError,
-    clipboard::{ClipboardImageUpload, ImageLease, ImageSlot},
+    clipboard::{ClipboardImageUpload, ImageLease, ImageSlot, WakeOnDrop},
     event::ClientEvent,
+    frame::ImageWriter,
     host_theme::HostTheme,
     method::Method,
     options::{ConnectOptions, validate_options},
@@ -41,14 +42,34 @@ pub(crate) struct HandleInner {
 impl Drop for HandleInner {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        // An upload may outlive the handle and keep the wake channel open, so
+        // closing it is not enough to end the worker's wait.
+        self.commands.wake();
     }
 }
 pub(crate) struct Command {
     pub(crate) boot_id: String,
     pub(crate) bytes: Vec<u8>,
+    /// Pane named by the original semantic input message; popups never interleave.
+    pub(crate) input_pane: Option<String>,
     /// Set when this command is an API request awaiting a correlated response.
     pub(crate) request: Option<PendingRequest>,
     pub(crate) image: Option<ImageSlot>,
+    /// Progress of input written beside a partial inbound frame. Once attempted
+    /// it is only written in bounded steps; once on the wire it finishes first.
+    pub(crate) written: ImageWriter,
+}
+
+impl Command {
+    /// Whether some of this command's frame is already on the wire.
+    pub(crate) fn started(&self) -> bool {
+        self.written.offset > 0 || self.image.as_ref().is_some_and(|i| i.writer.offset > 0)
+    }
+
+    /// Input whose bounded write began, even if the socket took nothing yet.
+    pub(crate) fn input_attempted(&self) -> bool {
+        self.image.is_none() && self.written.started.is_some()
+    }
 }
 
 /// A queued API request, waiting on the single in-flight lease.
@@ -92,17 +113,13 @@ impl ClientHandle {
             return Err(Error::MissingBootId);
         }
         validate_clipboard_image_target(&target)?;
-        // The Windows pipe wrapper cannot bound writes. Do not expose an upload
-        // that could indefinitely prevent cancellation and inbound processing.
-        if cfg!(windows) {
-            return Err(Error::ClipboardImageUnsupported);
-        }
         let lease = Arc::new(ImageLease {
             busy: self.inner.image_busy.clone(),
             claimed: AtomicBool::new(false),
             cancelled: Arc::new(AtomicBool::new(false)),
             finished: Arc::new(AtomicBool::new(false)),
             reserved_at: std::time::Instant::now(),
+            waker: self.inner.commands.waker(),
         });
         if claim_image {
             lease.claim_image()?;
@@ -111,7 +128,9 @@ impl ClientHandle {
         self.queue(Command {
             boot_id: boot_id.into(),
             bytes: Vec::new(),
+            input_pane: None,
             request: None,
+            written: ImageWriter::default(),
             image: Some(ImageSlot {
                 receiver,
                 lease: lease.clone(),
@@ -121,6 +140,7 @@ impl ClientHandle {
         Ok(ClipboardImageUpload {
             target,
             sender,
+            _wake: WakeOnDrop(lease.waker.clone()),
             lease,
             stop: self.inner.stop.clone(),
         })
@@ -156,11 +176,17 @@ impl ClientHandle {
             return Err(Error::MissingBootId);
         }
         let bytes = encode_message(&message, MAX_FRAME_SIZE)?;
+        let input_pane = match message {
+            ClientMessage::ClientShellPaneInput { pane_id, .. } => Some(pane_id),
+            _ => None,
+        };
         self.queue(Command {
             boot_id: boot_id.into(),
             bytes,
+            input_pane,
             request,
             image: None,
+            written: ImageWriter::default(),
         })
     }
 

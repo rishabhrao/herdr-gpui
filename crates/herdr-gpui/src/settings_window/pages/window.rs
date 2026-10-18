@@ -35,12 +35,12 @@ impl SettingsWindow {
             .flex()
             .flex_col()
             .child(
-                ui::section(theme, "Window", Some(ui::Source::Local))
+                ui::section(theme, "Window", Some(ui::Source::HerdrUi))
                     .debug_selector(|| "settings-window-section".into()),
             )
             .child(self.render_backdrop_controls(cx))
             .child(
-                ui::section(theme, "Terminal padding", Some(ui::Source::Local))
+                ui::section(theme, "Terminal padding", Some(ui::Source::HerdrUi))
                     .debug_selector(|| "settings-terminal-padding".into()),
             )
             .children(PADDING_SIDES.map(|(axis, side)| self.padding_row(axis, side, cx)))

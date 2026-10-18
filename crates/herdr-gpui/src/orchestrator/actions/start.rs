@@ -33,7 +33,7 @@ pub(super) fn agent(
             };
             // A stalled host must not hold the dispatch past the retry window.
             let output = host
-                .capture_within(&Host::herdr_line(&["pane", "get", pane]), budget, cancelled)
+                .herdr_exec(&["pane", "get", pane], budget, cancelled)
                 .map_err(script(STARTING))?;
             let current: Envelope<PaneInfoResult> =
                 serde_json::from_slice(&output).map_err(|source| Error::OutputJson {

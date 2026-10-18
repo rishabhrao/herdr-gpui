@@ -12,6 +12,8 @@ mod annotate;
 // Linux builds show no pages, so there is nothing to annotate there.
 #[cfg(any(target_os = "macos", windows))]
 mod annotate_view;
+#[cfg(windows)]
+mod building;
 mod closed;
 mod code;
 mod code_group;
@@ -64,7 +66,6 @@ mod view_tests;
 pub(crate) use annotate_view::Annotations;
 pub(crate) use closed::ClosedHerdrTab;
 pub(crate) use feedback::{Batch, Feedback, FeedbackKey};
-#[cfg(unix)]
 pub(crate) use feedback::{TAKE_BUDGET, json_size};
 pub(crate) use group_motion::Fold;
 #[cfg(test)]
@@ -76,6 +77,8 @@ pub(crate) use location::PostedFrom;
 pub(crate) use location::{LocalFile, Location, OrchestratorRepo, ReviewCheckout};
 #[cfg(any(target_os = "macos", windows))]
 pub(crate) use native::Pages;
+#[cfg(target_os = "macos")]
+pub(crate) use page_keys::bind as bind_page_keys;
 /// A page screenshot as PNG, for `browser screenshot`.
 #[cfg(target_os = "macos")]
 pub(crate) use snapshot::png as page_png;

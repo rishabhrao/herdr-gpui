@@ -2,6 +2,11 @@
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(windows)]
+use super::windows::Directory;
+#[cfg(windows)]
+mod windows;
+
 pub(crate) struct Fixture(pub PathBuf);
 impl Fixture {
     pub(crate) fn new() -> Self {
@@ -69,6 +74,7 @@ fn persistent_roundtrip_ttl_and_collision_isolation() {
     assert!(read(&fixture.0, &collision, now).is_some());
 }
 
+#[cfg(unix)]
 #[test]
 fn corrupt_oversized_and_unsafe_entries_do_not_escape_cache() {
     use std::os::unix::fs::{PermissionsExt, symlink};

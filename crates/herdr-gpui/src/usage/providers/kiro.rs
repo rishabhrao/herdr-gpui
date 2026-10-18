@@ -36,6 +36,11 @@ impl Service for Kiro {
     }
 
     fn fetch(&self, probe: &mut Probe) -> Option<Result<Report>> {
+        // kiro-cli itself reads its Application Support folder as Herdr's
+        // child, so a detected Kiro on this Mac runs nothing at all.
+        if !probe.app_data() {
+            return None;
+        }
         let databases = if probe.is_macos() {
             vec![HostPath::env_or(
                 "KIRO_DATA_DIR",

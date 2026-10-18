@@ -34,6 +34,7 @@ fn backdrop_keys_parse_and_bad_values_are_refused() -> anyhow::Result<()> {
             opacity: 0.8,
             blur: true,
             image: Some(picture()),
+            material: Material::Acrylic,
         }
     );
     assert!(config.backdrop.translucent());
@@ -79,6 +80,8 @@ fn backdrop_edits_round_trip_and_keep_the_rest_of_the_file() -> anyhow::Result<(
     Config::save_backdrop_path(&Edit::Opacity(0.700_000_1), &path)?;
     Config::save_backdrop_path(&Edit::Blur(true), &path)?;
     Config::save_backdrop_path(&Edit::Image(Some(picture())), &path)?;
+    Config::save_backdrop_path(&Edit::Material(Material::Mica), &path)?;
+    Config::save_backdrop_path(&Edit::Material(Material::Acrylic), &path)?;
     let text = fs::read_to_string(&path)?;
     assert!(
         text.contains("# mine") && text.contains("future = 1"),
@@ -92,6 +95,7 @@ fn backdrop_edits_round_trip_and_keep_the_rest_of_the_file() -> anyhow::Result<(
             opacity: 0.7,
             blur: true,
             image: Some(picture()),
+            material: Material::Acrylic,
         }
     );
     Config::save_backdrop_path(&Edit::Image(None), &path)?;

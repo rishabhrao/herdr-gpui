@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(windows)]
+mod pipe_status;
+
 #[test]
 fn a_huge_wait_is_clamped_instead_of_overflowing() {
     let now = Instant::now();

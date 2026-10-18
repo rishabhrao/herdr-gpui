@@ -76,9 +76,9 @@ pub(crate) enum Location {
     Devices,
 }
 
-/// The checkout an orchestrator tab lists the repository of, on the tab's
-/// endpoint, which may be an SSH host. Saved with the tabs, so it is checked
-/// again whenever it is read.
+/// The checkout an orchestrator view lists the repository of, on the view's
+/// endpoint, which may be an SSH host. Tabs saved by earlier builds carry
+/// one, so it is checked again whenever it is read.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "SavedOrchestratorRepo")]
 pub(crate) struct OrchestratorRepo {

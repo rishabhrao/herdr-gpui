@@ -331,7 +331,7 @@ pub(crate) fn tick(
     let system = delivery == Delivery::System;
     let mut changed = false;
     for (index, endpoint) in endpoints.iter_mut().enumerate() {
-        let snapshot = endpoint.live.snapshot.as_deref();
+        let snapshot = endpoint.live.latest_snapshot().map(std::sync::Arc::as_ref);
         endpoint.toasts.entries.retain_mut(|(id, n)| {
             let keep = (|| {
                 if !n.client_local

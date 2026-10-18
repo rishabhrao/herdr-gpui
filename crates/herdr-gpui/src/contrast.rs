@@ -9,6 +9,11 @@
 use serde::Deserialize;
 use std::{cell::RefCell, collections::HashMap};
 
+#[cfg(test)]
+mod system_tests;
+#[cfg(windows)]
+mod windows;
+
 /// The contrast the app's own marks and labels keep against its chrome.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -38,6 +43,27 @@ impl Contrast {
             Self::High => "high",
         }
     }
+
+    /// `High` while the system asks for more contrast (a Windows contrast
+    /// theme), whatever the config says; otherwise the configured level.
+    pub fn or_system(self) -> Self {
+        self.or(system_high_contrast())
+    }
+
+    fn or(self, system_high: bool) -> Self {
+        if system_high { Self::High } else { self }
+    }
+}
+
+#[cfg(windows)]
+fn system_high_contrast() -> bool {
+    windows::high_contrast()
+}
+
+/// No system-wide high contrast setting is read here yet.
+#[cfg(not(windows))]
+fn system_high_contrast() -> bool {
+    false
 }
 
 fn channels(color: u32) -> [f32; 3] {

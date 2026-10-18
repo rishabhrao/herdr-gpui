@@ -6,6 +6,7 @@ mod app;
 mod browser;
 mod events;
 mod hosts;
+mod links;
 mod settings;
 mod tabs;
 mod work;
@@ -239,6 +240,7 @@ fn named_window(request: &Request) -> Option<u64> {
         Request::Host(call) => call.caller.window,
         Request::Settings(call) => call.caller.window,
         Request::Events(call) => call.caller.window,
+        Request::Link(call) => call.caller.window,
     }
 }
 
@@ -281,6 +283,7 @@ fn serve(incoming: socket::Incoming, state: &mut State, cx: &mut App) {
         Request::Host(call) => hosts::serve(call, incoming, &mut state.watches, cx),
         Request::Settings(call) => settings::serve(call, incoming, &mut state.watches, cx),
         Request::Events(call) => events::serve(call, incoming, &mut state.watches, cx),
+        Request::Link(call) => incoming.respond(links::serve(call, cx)),
     }
 }
 
@@ -301,10 +304,7 @@ fn keep_undelivered(request: super::protocol::FeedbackRequest, text: String, cx:
 /// Starts answering requests. A second app instance leaves the first one's
 /// socket alone and simply does not listen.
 pub(crate) fn install(cx: &mut App) {
-    let Some(path) = socket_path() else {
-        return;
-    };
-    let server = match socket::Server::bind(&path) {
+    let server = match socket_path().and_then(|path| socket::Server::bind(&path)) {
         Ok(server) => server,
         Err(error) => {
             tracing::warn!(%error, "Control socket unavailable");
@@ -312,11 +312,11 @@ pub(crate) fn install(cx: &mut App) {
         }
     };
     tracing::info!(path = %server.path().display(), "Control socket listening");
+    let path = server.path().to_owned();
     cx.on_app_quit(move |cx| {
         let path = path.clone();
-        cx.background_executor().spawn(async move {
-            let _ = std::fs::remove_file(path);
-        })
+        cx.background_executor()
+            .spawn(async move { socket::release(&path) })
     })
     .detach();
     let timer = cx.background_executor().clone();

@@ -8,34 +8,28 @@
 
 mod client;
 mod protocol;
-#[cfg(unix)]
 mod server;
-#[cfg(unix)]
 mod socket;
 
-#[cfg(unix)]
 use crate::HerdrWindow;
-#[cfg(unix)]
 use crate::browser::Location;
-#[cfg(unix)]
 pub(crate) use crate::cli::control::Placement;
-pub(crate) use client::run;
+#[cfg(windows)]
+pub(crate) use client::send_focus;
 #[cfg(feature = "mockup")]
 pub(crate) use client::send_notes;
-#[cfg(unix)]
+pub(crate) use client::{run, send_link, status as exit_status};
 use gpui::App;
-#[cfg(unix)]
 use protocol::Caller;
 pub use protocol::ErrorCode;
-#[cfg(any(unix, feature = "mockup"))]
 pub(crate) use protocol::NotesTo;
+pub(crate) use protocol::Response;
 pub use protocol::{
     app::{FontSize, Size, Switch},
     events::{Cursor, EventKind},
     settings::Sound,
     work::Script,
 };
-#[cfg(unix)]
 use std::path::{Path, PathBuf};
 
 #[cfg(any(target_os = "macos", windows))]
@@ -46,27 +40,27 @@ pub(crate) fn reload_command() -> String {
         .get_or_init(|| {
             format!(
                 "{} browser reload",
-                crate::agent_skill::command(std::env::current_exe().ok().as_deref())
+                crate::agent_skill::command(crate::agent_skill::executable().as_deref())
             )
         })
         .clone()
 }
 
-#[cfg(unix)]
-fn socket_path() -> Option<PathBuf> {
-    crate::preferences::state_dir().map(|dir| dir.join("control.sock"))
+/// Where this user's app listens: a socket in its state directory, or a
+/// named pipe on Windows.
+fn socket_path() -> crate::Result<PathBuf> {
+    let state = crate::preferences::state_dir().ok_or(crate::Error::MissingStateRoot)?;
+    socket::address(&state)
 }
 
 /// What a request asks the windows to find: a workspace, optionally of one
 /// particular local daemon, and the pane asking.
-#[cfg(unix)]
 pub(crate) struct Target<'a> {
     pub daemon: Option<&'a Path>,
     pub workspace: Option<&'a str>,
     pub pane: Option<&'a str>,
 }
 
-#[cfg(unix)]
 impl Target<'_> {
     /// How strictly a request's workspace is matched, strict first. A caller
     /// that names its daemon is matched on that daemon only: another
@@ -81,7 +75,6 @@ impl Target<'_> {
 }
 
 /// The page a request asks a window to open, and how to show it.
-#[cfg(unix)]
 pub(crate) struct Opening<'a> {
     pub location: &'a Location,
     /// Whether the window switches to the tab.
@@ -90,7 +83,6 @@ pub(crate) struct Opening<'a> {
 }
 
 /// Where a window opened a requested tab.
-#[cfg(unix)]
 pub(crate) enum Placed {
     Opened {
         workspace_id: String,
@@ -101,27 +93,27 @@ pub(crate) enum Placed {
 
 /// Identifiers a request carries are compared, never interpreted, but they
 /// are echoed in answers, so they stay short and printable.
-#[cfg(any(unix, test))]
 fn plain(value: &str, limit: usize) -> bool {
     !value.is_empty()
         && value.len() <= limit
         && value.chars().all(|c| !c.is_control() && !c.is_whitespace())
 }
 
-#[cfg(unix)]
+/// A daemon socket path: compared and echoed like an identifier, but it may
+/// hold spaces, as a Windows profile such as `C:\Users\Jane Doe` does.
+fn plain_path(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 4096 && !value.chars().any(char::is_control)
+}
+
 fn valid_caller(caller: &Caller) -> bool {
     caller
         .workspace_id
         .as_deref()
         .is_none_or(|id| plain(id, 256))
         && caller.pane_id.as_deref().is_none_or(|id| plain(id, 256))
-        && caller
-            .daemon_socket
-            .as_deref()
-            .is_none_or(|path| plain(path, 4096))
+        && caller.daemon_socket.as_deref().is_none_or(plain_path)
 }
 
-#[cfg(unix)]
 fn main_windows(cx: &App) -> Vec<gpui::WindowHandle<HerdrWindow>> {
     let active = cx.active_window();
     let mut windows: Vec<_> = cx
@@ -134,11 +126,7 @@ fn main_windows(cx: &App) -> Vec<gpui::WindowHandle<HerdrWindow>> {
     windows
 }
 
-#[cfg(unix)]
 pub(crate) use server::install;
-
-#[cfg(not(unix))]
-pub(crate) fn install(_: &mut gpui::App) {}
 
 #[cfg(test)]
 mod tests {
@@ -151,5 +139,17 @@ mod tests {
             assert!(!plain(invalid, 256), "{invalid:?}");
         }
         assert!(!plain(&"w".repeat(257), 256));
+    }
+
+    #[test]
+    fn daemon_paths_may_hold_spaces_but_not_control_characters() {
+        assert!(plain_path(
+            r"C:\Users\Jane Doe\AppData\Roaming\herdr\herdr-client.sock"
+        ));
+        assert!(plain_path("/home/jane/.config/herdr/herdr.sock"));
+        for invalid in ["", "/tmp/a\nb.sock", "/tmp/\u{1b}[2J"] {
+            assert!(!plain_path(invalid), "{invalid:?}");
+        }
+        assert!(!plain_path(&"a".repeat(4097)));
     }
 }

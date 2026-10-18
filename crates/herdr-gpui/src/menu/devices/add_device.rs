@@ -90,6 +90,9 @@ impl Offer {
     }
 
     pub(super) fn question(self, target: &str) -> String {
+        if cfg!(windows) {
+            return self.terminal_instructions(target);
+        }
         match self {
             Self::Install => {
                 format!("Herdr was not detected on {target}. Should we install it?")
@@ -116,6 +119,21 @@ impl Offer {
             Self::Terminal | Self::Restart => "Open terminal",
             Self::InstallKey => "Set up key login",
         }
+    }
+
+    /// Windows cannot run a setup on a local terminal yet (see
+    /// `setup::terminal_setup`), so the user runs Herdr's own command in one.
+    fn terminal_instructions(self, target: &str) -> String {
+        let reason = match self {
+            Self::Install => "Herdr was not detected there",
+            Self::Update => "its Herdr is too old for this app",
+            Self::Terminal => "SSH needs your input, such as a password or host key",
+            Self::Restart => "its Herdr server has to restart",
+            Self::InstallKey => "it accepted none of your SSH keys",
+        };
+        format!(
+            "Setting up {target} needs a terminal: {reason}. Run `herdr machine add {target}` in a terminal, then add the device again."
+        )
     }
 }
 
@@ -349,6 +367,7 @@ impl HerdrWindow {
         let cancel = button("device-setup-cancel", "Cancel".into(), true)
             .on_click(cx.listener(|this, _, _, cx| this.cancel_device_step(cx)));
         footer = match &setup.step {
+            Step::Confirm(..) if cfg!(windows) => footer.child(cancel),
             Step::Confirm(_, offer) => footer.child(cancel).child(
                 button("device-setup-submit", offer.action().into(), true)
                     .on_click(cx.listener(|this, _, _, cx| this.open_setup_space(cx))),
@@ -406,6 +425,8 @@ impl HerdrWindow {
         };
         match &form.step {
             Step::Form => {}
+            // Windows offers no terminal setup; the question says what to run.
+            Step::Confirm(..) if cfg!(windows) => return,
             Step::Confirm(..) => return self.open_setup_space(cx),
             _ => return,
         }

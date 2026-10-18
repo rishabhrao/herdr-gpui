@@ -15,17 +15,19 @@ pub(in crate::settings_window) use swatches::{HostColorChange, parse_hex_input, 
 
 pub(in crate::settings_window) const ROW_HEIGHT: f32 = 38.;
 
-/// Where a setting is stored: shared with every machine or local to this one.
+/// Where a setting is stored: Herdr's own config, which its terminal client
+/// reads too, or Herdr UI's file, which only this app reads. The tags name
+/// the apps rather than the files, since that is what decides who sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::settings_window) enum Source {
-    Shared,
-    Local,
+    Herdr,
+    HerdrUi,
 }
 
 pub(in crate::settings_window) fn tag(theme: &Theme, source: Source) -> Div {
     let (label, color) = match source {
-        Source::Shared => ("Shared", theme.ink(0x8fb8d9)),
-        Source::Local => ("Local", theme.ink(0xc9b26f)),
+        Source::Herdr => ("Herdr", theme.ink(0x8fb8d9)),
+        Source::HerdrUi => ("Herdr UI", theme.ink(0xc9b26f)),
     };
     div()
         .text_size(px(9.))
@@ -104,11 +106,33 @@ impl Row {
         self.controls.push(control.into_any_element());
         self
     }
+    /// A switch, named for a screen reader by the row's title.
+    pub(in crate::settings_window) fn switch(self, switch: Stateful<Div>) -> Self {
+        let title = self.title.clone();
+        self.control(switch.aria_label(title))
+    }
 }
 
+/// A row is a group named by its title, with its description as the help a
+/// screen reader reads after it, so its unnamed controls are heard in context.
 impl IntoElement for Row {
-    type Element = Div;
-    fn into_element(self) -> Div {
+    type Element = Stateful<Div>;
+    fn into_element(self) -> Stateful<Div> {
+        let id = self.id.clone();
+        let title = self.title.clone();
+        let help = self.disabled.clone().or_else(|| self.description.clone());
+        self.into_div()
+            .id(ElementId::Name(format!("{id}-row").into()))
+            .role(Role::Group)
+            .aria_label(title)
+            .when_some(help, |row, help| row.aria_description(help))
+    }
+}
+
+impl Row {
+    /// The row without its group, for a caller that makes the whole row one
+    /// control, as search results do.
+    pub(in crate::settings_window) fn into_div(self) -> Div {
         let theme = &self.theme;
         let id = self.id.clone();
         let title_id = format!("{id}-title");
@@ -185,9 +209,16 @@ pub(in crate::settings_window) fn toggle(
     enabled: bool,
 ) -> Stateful<Div> {
     let id = id.into();
-    crate::toggles::switch(theme, 20., checked)
+    let track = crate::toggles::switch(theme, 20., checked)
         .id(ElementId::Name(id.clone()))
         .debug_selector(move || id.to_string())
+        .role(Role::Switch)
+        .aria_toggled(if checked {
+            Toggled::True
+        } else {
+            Toggled::False
+        });
+    crate::accessibility::disabled(track, !enabled)
         .when(enabled, |track| track.cursor_pointer())
         .when(!enabled, |track| track.opacity(0.5))
 }
@@ -200,9 +231,13 @@ pub(in crate::settings_window) fn button(
     enabled: bool,
 ) -> Stateful<Div> {
     let id = id.into();
-    div()
+    let label = label.into();
+    let button = div()
         .id(ElementId::Name(id.clone()))
         .debug_selector(move || id.to_string())
+        .role(Role::Button)
+        .aria_label(label.clone());
+    crate::accessibility::disabled(button, !enabled)
         .flex_none()
         .whitespace_nowrap()
         .px(px(10.))
@@ -217,7 +252,7 @@ pub(in crate::settings_window) fn button(
                 .hover(|style| style.bg(rgb(theme.active)))
         })
         .when(!enabled, |button| button.opacity(0.5))
-        .child(label.into())
+        .child(label)
 }
 
 pub(in crate::settings_window) fn segmented<T: Copy + PartialEq + 'static>(
@@ -228,20 +263,53 @@ pub(in crate::settings_window) fn segmented<T: Copy + PartialEq + 'static>(
     enabled: bool,
     on_pick: impl Fn(T, &mut Window, &mut App) + 'static,
 ) -> Div {
+    let names = options.iter().map(|(_, label)| Some(*label)).collect();
     let options = options
         .iter()
         .map(|(value, label)| (*value, (*label).into_any_element()))
         .collect();
-    segmented_elements(theme, id, options, selected, enabled, |_| true, on_pick)
+    segments(
+        theme,
+        id,
+        (options, names),
+        selected,
+        enabled,
+        |_| true,
+        on_pick,
+    )
 }
 
 /// Like [`segmented`], with an element per segment (e.g. coloured status marks).
 /// `live` says which segments respond while the strip is enabled; the others
-/// are dimmed and ignore clicks.
+/// are dimmed and ignore clicks. Only tests build one now.
+#[cfg(test)]
 pub(in crate::settings_window) fn segmented_elements<T: Copy + PartialEq + 'static>(
     theme: &Theme,
     id: &'static str,
     options: Vec<(T, AnyElement)>,
+    selected: Option<T>,
+    enabled: bool,
+    live: impl Fn(T) -> bool,
+    on_pick: impl Fn(T, &mut Window, &mut App) + 'static,
+) -> Div {
+    let names = vec![None; options.len()];
+    segments(
+        theme,
+        id,
+        (options, names),
+        selected,
+        enabled,
+        live,
+        on_pick,
+    )
+}
+
+/// The strip itself: each segment a radio button, named by `names` where
+/// its element is more than plain text.
+fn segments<T: Copy + PartialEq + 'static>(
+    theme: &Theme,
+    id: &'static str,
+    (options, names): (Vec<(T, AnyElement)>, Vec<Option<&'static str>>),
     selected: Option<T>,
     enabled: bool,
     live: impl Fn(T) -> bool,
@@ -257,35 +325,36 @@ pub(in crate::settings_window) fn segmented_elements<T: Copy + PartialEq + 'stat
         .border_color(rgb(theme.active))
         .bg(rgb(theme.surface))
         .when(!enabled, |strip| strip.opacity(0.5))
-        .children(
-            options
-                .into_iter()
-                .enumerate()
-                .map(|(index, (value, label))| {
-                    let on = selected == Some(value);
-                    let segment_live = enabled && live(value);
-                    let on_pick = on_pick.clone();
-                    div()
-                        .id((id, index))
-                        .debug_selector(move || format!("{id}-{index}"))
-                        .px(px(10.))
-                        .py(px(3.))
-                        .rounded(px(corners::SMALL))
-                        .whitespace_nowrap()
-                        .text_color(rgb(if on {
-                            theme.foreground
-                        } else {
-                            theme.subtext()
-                        }))
-                        .when(on, |seg| seg.bg(rgb(theme.active)))
-                        .when(enabled && !segment_live, |seg| seg.opacity(0.5))
-                        .when(segment_live, |seg| seg.cursor_pointer())
-                        .when(segment_live && !on, move |seg| {
-                            seg.on_click(move |_, window, cx| on_pick(value, window, cx))
-                        })
-                        .child(label)
-                }),
-        )
+        .children(options.into_iter().zip(names).enumerate().map(
+            |(index, ((value, label), name))| {
+                let on = selected == Some(value);
+                let segment_live = enabled && live(value);
+                let on_pick = on_pick.clone();
+                let segment = div()
+                    .id((id, index))
+                    .role(Role::RadioButton)
+                    .when_some(name, |segment, name| segment.aria_label(name))
+                    .aria_toggled(if on { Toggled::True } else { Toggled::False });
+                crate::accessibility::disabled(segment, !segment_live)
+                    .debug_selector(move || format!("{id}-{index}"))
+                    .px(px(10.))
+                    .py(px(3.))
+                    .rounded(px(corners::SMALL))
+                    .whitespace_nowrap()
+                    .text_color(rgb(if on {
+                        theme.foreground
+                    } else {
+                        theme.subtext()
+                    }))
+                    .when(on, |seg| seg.bg(rgb(theme.active)))
+                    .when(enabled && !segment_live, |seg| seg.opacity(0.5))
+                    .when(segment_live, |seg| seg.cursor_pointer())
+                    .when(segment_live && !on, move |seg| {
+                        seg.on_click(move |_, window, cx| on_pick(value, window, cx))
+                    })
+                    .child(label)
+            },
+        ))
 }
 
 #[cfg(test)]

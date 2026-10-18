@@ -7,6 +7,7 @@ mod null_body;
 mod package_selection;
 mod packages;
 mod rate_limit;
+mod windows_installers;
 
 #[test]
 fn request_profiles_allow_slow_archives_with_finite_deadlines() {

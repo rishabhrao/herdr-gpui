@@ -48,6 +48,7 @@ impl SettingsWindow {
             catalog::Availability::FollowingSystemTheme => {
                 ThemeName::follows_system(self.drafted_theme())
             }
+            catalog::Availability::Windows => cfg!(windows),
         }
     }
 
@@ -148,11 +149,8 @@ impl SettingsWindow {
                 .enumerate()
                 .map(|(n, (index, entry))| {
                     let id = format!("settings-search-result-{n}");
-                    let mut row = ui::row(
-                        theme,
-                        id.clone(),
-                        format!("{} \u{203a} {}", entry.section.label(), entry.title),
-                    );
+                    let title = format!("{} \u{203a} {}", entry.section.label(), entry.title);
+                    let mut row = ui::row(theme, id.clone(), title.clone());
                     if !entry.description.is_empty() {
                         row = row.description(entry.description);
                     }
@@ -162,8 +160,13 @@ impl SettingsWindow {
                             .text_color(rgb(theme.subtext()))
                             .child(entry.section.label()),
                     )
-                    .into_element()
+                    .into_div()
                     .id(ElementId::Name(id.into()))
+                    .role(Role::Button)
+                    .aria_label(title)
+                    .when(!entry.description.is_empty(), |row| {
+                        row.aria_description(entry.description)
+                    })
                     .cursor_pointer()
                     .hover(|row| row.bg(rgb(theme.active)))
                     .on_click(

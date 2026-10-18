@@ -99,7 +99,7 @@ fn listening(_: &Path) -> bool {
 }
 
 fn nvim(socket: &Path) -> Command {
-    let mut command = Command::new("nvim");
+    let mut command = herdr_client::new_command("nvim");
     command
         .env("PATH", crate::local_path::local_path())
         .args(["--headless", "--clean", "--server"])

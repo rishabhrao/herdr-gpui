@@ -131,6 +131,7 @@ pub(super) fn ui(command: UiCommand, context: &Context) -> crate::Result<Output>
         UiCommand::Sidebar(switch) => UiOp::Sidebar { switch },
         UiCommand::StatusBar(switch) => UiOp::StatusBar { switch },
         UiCommand::FontSize(size) => UiOp::FontSize { size },
+        UiCommand::Panel(panel) => UiOp::Panel { panel },
     };
     match context.call(Request::Ui, op)? {
         Response::Done { message } => Ok(Output::message(message)),

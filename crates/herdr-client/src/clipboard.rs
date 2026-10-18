@@ -1,6 +1,8 @@
 //! FIFO reservations with an optional image lease held through transport.
 
-use crate::{Error, Result, frame::ImageWriter, limits::COMMAND_TIMEOUT, protocol::*};
+use crate::{
+    Error, Result, frame::ImageWriter, limits::COMMAND_TIMEOUT, protocol::*, queue::Waker,
+};
 use crossbeam_channel::{Receiver, Sender};
 use std::sync::{
     Arc,
@@ -14,8 +16,20 @@ use std::time::Instant;
 pub struct ClipboardImageUpload {
     pub(crate) target: ClientClipboardImageTarget,
     pub(crate) sender: Sender<Vec<u8>>,
+    /// Fields drop in declaration order: this wakes the worker only once
+    /// `sender` is gone, so it sees the published bytes or the closed slot.
+    pub(crate) _wake: WakeOnDrop,
     pub(crate) lease: Arc<ImageLease>,
     pub(crate) stop: Arc<AtomicBool>,
+}
+
+/// Wakes the connection worker when dropped.
+pub(crate) struct WakeOnDrop(pub(crate) Waker);
+
+impl Drop for WakeOnDrop {
+    fn drop(&mut self) {
+        self.0.wake();
+    }
 }
 
 /// Cancels only this upload. Keeping this handle does not retain the image lease.
@@ -23,6 +37,7 @@ pub struct ClipboardImageUpload {
 pub struct ClipboardImageCancellation {
     pub(crate) cancelled: Arc<AtomicBool>,
     pub(crate) finished: Arc<AtomicBool>,
+    pub(crate) waker: Waker,
 }
 
 impl ClipboardImageCancellation {
@@ -30,6 +45,7 @@ impl ClipboardImageCancellation {
     /// connection rather than leaving a truncated frame on a reusable stream.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
+        self.waker.wake();
     }
 
     /// True only once the worker's slot is gone (sent, rejected, or cancelled).
@@ -45,6 +61,7 @@ impl ClipboardImageUpload {
         ClipboardImageCancellation {
             cancelled: self.lease.cancelled.clone(),
             finished: self.lease.finished.clone(),
+            waker: self.lease.waker.clone(),
         }
     }
 
@@ -118,6 +135,8 @@ pub(crate) struct ImageLease {
     pub(crate) cancelled: Arc<AtomicBool>,
     pub(crate) finished: Arc<AtomicBool>,
     pub(crate) reserved_at: Instant,
+    /// Publication and cancellation reach the worker outside its queue.
+    pub(crate) waker: Waker,
 }
 
 impl ImageLease {
@@ -145,6 +164,18 @@ pub(crate) struct ImageSlot {
     pub(crate) receiver: Receiver<Vec<u8>>,
     pub(crate) lease: Arc<ImageLease>,
     pub(crate) writer: ImageWriter,
+}
+
+impl ImageSlot {
+    /// When the worker must act on this slot unwoken: preparation expires, or
+    /// a started write times out. `published` is whether its bytes arrived.
+    pub(crate) fn deadline(&self, published: bool) -> Option<Instant> {
+        if published {
+            self.writer.deadline()
+        } else {
+            Some(self.lease.reserved_at + COMMAND_TIMEOUT)
+        }
+    }
 }
 
 impl Drop for ImageSlot {

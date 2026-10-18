@@ -29,12 +29,13 @@ Use OpenCode's ChatGPT browser or device login; an OpenAI API key does not
 provide ChatGPT subscription limits. OpenCode's own Zen/Go billing is tracked
 by the separate OpenCode providers.
 
-Detection follows the selected host, including SSH hosts. Each usage refresh
+Detection follows the selected host, including SSH hosts and, on Windows, WSL
+distributions. Each usage refresh
 reads the current saved token; OpenCode handles renewing its sign-in. If both
 Codex and OpenCode have OAuth credentials, Codex takes precedence, including
 when its usage request fails, so a failure does not switch the shown account.
-SSH hosts need `python3` or `jq` to read the JSON sign-in; detection is skipped
-when neither parser is available.
+SSH hosts and WSL distributions need `python3` or `jq` to read the JSON
+sign-in; detection is skipped when neither parser is available.
 
 ## The trait
 
@@ -139,13 +140,15 @@ could select another account's credentials from a shared file.
 | `cookies(&[domain], &[name])` | `Option<Secret>` | The `cookie` setting, else (only for providers the user listed and allowed in the panel) those cookies from Chrome/Safari. Pass the cookie names the service needs; `&[]` takes all cookies of the domains. |
 | `cookies_any(&[domain], &[name])` | `Option<Secret>` | Like `cookies`, satisfied by whichever of the names exists (renamed session cookies). |
 | `cookie_value(&[domain], name)` | `Option<Secret>` | One cookie's bare value, for a service that wants it as a bearer or in a header. |
-| `foreign_keychain(service, account)`, `foreign_keychain_internet(server, account)` | `Option<Secret>` | A keychain item another app owns, such as Zed's sign-in. Reading it makes macOS ask, so it is read only for a listed provider after the user presses Allow in its panel; until then the provider shows a lock in the status bar. A denial is remembered and takes the grant back. |
+| `foreign_keychain(service, account)`, `foreign_keychain_internet(server, account)` | `Option<Secret>` | A keychain item another app owns, such as Zed's sign-in or `muse login`'s. Reading it makes macOS ask, so it is read only for a listed provider after the user presses Allow in its panel; until then the provider shows a lock in the status bar. A denial is remembered and takes the grant back. |
 | `env_text(name)` | `Option<String>` | A host environment variable that is not secret, e.g. a local server URL. |
 | `body(Request)` | `Result<String>` | The body of a successful answer; failures become typed usage errors. Most providers need only this. |
 | `http(Request)` | `Result<Response>` | The whole answer, for a provider that reads the status itself; runs where its secrets are. |
 | `exchange(Request, &[key])` | `Result<Secret>` | A request whose JSON answer holds a new credential (token refresh or exchange); the new credential stays where the request ran. |
 | `command(program, &[arg], timeout)` | `Result<Output>` | Runs a CLI on the host (`~/.local/bin`, Homebrew and similar are on PATH). Its stdout comes back, so only for commands that print no secrets. |
 | `is_remote()`, `is_macos()` | `bool` | Where the probe runs. |
+| `requested()` | `bool` | Whether the provider is listed in `show_providers` rather than only detected. A detected provider must not do anything the user would notice. |
+| `app_data()` | `bool` | Whether the probe may touch another app's own data on this Mac, such as its `~/Library/Application Support` folder, directly or through a command it runs. False for a detected provider on a local Mac, where macOS may ask whether Herdr can access data from other apps; check it before such a read. A listed provider needs no Allow for it, and remote hosts are not gated, since that dialog never reaches the user over SSH. |
 
 `HostPath::home(".codex/auth.json")` is `~/.codex/auth.json` on the host;
 `HostPath::env_or("CODEX_HOME", ".codex", "auth.json")` honors the

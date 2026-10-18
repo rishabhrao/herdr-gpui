@@ -3,15 +3,16 @@ use crate::config::{FontFace, LayoutMode};
 use crate::settings_window::inputs::NumberField;
 use core::prelude::v1::test;
 
+mod agents_placement;
 mod backdrop;
 mod device_icons;
 mod features;
 mod focus_follows_mouse;
+mod indicators;
 mod repository_icons;
 mod session_restore;
 mod sidebar_search;
 mod sound_volume;
-mod status_icons;
 mod terminal_padding;
 mod update_channel;
 
@@ -43,7 +44,6 @@ fn notification_rows_stack_inside_the_body_and_descriptions_wrap(cx: &mut TestAp
                 "notif-position-title",
                 "notif-sound-title",
                 "notif-volume-title",
-                "notif-indicators-title",
             ] {
                 let title = cx.debug_bounds(title_id).unwrap();
                 assert!(

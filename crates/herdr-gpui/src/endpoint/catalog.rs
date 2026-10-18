@@ -168,6 +168,12 @@ impl Catalog {
         failure
     }
 
+    /// Whether the saved devices have been read once, so a device missing
+    /// from the window is really not saved rather than not loaded yet.
+    pub(crate) fn loaded(&self) -> bool {
+        self.initialized
+    }
+
     pub(super) fn accept(&mut self, update: &CatalogUpdate) {
         if !self.initialized {
             self.desired = update.selection.clone().flatten();

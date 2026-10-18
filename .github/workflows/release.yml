@@ -70,6 +70,7 @@ jobs:
       sha: ${{ steps.validate.outputs.sha }}
       version: ${{ steps.validate.outputs.version }}
       channel: ${{ steps.validate.outputs.channel }}
+      windows_signed: ${{ steps.windows-signing.outputs.signed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -100,51 +101,63 @@ jobs:
         env:
           HERDR_UPDATE_PUBLIC_KEY: ${{ vars.HERDR_UPDATE_PUBLIC_KEY }}
         run: python3 scripts/update-manifest.py validate-public-key
+      # Windows signing is on once its publisher, the WINDOWS_SIGNING_SUBJECT
+      # repository variable, is set; windows-sign then requires the Azure
+      # variables too. Until then Windows ships unsigned and skips winget, and
+      # those builds name no publisher, so their in-app updater stays off
+      # (updater/windows.rs) rather than trusting an unsigned installer.
+      - id: windows-signing
+        env:
+          WINDOWS_SIGNING_SUBJECT: ${{ vars.WINDOWS_SIGNING_SUBJECT }}
+        run: |
+          if [[ -n "$WINDOWS_SIGNING_SUBJECT" ]]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::WINDOWS_SIGNING_SUBJECT is not set: Windows ships unsigned, without winget or in-app updates"
+          fi
 
-  macos-checks:
+  # The release jobs build and package; formatting, lints and the test suites
+  # are CI's, on every platform, for this same commit. Building overlaps CI so
+  # the two macOS queues do not add up, but nothing is signed, attested or
+  # published until this job has seen CI pass; a failed or cancelled CI run
+  # stops the release here instead of being retested.
+  ci-gate:
     needs: validate
-    runs-on: macos-15
-    timeout-minutes: 45
+    if: >-
+      github.repository == 'penso/herdr-gpui' && github.ref == 'refs/heads/main' &&
+      github.actor == 'penso' && github.triggering_actor == 'penso'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
     permissions:
+      actions: read
       contents: read
-    env:
-      MACOSX_DEPLOYMENT_TARGET: '14.2'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
-      - name: Test release scripts and security contracts without credentials
+      - name: Require CI to have passed on this commit
         env:
-          PYTHONDONTWRITEBYTECODE: '1'
-        run: |
-          python3 -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ required"'
-          jq --version
-          python3 -m unittest discover -s scripts/release/tests -v
-          python3 scripts/release/test-release-security.py
-          OPENSSL="$(brew --prefix openssl@3)/bin/openssl" python3 -m unittest discover -s scripts -p 'test_*manifest.py' -v
-      - run: rustup show
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --locked --workspace
-      - run: cargo test --locked --workspace --all-features
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ needs.validate.outputs.sha }}
+        run: python3 scripts/release/check-ci.py "$EXPECTED_SHA" --wait
 
+  # Both macOS targets build on Apple Silicon: Intel runners are scarce and
+  # slow, and x86_64 cross-compiles there and runs under Rosetta. Formatting,
+  # lints and the test suites are CI's, which validate requires for this commit.
   macos-build:
     needs: validate
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
-            arch: arm64
+          - arch: arm64
             target: aarch64-apple-darwin
-          - runner: macos-15-intel
-            arch: x86_64
+          - arch: x86_64
             target: x86_64-apple-darwin
-    runs-on: ${{ matrix.runner }}
-    # Intel runners have taken 34-40 minutes for the release build alone,
-    # leaving 60 minutes too tight for the tests, notices, and upload.
-    timeout-minutes: 90
+    runs-on: macos-15
+    timeout-minutes: 60
     permissions:
       contents: read
     env:
@@ -158,17 +171,20 @@ jobs:
           ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
       - run: rustup show
+      - run: rustup target add "$TARGET"
+      - name: Require Rosetta for the x86_64 executable
+        if: matrix.arch == 'x86_64'
+        run: arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
       - run: cargo build --locked --release -p herdr-gpui --target "$TARGET"
-      - run: cargo test --locked --release -p herdr-gpui --test cli --target "$TARGET"
-      # cargo-about gates its binary behind the non-default `cli` feature, and
-      # `cargo install` only warns and exits 0 when it installs nothing. Verify
-      # the subcommand resolves here rather than failing in the next step.
+      - run: python3 scripts/release/smoke-cli.py "target/$TARGET/release/herdr-gpui"
       - name: Install the notice generator
-        run: |
-          cargo install cargo-about --version 0.9.2 --locked --features cli
-          cargo about --version
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: cargo-about@0.9.2
+          fallback: none
+      - run: cargo about --version
       - run: python3 scripts/release/generate-notices.py "target/$TARGET/release/THIRD-PARTY-NOTICES.txt"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4, Arbor/Moltis
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4, Arbor/Moltis
         with:
           name: macos-${{ matrix.arch }}
           path: |
@@ -208,19 +224,14 @@ jobs:
       - name: Require the declared native target
         run: |
           test "$(rustc -vV | sed -n 's/^host: //p')" = "$TARGET"
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --locked --workspace
-      - run: cargo test --locked --workspace --all-features
       - run: cargo build --locked --release -p herdr-gpui --target "$TARGET"
-      - run: cargo test --locked --release -p herdr-gpui --test cli --target "$TARGET"
-      # cargo-about gates its binary behind the non-default `cli` feature, and
-      # `cargo install` only warns and exits 0 when it installs nothing. Verify
-      # the subcommand resolves here rather than failing in the next step.
+      - run: python3 scripts/release/smoke-cli.py "target/$TARGET/release/herdr-gpui"
       - name: Install the notice generator
-        run: |
-          cargo install cargo-about --version 0.9.2 --locked --features cli
-          cargo about --version
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: cargo-about@0.9.2
+          fallback: none
+      - run: cargo about --version
       - run: python3 scripts/release/generate-notices.py "target/$TARGET/release/THIRD-PARTY-NOTICES.txt"
       - name: Package experimental Linux executable
         run: |
@@ -237,7 +248,7 @@ jobs:
             "dist/Herdr-$VERSION-$TARGET.tar.gz" dist --nfpm "$nfpm"
       - name: Install each package on its distribution and check its libraries
         run: bash scripts/release/smoke-linux-packages.sh "$VERSION" "$TARGET" dist
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-package-${{ matrix.target }}
           path: |
@@ -249,9 +260,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Experimental: the executable is built, lint- and CLI-tested here, and
-  # published unsigned by Authenticode. Nothing runs its window or a live
-  # daemon, and it is deliberately absent from the update manifest.
+  # Experimental: the executable is built and its CLI smoke-tested here, and
+  # windows-sign Authenticode-signs exactly these bytes. Nothing runs its
+  # window or a live daemon, and it is deliberately absent from the update
+  # manifest. No credentials reach this job or its build scripts.
   windows:
     name: Windows (${{ matrix.target }})
     needs: validate
@@ -272,6 +284,11 @@ jobs:
       TARGET: ${{ matrix.target }}
       HERDR_RELEASE_VERSION: ${{ needs.validate.outputs.version }}
       HERDR_UPDATE_PUBLIC_KEY: ${{ vars.HERDR_UPDATE_PUBLIC_KEY }}
+      # The publisher the in-app updater requires on a downloaded installer
+      # (updater/windows.rs); windows-sign checks the release is signed by it.
+      # A repository variable: this job is outside the release environment.
+      # Empty while signing is not set up, which turns that build's updater off.
+      HERDR_WINDOWS_SIGNER: ${{ vars.WINDOWS_SIGNING_SUBJECT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -281,29 +298,156 @@ jobs:
       - name: Require the declared native target
         run: |
           test "$(rustc -vV | sed -n 's/^host: //p')" = "$TARGET"
-      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --locked -p herdr-protocol -p herdr-client
       - run: cargo build --locked --release -p herdr-gpui -p herdr-gpui-launcher --target "$TARGET"
-      - run: cargo test --locked --release -p herdr-gpui --test cli --target "$TARGET"
-      # cargo-about gates its binary behind the non-default `cli` feature, and
-      # `cargo install` only warns and exits 0 when it installs nothing. Verify
-      # the subcommand resolves here rather than failing in the next step.
+      - run: python scripts/release/smoke-cli.py "target/$TARGET/release/herdr-gpui.exe"
       - name: Install the notice generator
-        run: |
-          cargo install cargo-about --version 0.9.2 --locked --features cli
-          cargo about --version
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        with:
+          tool: cargo-about@0.9.2
+          fallback: none
+      - run: cargo about --version
       # The Windows image provides `python`, not `python3`.
       - run: python scripts/release/generate-notices.py "target/$TARGET/release/THIRD-PARTY-NOTICES.txt"
       - name: Package experimental Windows executable
         run: |
           mkdir dist
           python scripts/release/package-windows.py "$VERSION" "$TARGET" "target/$TARGET/release/herdr-gpui.exe" "target/$TARGET/release/herdr-gpui-launcher.exe" dist "target/$TARGET/release/THIRD-PARTY-NOTICES.txt"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Install the pinned Inno Setup compiler
+        run: python scripts/release/windows-installer.py install-iscc "$RUNNER_TEMP/inno-setup" > "$RUNNER_TEMP/iscc-path"
+      - name: Build the Windows installer
+        run: python scripts/release/windows-installer.py build "$VERSION" "$TARGET" "dist/Herdr-$VERSION-$TARGET.zip" dist "$(cat "$RUNNER_TEMP/iscc-path")"
+      - name: Install and uninstall the Windows installer
+        run: python scripts/release/windows-installer.py smoke "dist/Herdr-$VERSION-$TARGET-setup.exe"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-package-${{ matrix.target }}
-          path: dist/Herdr-${{ needs.validate.outputs.version }}-${{ matrix.target }}.zip
+          path: |
+            dist/Herdr-${{ needs.validate.outputs.version }}-${{ matrix.target }}.zip
+            dist/Herdr-${{ needs.validate.outputs.version }}-${{ matrix.target }}-setup.exe
           if-no-files-found: error
           retention-days: 7
+
+  # Signs the tested build without running it: unpack the zip, sign both
+  # executables (herdr-gpui.exe and its windowed launcher), check
+  # nothing else changed, repack, then rebuild the installer with ISCC signing
+  # its uninstaller and Setup.exe. Azure Artifact Signing trusts only this
+  # repository's OIDC token for the protected release environment, so the
+  # identity and account below are useless anywhere else.
+  windows-sign:
+    name: Windows signing (${{ matrix.target }})
+    needs: [validate, windows, ci-gate]
+    if: >-
+      github.repository == 'penso/herdr-gpui' && github.ref == 'refs/heads/main' &&
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      needs.validate.outputs.windows_signed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+    # Signing and ISCC run the same on x64 for both targets.
+    runs-on: windows-2025
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      ARTIFACT_SIGNING_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+      ARTIFACT_SIGNING_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+      ARTIFACT_SIGNING_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
+      # No token/run-id override: artifacts can only come from this workflow run.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-package-${{ matrix.target }}
+          path: unsigned
+      - name: Unpack the tested executables without running them
+        run: python scripts/release/windows-signing.py unpack "unsigned/Herdr-$VERSION-$TARGET.zip" "$RUNNER_TEMP/signing"
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      # Also installs the ArtifactSigning module that windows-sign-file.ps1
+      # uses for the installer. No dependency cache in a signing job.
+      - uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: |
+            ${{ runner.temp }}\signing\Herdr-${{ needs.validate.outputs.version }}-${{ matrix.target }}\herdr-gpui.exe
+            ${{ runner.temp }}\signing\Herdr-${{ needs.validate.outputs.version }}-${{ matrix.target }}\herdr-gpui-launcher.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Herdr UI
+          description-url: https://herdrui.dev
+          exclude-environment-credential: true
+          exclude-azure-cli-credential: false
+          cache-dependencies: false
+      - name: Repack the signed executables, refusing any change but the signatures
+        run: |
+          mkdir dist
+          python scripts/release/windows-signing.py repack "unsigned/Herdr-$VERSION-$TARGET.zip" "$RUNNER_TEMP/signing" dist
+      - name: Install the pinned Inno Setup compiler
+        run: python scripts/release/windows-installer.py install-iscc "$RUNNER_TEMP/inno-setup" > "$RUNNER_TEMP/iscc-path"
+      - name: Build the signed Windows installer
+        run: python scripts/release/windows-installer.py build --sign "$VERSION" "$TARGET" "dist/Herdr-$VERSION-$TARGET.zip" dist "$(cat "$RUNNER_TEMP/iscc-path")"
+      - name: Require timestamped signatures from the release identity
+        env:
+          WINDOWS_SIGNING_SUBJECT: ${{ vars.WINDOWS_SIGNING_SUBJECT }}
+        run: |
+          test -n "$WINDOWS_SIGNING_SUBJECT"
+          python scripts/release/windows-signing.py verify --subject "$WINDOWS_SIGNING_SUBJECT" \
+            "dist/Herdr-$VERSION-$TARGET.zip" "dist/Herdr-$VERSION-$TARGET-setup.exe"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-signed-${{ matrix.target }}
+          path: |
+            dist/Herdr-${{ needs.validate.outputs.version }}-${{ matrix.target }}.zip
+            dist/Herdr-${{ needs.validate.outputs.version }}-${{ matrix.target }}-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # The signed installer is new bytes, so install it again on each
+  # architecture, outside the signing environment, and check that Windows
+  # accepts every signature, the uninstaller's included.
+  windows-smoke:
+    name: Windows signed installer (${{ matrix.target }})
+    needs: [validate, windows-sign]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-signed-${{ matrix.target }}
+          path: dist
+      - name: Install and uninstall the signed Windows installer
+        run: python scripts/release/windows-installer.py smoke --signed "dist/Herdr-$VERSION-$TARGET-setup.exe"
 
   changelog:
     needs: validate
@@ -326,6 +470,7 @@ jobs:
       - name: Generate the changelog and release notes from git history
         env:
           GH_TOKEN: ${{ github.token }}
+          WINDOWS_SIGNED: ${{ needs.validate.outputs.windows_signed }}
         run: |
           set -euo pipefail
           mkdir release-notes
@@ -339,7 +484,7 @@ jobs:
           done <<< "$prereleases"
           bash scripts/release/generate-changelog.sh "$VERSION" release-notes ${betas[@]+"${betas[@]}"}
           cat release-notes/RELEASE_NOTES.md
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-notes
           path: |
@@ -368,7 +513,7 @@ jobs:
           chmod +x scripts/release/cargo-locked.sh
           python3 scripts/release/generate-sbom.py "dist/Herdr-$VERSION.cdx.json"
           git diff --exit-code -- Cargo.lock
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-sbom
           path: dist/Herdr-${{ needs.validate.outputs.version }}.cdx.json
@@ -376,10 +521,18 @@ jobs:
           retention-days: 7
 
   sign:
-    needs: [validate, macos-checks, macos-build, linux, windows]
+    needs: [validate, ci-gate, macos-build, linux, windows, windows-sign]
+    # windows-sign is skipped while Windows signing is not set up, and a
+    # skipped need skips this job unless its condition checks results itself.
     if: >-
+      !cancelled() &&
       github.repository == 'penso/herdr-gpui' && github.ref == 'refs/heads/main' &&
-      github.actor == 'penso' && github.triggering_actor == 'penso'
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      needs.validate.result == 'success' && needs.ci-gate.result == 'success' &&
+      needs.macos-build.result == 'success' && needs.linux.result == 'success' &&
+      needs.windows.result == 'success' &&
+      (needs.windows-sign.result == 'success' ||
+       (needs.validate.outputs.windows_signed == 'false' && needs.windows-sign.result == 'skipped'))
     runs-on: macos-15
     timeout-minutes: 60
     environment: release
@@ -393,11 +546,11 @@ jobs:
           ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
       # No token/run-id override: artifacts can only come from this workflow run.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: macos-arm64
           path: binaries/arm64
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: macos-x86_64
           path: binaries/x86_64
@@ -416,14 +569,26 @@ jobs:
           APPLE_API_ISSUER_ID: ${{ vars.APPLE_API_ISSUER_ID }}
           MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
         run: bash scripts/release/sign-macos.sh "$VERSION" dist/Herdr.app dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-package-x86_64-unknown-linux-gnu
           path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-package-aarch64-unknown-linux-gnu
           path: dist
+      # The Authenticode-signed installers, so the Windows manifest lists the
+      # exact bytes users download and the in-app updater runs; the tested
+      # unsigned ones while signing is not set up, which no build's updater
+      # accepts (none names a publisher, and signed ones check it).
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.validate.outputs.windows_signed == 'true' && 'windows-signed' || 'windows-package' }}-x86_64-pc-windows-msvc
+          path: windows
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.validate.outputs.windows_signed == 'true' && 'windows-signed' || 'windows-package' }}-aarch64-pc-windows-msvc
+          path: windows
       - name: Generate and verify signed update manifest
         env:
           HERDR_UPDATE_PUBLIC_KEY: ${{ vars.HERDR_UPDATE_PUBLIC_KEY }}
@@ -455,7 +620,15 @@ jobs:
           "$OPENSSL" pkeyutl -verify -rawin -pubin -inkey "$KEY_DIR/public.pem" \
             -in dist/package-manifest.json -sigfile dist/package-manifest.sig
           test "$(wc -c < dist/package-manifest.sig | tr -d ' ')" = 64
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          # Windows installers get a third manifest (schema 3) for the same reason.
+          python3 scripts/update-manifest.py create windows "$VERSION" --windows
+          mv windows/windows-manifest.json dist/
+          "$OPENSSL" pkeyutl -sign -rawin -inkey "$KEY_DIR/private.pem" -passin pass: \
+            -in dist/windows-manifest.json -out dist/windows-manifest.sig
+          "$OPENSSL" pkeyutl -verify -rawin -pubin -inkey "$KEY_DIR/public.pem" \
+            -in dist/windows-manifest.json -sigfile dist/windows-manifest.sig
+          test "$(wc -c < dist/windows-manifest.sig | tr -d ' ')" = 64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-signed
           path: |
@@ -465,14 +638,23 @@ jobs:
             dist/update-manifest.sig
             dist/package-manifest.json
             dist/package-manifest.sig
+            dist/windows-manifest.json
+            dist/windows-manifest.sig
           if-no-files-found: error
           retention-days: 7
 
   attest:
-    needs: [validate, sign, linux, windows, metadata]
+    needs: [validate, sign, linux, windows-sign, windows-smoke, metadata]
+    # Like sign: the Windows signing jobs may be skipped, never failed.
     if: >-
+      !cancelled() &&
       github.repository == 'penso/herdr-gpui' && github.ref == 'refs/heads/main' &&
-      github.actor == 'penso' && github.triggering_actor == 'penso'
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      needs.validate.result == 'success' && needs.sign.result == 'success' &&
+      needs.linux.result == 'success' && needs.metadata.result == 'success' &&
+      ((needs.windows-sign.result == 'success' && needs.windows-smoke.result == 'success') ||
+       (needs.validate.outputs.windows_signed == 'false' && needs.windows-sign.result == 'skipped' &&
+        needs.windows-smoke.result == 'skipped'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
@@ -487,27 +669,30 @@ jobs:
         with:
           ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: macos-signed
           path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-package-x86_64-unknown-linux-gnu
           path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-package-aarch64-unknown-linux-gnu
           path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      # The Authenticode-signed builds, so checksums, Sigstore and provenance
+      # cover the bytes users download; the tested unsigned builds while
+      # signing is not set up.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: windows-package-x86_64-pc-windows-msvc
+          name: ${{ needs.validate.outputs.windows_signed == 'true' && 'windows-signed' || 'windows-package' }}-x86_64-pc-windows-msvc
           path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: windows-package-aarch64-pc-windows-msvc
+          name: ${{ needs.validate.outputs.windows_signed == 'true' && 'windows-signed' || 'windows-package' }}-aarch64-pc-windows-msvc
           path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-sbom
           path: dist
@@ -525,7 +710,7 @@ jobs:
       - uses: ./.github/actions/sign-artifacts # zizmor: ignore[self-repository]
         with:
           working-directory: dist
-          files: Herdr-${{ needs.validate.outputs.version }}-universal-apple-darwin.dmg Herdr-${{ needs.validate.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz Herdr-${{ needs.validate.outputs.version }}-x86_64-unknown-linux-gnu.deb Herdr-${{ needs.validate.outputs.version }}-x86_64-unknown-linux-gnu.rpm Herdr-${{ needs.validate.outputs.version }}-x86_64-unknown-linux-gnu.pkg.tar.zst Herdr-${{ needs.validate.outputs.version }}-aarch64-unknown-linux-gnu.tar.gz Herdr-${{ needs.validate.outputs.version }}-aarch64-unknown-linux-gnu.deb Herdr-${{ needs.validate.outputs.version }}-aarch64-unknown-linux-gnu.rpm Herdr-${{ needs.validate.outputs.version }}-aarch64-unknown-linux-gnu.pkg.tar.zst Herdr-${{ needs.validate.outputs.version }}-x86_64-pc-windows-msvc.zip Herdr-${{ needs.validate.outputs.version }}-aarch64-pc-windows-msvc.zip Herdr-${{ needs.validate.outputs.version }}.cdx.json herdr-gpui-${{ needs.validate.outputs.version }}-macos-universal.app.tar.gz herdr-gpui-${{ needs.validate.outputs.version }}-x86_64-unknown-linux-gnu-update.tar.gz herdr-gpui-${{ needs.validate.outputs.version }}-aarch64-unknown-linux-gnu-update.tar.gz update-manifest.json update-manifest.sig package-manifest.json package-manifest.sig
+          files: Herdr-${{ needs.validate.outputs.version }}-universal-apple-darwin.dmg Herdr-${{ needs.validate.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz Herdr-${{ needs.validate.outputs.version }}-x86_64-unknown-linux-gnu.deb Herdr-${{ needs.validate.outputs.version }}-x86_64-unknown-linux-gnu.rpm Herdr-${{ needs.validate.outputs.version }}-x86_64-unknown-linux-gnu.pkg.tar.zst Herdr-${{ needs.validate.outputs.version }}-aarch64-unknown-linux-gnu.tar.gz Herdr-${{ needs.validate.outputs.version }}-aarch64-unknown-linux-gnu.deb Herdr-${{ needs.validate.outputs.version }}-aarch64-unknown-linux-gnu.rpm Herdr-${{ needs.validate.outputs.version }}-aarch64-unknown-linux-gnu.pkg.tar.zst Herdr-${{ needs.validate.outputs.version }}-x86_64-pc-windows-msvc.zip Herdr-${{ needs.validate.outputs.version }}-aarch64-pc-windows-msvc.zip Herdr-${{ needs.validate.outputs.version }}-x86_64-pc-windows-msvc-setup.exe Herdr-${{ needs.validate.outputs.version }}-aarch64-pc-windows-msvc-setup.exe Herdr-${{ needs.validate.outputs.version }}.cdx.json herdr-gpui-${{ needs.validate.outputs.version }}-macos-universal.app.tar.gz herdr-gpui-${{ needs.validate.outputs.version }}-x86_64-unknown-linux-gnu-update.tar.gz herdr-gpui-${{ needs.validate.outputs.version }}-aarch64-unknown-linux-gnu-update.tar.gz update-manifest.json update-manifest.sig package-manifest.json package-manifest.sig windows-manifest.json windows-manifest.sig
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
@@ -540,6 +725,8 @@ jobs:
             dist/Herdr-${{ needs.validate.outputs.version }}-aarch64-unknown-linux-gnu.pkg.tar.zst
             dist/Herdr-${{ needs.validate.outputs.version }}-x86_64-pc-windows-msvc.zip
             dist/Herdr-${{ needs.validate.outputs.version }}-aarch64-pc-windows-msvc.zip
+            dist/Herdr-${{ needs.validate.outputs.version }}-x86_64-pc-windows-msvc-setup.exe
+            dist/Herdr-${{ needs.validate.outputs.version }}-aarch64-pc-windows-msvc-setup.exe
             dist/Herdr-${{ needs.validate.outputs.version }}.cdx.json
             dist/herdr-gpui-${{ needs.validate.outputs.version }}-macos-universal.app.tar.gz
             dist/herdr-gpui-${{ needs.validate.outputs.version }}-x86_64-unknown-linux-gnu-update.tar.gz
@@ -548,8 +735,10 @@ jobs:
             dist/update-manifest.sig
             dist/package-manifest.json
             dist/package-manifest.sig
+            dist/windows-manifest.json
+            dist/windows-manifest.sig
       - run: python3 scripts/release/artifact-manifest.py create "$VERSION" dist
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets
           path: dist/*
@@ -576,12 +765,12 @@ jobs:
         with:
           ref: ${{ needs.validate.outputs.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-assets
           path: dist
       # Kept out of dist: the release body is not part of the signed asset set.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-notes
           path: release-notes
@@ -673,3 +862,42 @@ jobs:
         env:
           HOMEBREW_TAP_SSH_KEY: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
         run: bash scripts/release/update-homebrew.sh "$VERSION" rendered-cask.rb
+
+  # Keep these steps identical in release.yml and promote.yml. Betas never
+  # reach winget: promote.yml submits one when it is promoted. Neither do
+  # unsigned releases.
+  winget:
+    needs: [validate, publish]
+    if: >-
+      github.repository == 'penso/herdr-gpui' && github.ref == 'refs/heads/main' &&
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      needs.validate.outputs.windows_signed == 'true' &&
+      needs.validate.outputs.channel == 'stable'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: winget
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      GH_REPO: penso/herdr-gpui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
+      - name: Download the published checksums of the final installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh release view "v$VERSION" --json isDraft,isPrerelease | jq -e '.isDraft == false and .isPrerelease == false'
+          [[ "$(gh api "repos/penso/herdr-gpui/git/ref/tags/v$VERSION" --jq .object.sha)" == "$RELEASE_SHA" ]]
+          gh release download "v$VERSION" --dir final --pattern SHA256SUMS
+      - name: Install the pinned Komac
+        run: python3 scripts/release/winget.py install-komac "$RUNNER_TEMP/komac" > "$RUNNER_TEMP/komac-path"
+      - name: Check the generated manifests and open the winget-pkgs pull request
+        env:
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: python3 scripts/release/winget.py submit "$VERSION" final/SHA256SUMS "$(cat "$RUNNER_TEMP/komac-path")" "$RUNNER_TEMP/winget"

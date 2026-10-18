@@ -8,6 +8,8 @@ use herdr_client::protocol::{
 };
 use std::sync::Arc;
 
+mod wsl_panes;
+
 #[test]
 fn escapes_shell_metacharacters_and_keeps_plain_paths_bare() {
     let paths = [

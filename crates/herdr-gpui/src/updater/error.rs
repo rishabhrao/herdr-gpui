@@ -361,6 +361,13 @@ pub enum UpdateError {
     NotCommitted,
     #[error("Installation changed during update")]
     InstallationChanged,
+    #[error(
+        "This release has no signed Windows installer metadata. Download it from GitHub, or check for a newer release"
+    )]
+    MissingInstallerMetadata,
+    #[cfg(windows)]
+    #[error(transparent)]
+    Windows(#[from] super::windows::Error),
 }
 
 #[cfg(test)]

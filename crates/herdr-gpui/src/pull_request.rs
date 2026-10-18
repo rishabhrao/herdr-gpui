@@ -7,6 +7,7 @@ mod fetch;
 mod lookup;
 mod model;
 mod parse;
+mod remote;
 mod store;
 
 #[cfg(test)]
@@ -14,17 +15,17 @@ mod tests;
 
 pub(crate) use {
     cache::Cache,
-    fetch::{local_checkout, origin_repository, run, run_bytes},
+    fetch::{local_checkout, run, run_bytes},
     lookup::Lookup,
     model::{
         Input, MergeMethod, Origin, Outcome, PullRequest, ReviewDecision, State, clean,
         repository_input, workspace_input,
     },
+    remote::{Base, Remote, base_repository},
     store::Shared,
 };
 
 pub(crate) use fetch::{by_number, local_repository, repository_key};
-#[cfg(unix)]
 pub(crate) use model::MergeState;
 #[cfg(any(test, all(feature = "integration-test", target_os = "macos")))]
 pub(crate) use model::fixture;

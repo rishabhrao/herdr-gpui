@@ -58,10 +58,19 @@ fn type_across_gap(
                 .lock()
                 .unwrap()
                 .apply(ClientEvent::Snapshot(Arc::new(next)));
-            project_until(view, cx, "newer snapshot", |view| !view.input_ready());
+            project_until(view, cx, "newer snapshot", |view| {
+                if gap == Gap::FocusMoves {
+                    !view.input_ready()
+                } else {
+                    view.live.pending_snapshot.is_some()
+                }
+            });
             view.replace_text_in_range(None, "x", window, cx);
             view.key_down(&enter, window, cx);
-            assert_eq!(view.pending_input.len(), 2);
+            assert_eq!(
+                view.pending_input.len(),
+                if gap == Gap::FocusMoves { 2 } else { 0 }
+            );
             inbox
                 .lock()
                 .unwrap()
@@ -116,8 +125,24 @@ fn input_held_across_gap_is_discarded_when_focus_moves(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
-fn input_held_across_gap_never_reaches_a_popup_that_opened(cx: &mut gpui::TestAppContext) {
+fn input_during_metadata_gap_names_the_visible_pane_until_popup_frame_commits(
+    cx: &mut gpui::TestAppContext,
+) {
     let (mut server, view, cx) = type_across_gap(cx, Gap::PopupOpens);
+    assert_eq!(
+        server.receive(),
+        pane_input("w1:p1", ClientPaneInputEvent::TextCommit("x".into()))
+    );
+    let enter = crate::terminal::key_input(
+        &gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke::parse("enter").unwrap(),
+            is_held: false,
+            prefer_character_input: false,
+        },
+        false,
+    )
+    .unwrap();
+    assert_eq!(server.receive(), pane_input("w1:p1", enter));
     assert_eq!(
         server.receive(),
         ClientMessage::ClientShellPopupInput {
@@ -125,7 +150,8 @@ fn input_held_across_gap_never_reaches_a_popup_that_opened(cx: &mut gpui::TestAp
             events: vec![ClientPaneInputEvent::TextCommit("sentinel".into())],
         }
     );
-    view.read_with(cx, |view, _| assert!(view.local_error.is_some()));
+    // The daemon silently drops blocked pane input; it is never replayed to the popup.
+    view.read_with(cx, |view, _| assert!(view.local_error.is_none()));
 }
 
 #[gpui::test]
@@ -140,6 +166,7 @@ fn input_held_across_gap_is_bounded_and_dropped_on_reset(cx: &mut gpui::TestAppC
         view.poll_endpoints(cx);
         let mut next = (**view.live.snapshot.as_ref().unwrap()).clone();
         next.revision += 1;
+        next.focused_pane_id = Some("w1:p2".into());
         view.endpoints[1]
             .connection
             .inbox

@@ -114,6 +114,8 @@ impl AgentSort {
 /// The window chrome this endpoint remembers between runs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Chrome {
+    /// The activity bar's panel; `None` before one was picked.
+    pub activity_panel: Option<crate::sidebar::ActivityPanel>,
     pub sidebar_width: Option<f32>,
     pub sidebar_split: Option<f32>,
     /// The sort the user picked with the panel toggle, like upstream's
@@ -302,6 +304,10 @@ fn read_chrome(path: &Path) -> crate::Result<Chrome> {
             .filter(|width| width.is_finite() && *width > 0.0)
     };
     Ok(Chrome {
+        activity_panel: object
+            .get("activity_panel")
+            .and_then(serde_json::Value::as_str)
+            .and_then(crate::sidebar::ActivityPanel::parse),
         sidebar_width,
         sidebar_split,
         agent_sort,
@@ -357,6 +363,7 @@ fn write_chrome(path: &Path, chrome: Chrome) -> crate::Result<()> {
         serde_json::to_writer(
             &mut file,
             &serde_json::json!({
+                "activity_panel": chrome.activity_panel.map(crate::sidebar::ActivityPanel::name),
                 "sidebar_width_px": width,
                 "sidebar_split": chrome.sidebar_split.filter(|split| {
                     split.is_finite() && (0.1..=0.9).contains(split)

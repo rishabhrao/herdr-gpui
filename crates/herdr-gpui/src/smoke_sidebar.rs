@@ -91,7 +91,7 @@ pub fn start_sidebar(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
         start_notifications(handle, cx);
         return;
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     if std::env::var_os("HERDR_TEST_PAGES_ONLY").is_some() {
         start_pages(handle, cx);
         return;
@@ -131,11 +131,14 @@ pub fn start_sidebar(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
             cx.update(|cx| cx.quit());
             return;
         }
+        // Frames verified at their full size; the rest were skipped as larger
+        // than the display.
+        let mut drawn = 0;
         for frame in 0..72 {
             timer.timer(Duration::from_millis(100)).await;
             let result = AnyWindowHandle::from(handle).update(
                 cx,
-                |root, window, cx| -> Result<()> {
+                |root, window, cx| -> Result<bool> {
                     use crate::sidebar::layout_tests::PaintedProbes;
                     let (w, h) =
                         [(1200., 780.), (640., 400.), (1000., 650.), (800., 600.)][(frame % 12) / 3];
@@ -146,14 +149,37 @@ pub fn start_sidebar(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                     let style = [Style::Flat, Style::Rounded][frame / 36];
                     // Rounded rows are taller; grow both sections so the probed
                     // rows stay inside their lists at the smallest size too.
+                    // The activity bar's Workspaces title sits over the
+                    // sidebar, so its height is added back too.
+                    let title = root
+                        .clone()
+                        .downcast::<HerdrWindow>()
+                        .map_err(|_| anyhow!("unexpected root"))?
+                        .read(cx)
+                        .activity_title_height();
                     let h = h
                         + sidebar::DEVICE_FOOTER_HEIGHT
+                        + title
                         + if style == Style::Rounded { 160. } else { 0. };
                     let mode = LayoutMode::new(density, style);
                     let compact = density == Density::Compact;
                     if frame % 3 == 0 {
                         window.resize(fixture_size(w, h));
                     } else if window.viewport_size() != fixture_size(w, h) {
+                        // The platform keeps a window within its screen, so a
+                        // size larger than the display (a 1024x768 CI runner)
+                        // is skipped and counted, never passed as drawn.
+                        let size = fixture_size(w, h);
+                        let fits = window.display(cx).is_none_or(|display| {
+                            let screen = display.visible_bounds().size;
+                            size.width <= screen.width && size.height <= screen.height
+                        });
+                        if !fits {
+                            eprintln!(
+                                "SIDEBAR skipped frame={frame}: {size:?} does not fit the display"
+                            );
+                            return Ok(false);
+                        }
                         bail!(
                             "native resize did not settle: {:?}",
                             window.viewport_size()
@@ -219,8 +245,8 @@ pub fn start_sidebar(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                             || (!expected_short
                                 && (p.width < px(150.) || !p.glyph_text.ends_with('\u{2026}')))
                             || p.clipped
-                            || p.bounds.size.width != expected_width
-                            || p.mask.size.width != expected_width
+                            || !sidebar::layout_tests::within_device_pixel(p.bounds.size.width, expected_width, window.scale_factor())
+                            || p.mask.size.width != p.bounds.size.width
                             || p.width > p.bounds.size.width
                             || p.bounds.size.height != px(16.)
                         {
@@ -235,13 +261,21 @@ pub fn start_sidebar(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                         "SIDEBAR verified frame={frame} mode={mode:?} viewport={:?} clipped=0",
                         window.viewport_size()
                     );
-                    Ok(())
+                    Ok(true)
                 },
             );
-            if !matches!(result, Ok(Ok(()))) {
-                eprintln!("SIDEBAR native FAIL: {result:?}");
-                std::process::exit(1);
+            match result {
+                Ok(Ok(true)) => drawn += 1,
+                Ok(Ok(false)) => {}
+                _ => {
+                    eprintln!("SIDEBAR native FAIL: {result:?}");
+                    std::process::exit(1);
+                }
             }
+        }
+        if drawn == 0 {
+            eprintln!("SIDEBAR native FAIL: no fixture size fits the display");
+            std::process::exit(1);
         }
         // The other row layouts place text by their own geometry, so they are
         // held to what every layout owes: shaped glyphs match the text they
@@ -676,7 +710,7 @@ pub fn start_sidebar(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
             eprintln!("SIDEBAR native paint FAIL: {probes:?}");
             std::process::exit(1);
         }
-        eprintln!("SIDEBAR native PASS: {cascade}; 72 Menlo draws, flat and rounded normal/compact/comfortable layouts at 4 sizes, collapse/expand, menu isolation, PR title/stats glyphs, GitHub auth fixtures, right-click dialogs and Unicode fields at 2 sizes; host routing, disabled selection, scoped repositories, resized host/agent glyphs, independent scroll and decoy key window");
+        eprintln!("SIDEBAR native PASS: {cascade}; {drawn}/72 Menlo draws (the rest larger than the display), flat and rounded normal/compact/comfortable layouts at 4 sizes, collapse/expand, menu isolation, PR title/stats glyphs, GitHub auth fixtures, right-click dialogs and Unicode fields at 2 sizes; host routing, disabled selection, scoped repositories, resized host/agent glyphs, independent scroll and decoy key window");
         std::process::exit(0);
     })
     .detach();

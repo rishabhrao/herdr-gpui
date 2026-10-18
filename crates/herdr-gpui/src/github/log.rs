@@ -185,6 +185,14 @@ pub(super) fn kind(error: &Error) -> &'static str {
         Error::SecretServiceWrite(_) => "secret_service_write",
         #[cfg(target_os = "linux")]
         Error::SecretServiceUnavailable => "secret_service_unavailable",
+        #[cfg(windows)]
+        Error::CredentialManager(super::CredentialManagerError::Read(_)) => {
+            "credential_manager_read"
+        }
+        #[cfg(windows)]
+        Error::CredentialManager(super::CredentialManagerError::Write(_)) => {
+            "credential_manager_write"
+        }
         Error::CredentialDirectory => "credential_directory",
         Error::CredentialPermissions => "credential_permissions",
         Error::CredentialIo(_) => "credential_io",

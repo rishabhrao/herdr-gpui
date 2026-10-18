@@ -31,6 +31,22 @@ impl FileTransfer {
     pub(crate) fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
     }
+
+    /// How far the copy is, for the taskbar: busy until its size is known,
+    /// and nothing once cancelled.
+    #[cfg(any(windows, test))]
+    pub(crate) fn progress(&self) -> Option<crate::progress::Progress> {
+        use crate::progress::Progress;
+        let (sent, total, cancelled) = self.shown;
+        if cancelled {
+            return None;
+        }
+        Some(if total == 0 {
+            Progress::Busy
+        } else {
+            Progress::Fraction(transfer_progress(sent, total).0)
+        })
+    }
 }
 
 impl Drop for FileTransfer {
@@ -62,6 +78,29 @@ fn transfer_progress(sent: u64, total: u64) -> (f32, String) {
         fraction,
         format!("{} / {} ({:.0}%)", size(sent), size(total), fraction * 100.),
     )
+}
+
+#[cfg(any(windows, test))]
+impl HerdrWindow {
+    /// The long operation this window's taskbar button reports: a file copy,
+    /// else a teleport, else a pane move, else an app update. Each dialog
+    /// runs one at a time.
+    pub(crate) fn taskbar_progress(&self) -> Option<crate::progress::Progress> {
+        self.file_transfer
+            .as_ref()
+            .and_then(FileTransfer::progress)
+            .or_else(|| {
+                self.teleport
+                    .as_ref()
+                    .and_then(|teleport| teleport.progress())
+            })
+            .or_else(|| self.pane_carry.as_ref().and_then(|carry| carry.progress()))
+            .or_else(|| {
+                crate::update_panel::taskbar_progress(
+                    self.update_preview.as_ref().unwrap_or(self.updater.state()),
+                )
+            })
+    }
 }
 
 impl HerdrWindow {

@@ -2,7 +2,7 @@ use gpui::{prelude::*, *};
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{HerdrWindow, input::ViewInputHandler};
+use super::{HerdrWindow, input::ViewInputHandler, words};
 
 // Byte offsets internally; only the platform input boundary uses UTF-16.
 #[derive(Default)]
@@ -126,6 +126,28 @@ impl DialogInput {
                     }
                 }
             }
+            "left" | "right" | "backspace" | "delete"
+                if crate::actions::word_modifiers(key.modifiers) =>
+            {
+                let selected = !self.selection.is_empty();
+                let from = match key.key.as_str() {
+                    "left" if !key.modifiers.shift && selected => self.selection.start,
+                    "right" if !key.modifiers.shift && selected => self.selection.end,
+                    _ => cursor,
+                };
+                let offset = match key.key.as_str() {
+                    "left" | "backspace" => words::previous_start(&self.text, from),
+                    _ => words::next_end(&self.text, from),
+                };
+                if matches!(key.key.as_str(), "left" | "right") {
+                    self.move_to(offset, key.modifiers.shift);
+                } else {
+                    if !selected {
+                        self.selection = offset.min(cursor)..offset.max(cursor);
+                    }
+                    self.replace(None, "", false, None);
+                }
+            }
             "left" | "right" | "home" | "end" => {
                 let offset = match key.key.as_str() {
                     "home" => 0,
@@ -198,6 +220,14 @@ impl HerdrWindow {
         div()
             .id("dialog-input")
             .debug_selector(|| "dialog-input".into())
+            .role(Role::TextInput)
+            .aria_value(
+                self.menu
+                    .input
+                    .as_ref()
+                    .map(|input| SharedString::from(input.text.clone()))
+                    .unwrap_or_default(),
+            )
             .w_full()
             .h(px(self.config.ui.line_height() + 10.))
             .px(px(6.))
@@ -317,6 +347,8 @@ impl HerdrWindow {
 mod tests {
     use super::DialogInput;
     use gpui::Keystroke;
+
+    mod word_keys;
 
     #[test]
     fn utf16_replacement_and_composition_use_relative_selection() {

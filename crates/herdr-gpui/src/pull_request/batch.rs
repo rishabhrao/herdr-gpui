@@ -6,6 +6,7 @@
 use super::{
     Input, Origin, Origins, Result,
     fetch::{Ask, FIELDS, Head, NUMBER_QUERY, TIMEOUT, Target, target},
+    parse::current,
     parse_graphql, parse_numbered,
 };
 use crate::{Error, github::Tokens};
@@ -37,7 +38,7 @@ const HEADS: &str = r#"query($owner: String!, $repo: String!, $branch: String!) 
   repository(owner: $owner, name: $repo) {
     pullRequests(first: 100, headRefName: $branch, orderBy: {field: UPDATED_AT, direction: DESC}) {
       pageInfo { hasNextPage }
-      nodes { number headRepositoryOwner { login } headRepository { name } }
+      nodes { number state headRepositoryOwner { login } headRepository { name } }
     }
   }
 }"#;
@@ -308,13 +309,13 @@ fn crowded(
     parse_graphql(response, owner, repo, branch, Some(head))
 }
 
-/// The one listed pull request from `head`, if there is one.
+/// The listed pull request from `head` its branch stands for, if any.
 pub(super) fn matching_number(heads: &Value, head: &Head) -> crate::Result<Option<u64>> {
     let listing = &heads["data"]["repository"]["pullRequests"];
     if listing["pageInfo"]["hasNextPage"] == true {
         return Err(Error::PrAmbiguous);
     }
-    let numbers: Vec<u64> = listing["nodes"]
+    let heads: Vec<&Value> = listing["nodes"]
         .as_array()
         .ok_or(Error::PrRepository)?
         .iter()
@@ -325,14 +326,10 @@ pub(super) fn matching_number(heads: &Value, head: &Head) -> crate::Result<Optio
                 && pr["headRepository"]["name"]
                     .as_str()
                     .is_some_and(|repo| repo.eq_ignore_ascii_case(&head.repo))
+                && pr["number"].is_u64()
         })
-        .filter_map(|pr| pr["number"].as_u64())
         .collect();
-    match numbers.as_slice() {
-        [] => Ok(None),
-        [number] => Ok(Some(*number)),
-        _ => Err(Error::PrAmbiguous),
-    }
+    Ok(current(heads, |pr| pr["state"] == "OPEN")?.and_then(|pr| pr["number"].as_u64()))
 }
 
 pub(super) fn parse(response: Value, target: &Target) -> Result {

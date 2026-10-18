@@ -159,7 +159,7 @@ fn local_git_verification_rejects_wrong_checkout_branch_and_remote_before_gh() {
     ]);
     assert_eq!(
         local_repository(&registry_input, Instant::now() + TIMEOUT, &|| false).unwrap(),
-        ("example".into(), "project".into())
+        origin_base("example", "project")
     );
     registry_input.branch = "missing".into();
     assert!(

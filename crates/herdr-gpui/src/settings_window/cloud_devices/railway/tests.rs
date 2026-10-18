@@ -191,6 +191,7 @@ fn removal_waits_for_a_running_setup(cx: &mut TestAppContext) {
                 main.start_cloud_job(
                     CloudProvider::Railway,
                     "box".into(),
+                    None,
                     |stop, _| {
                         while !stop() {
                             std::thread::sleep(std::time::Duration::from_millis(5));

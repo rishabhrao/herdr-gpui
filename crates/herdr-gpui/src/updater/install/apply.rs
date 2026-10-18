@@ -16,7 +16,7 @@ use std::{
         fs::{MetadataExt, OpenOptionsExt},
     },
     path::{Path, PathBuf},
-    process::{Command, ExitCode, Stdio},
+    process::{ExitCode, Stdio},
     sync::{atomic::AtomicBool, mpsc},
     thread,
     time::{Duration, Instant},
@@ -204,7 +204,7 @@ fn helper(stage: &Path) -> Result<()> {
             &backup,
             installation.mode,
             || {
-                Command::new(&installation.executable)
+                herdr_client::new_command(&installation.executable)
                     .args(args)
                     .current_dir(cwd)
                     .stdin(Stdio::null())

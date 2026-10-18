@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 
 /// Raised whenever a request or reply changes shape, so `status` can tell
 /// an outdated app from a refused request. 3: `browser.open` placement.
-pub(crate) const PROTOCOL_VERSION: u32 = 3;
+/// 4: `link`.
+pub(crate) const PROTOCOL_VERSION: u32 = 4;
 
 /// Older apps and clients know only tabs, so a tab is left off the wire.
 fn is_tab(placement: &Placement) -> bool {
@@ -23,7 +24,6 @@ fn is_tab(placement: &Placement) -> bool {
 
 /// Bounds a request and a response alike. A response can carry a batch of
 /// notes, each with a bounded snippet of the page.
-#[cfg(unix)]
 pub(crate) const MAX_MESSAGE: usize = 256 * 1024;
 /// The longest `browser feedback --wait`, in seconds.
 pub(crate) const MAX_WAIT_SECONDS: u64 = 600;
@@ -59,6 +59,16 @@ pub(crate) enum Request {
     Settings(Call<settings::SettingsOp>),
     #[serde(rename = "events")]
     Events(Call<events::EventsOp>),
+    #[serde(rename = "link")]
+    Link(Call<LinkOp>),
+}
+
+/// A `herdr-gpui://` link the shell started a second copy of the app with.
+/// The app parses it again: any local process can send one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LinkOp {
+    pub url: String,
 }
 
 /// A request of a family other than the browser's: who asks, and what.
@@ -72,7 +82,6 @@ pub(crate) struct Call<T> {
 impl Request {
     /// How long the app may take to answer, beyond the usual bound: some
     /// requests wait for the user, a page, or an event on purpose.
-    #[cfg(any(unix, test))]
     pub(crate) fn wait_seconds(&self) -> u64 {
         let wait = match self {
             Self::Feedback(request) => request.wait_seconds,
@@ -237,7 +246,6 @@ pub(crate) enum Response {
     },
 }
 
-#[cfg(any(unix, test))]
 impl Response {
     pub(crate) fn error(code: ErrorCode, message: impl Into<String>) -> Self {
         Self::Error {
@@ -246,7 +254,6 @@ impl Response {
         }
     }
 
-    #[cfg(unix)]
     pub(crate) fn done(message: impl Into<String>) -> Self {
         Self::Done {
             message: message.into(),

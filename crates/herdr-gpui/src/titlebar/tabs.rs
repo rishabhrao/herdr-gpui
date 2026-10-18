@@ -53,10 +53,23 @@ impl HerdrWindow {
 
     /// Keep the toggle anchored in the sidebar whenever it fits. The rail has
     /// room on Linux/Windows, but not beside macOS's traffic-light clearance.
+    /// The activity bar's column holds the toggle in its own title instead.
     fn sidebar_header_has_toggle(&self, window: &Window) -> bool {
-        self.sidebar_mode()
-            .width(self.sidebar_width, f32::from(window.viewport_size().width))
-            .is_some_and(|width| width >= leading_inset() + SIDEBAR_TOGGLE_SIZE)
+        !self.activity_bar_leads()
+            && self
+                .sidebar_column_width(f32::from(window.viewport_size().width))
+                .is_some_and(|width| width >= leading_inset() + SIDEBAR_TOGGLE_SIZE)
+    }
+
+    /// What the expanded header puts between the clearance and Back: the
+    /// toggle, or with the toggle in the activity bar's column, the inset it
+    /// would have left, so Back keeps the same visible room either way.
+    fn header_lead(&self) -> f32 {
+        if self.activity_bar_leads() {
+            SIDEBAR_TOGGLE_INSET
+        } else {
+            SIDEBAR_TOGGLE_SIZE
+        }
     }
 
     /// Whether Back and Forward fit in the expanded sidebar's header after
@@ -64,12 +77,12 @@ impl HerdrWindow {
     /// that hands them to the leftmost strip instead.
     fn navigation_in_sidebar(&self, window: &Window) -> bool {
         let mode = self.sidebar_mode();
-        let column = mode
-            .width(self.sidebar_width, f32::from(window.viewport_size().width))
+        let column = self
+            .sidebar_column_width(f32::from(window.viewport_size().width))
             .unwrap_or(0.);
         super::navigation::shown()
             && mode == SidebarMode::Expanded
-            && column >= leading_inset() + SIDEBAR_TOGGLE_SIZE + Style::NATIVE.width() + SIDEBAR_END
+            && column >= leading_inset() + self.header_lead() + Style::NATIVE.width() + SIDEBAR_END
     }
 
     /// The sidebar column's first row, level with the strips beside it. It
@@ -90,7 +103,11 @@ impl HerdrWindow {
                 header.child(self.sidebar_toggle(cx))
             })
             .when(self.navigation_in_sidebar(window), |header| {
-                header.child(self.navigation(cx))
+                header
+                    .when(self.activity_bar_leads(), |header| {
+                        header.child(div().flex_none().w(px(self.header_lead())))
+                    })
+                    .child(self.navigation(cx))
             });
         movable(header, window)
     }
@@ -103,8 +120,7 @@ impl HerdrWindow {
         cx: &mut Context<Self>,
     ) -> Div {
         let width = self
-            .sidebar_mode()
-            .width(self.sidebar_width, f32::from(window.viewport_size().width))
+            .sidebar_column_width(f32::from(window.viewport_size().width))
             .unwrap_or(0.);
         div()
             .flex()
@@ -147,7 +163,6 @@ impl HerdrWindow {
             .min_w_0()
             .overflow_hidden()
             .items_center();
-        let mode = self.sidebar_mode();
         let navigation = super::navigation::shown();
         // Keep the toggle in the rail or expanded sidebar when it fits;
         // Back and Forward alone lead the content beside it.
@@ -164,8 +179,8 @@ impl HerdrWindow {
                     .child(self.strip_navigation(cx)),
             );
         }
-        let column = mode
-            .width(self.sidebar_width, f32::from(window.viewport_size().width))
+        let column = self
+            .sidebar_column_width(f32::from(window.viewport_size().width))
             .unwrap_or(0.);
         Some(
             leading
@@ -176,7 +191,13 @@ impl HerdrWindow {
                         .w(px((leading_inset() - column).max(0.))),
                     window,
                 ))
-                .child(self.sidebar_toggle(cx))
+                .map(|leading| {
+                    if self.activity_bar_leads() {
+                        leading.pl(px(SIDEBAR_TOGGLE_INSET))
+                    } else {
+                        leading.child(self.sidebar_toggle(cx))
+                    }
+                })
                 .when(navigation, |leading| {
                     leading.child(self.strip_navigation(cx))
                 }),

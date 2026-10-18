@@ -159,7 +159,7 @@ impl HerdrWindow {
                 .and_then(|()| handle.set_surface_active(&snapshot.boot_id, true));
             match result {
                 Ok(request) => {
-                    state.surface = None;
+                    state.invalidate_surface();
                     state.activation = Some(crate::state::SurfaceActivation {
                         request,
                         boot: snapshot.boot_id.clone(),

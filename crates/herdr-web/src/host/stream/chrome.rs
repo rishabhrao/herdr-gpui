@@ -3,7 +3,7 @@ use super::cdp::Cdp;
 use std::{
     io::{BufRead as _, BufReader},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::{Arc, OnceLock},
 };
 
@@ -44,7 +44,7 @@ fn stop_leftover(profile: &Path) {
     if pid.is_empty() || !pid.bytes().all(|byte| byte.is_ascii_digit()) {
         return;
     }
-    let Ok(output) = Command::new("ps")
+    let Ok(output) = herdr_client::new_command("ps")
         .args(["-p", pid, "-o", "command="])
         .output()
     else {
@@ -52,7 +52,7 @@ fn stop_leftover(profile: &Path) {
     };
     let command = String::from_utf8_lossy(&output.stdout);
     if command.contains(&format!("--user-data-dir={}", profile.display())) {
-        let _ = Command::new("kill").arg(pid).status();
+        let _ = herdr_client::new_command("kill").arg(pid).status();
     }
 }
 
@@ -61,7 +61,7 @@ pub(super) fn launch(profile: &Path) -> crate::Result<Arc<Cdp>> {
     let binary = binary().ok_or(crate::Error::Unsupported)?;
     std::fs::create_dir_all(profile)?;
     stop_leftover(profile);
-    let mut child = Command::new(binary)
+    let mut child = herdr_client::new_command(binary)
         .args([
             "--headless=new",
             "--remote-debugging-address=127.0.0.1",

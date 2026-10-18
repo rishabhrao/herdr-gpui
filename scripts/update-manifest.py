@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package updater archives and emit the exact schema-1 authentication payload."""
+"""Package updater archives and emit the exact signed manifest payloads."""
 
 import argparse
 import gzip
@@ -18,6 +18,7 @@ ENTRY_LIMIT = 10000
 MANIFEST_LIMIT = 65536
 LINUX_TARGETS = ("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")
 TARGETS = ("universal-apple-darwin", *LINUX_TARGETS)
+WINDOWS_TARGETS = ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc")
 ED25519_SPKI = bytes.fromhex("302a300506032b6570032100")
 
 
@@ -139,17 +140,27 @@ def package_linux(binary, target, release, destination):
     package([(Path(binary), name)], destination, linux=True)
 
 
-def create(directory, release, require_all_targets=False, packages=False):
+def create(directory, release, require_all_targets=False, packages=False, windows=False):
+    """Schema 1 lists the standalone archives, schema 2 the Linux packages,
+    and schema 3 the Windows installers; each family has its own manifest so
+    a client never meets a target its schema does not know."""
+    if packages and windows:
+        raise ValueError("a manifest lists packages or Windows installers, not both")
     directory = Path(directory)
     assets = []
     version(release)
     names = [(target, asset_name(release, target)) for target in TARGETS]
+    schema, output = 1, "update-manifest.json"
     if packages:
         names = [(target, f"Herdr-{release}-{target}.{extension}")
                  for target in LINUX_TARGETS for extension in ("deb", "rpm", "pkg.tar.zst")]
+        schema, output = 2, "package-manifest.json"
+    if windows:
+        names = [(target, f"Herdr-{release}-{target}-setup.exe") for target in WINDOWS_TARGETS]
+        schema, output = 3, "windows-manifest.json"
     for target, name in names:
         path = directory / name
-        if not packages and not require_all_targets and not path.exists() and not path.is_symlink() and target != TARGETS[0]:
+        if schema == 1 and not require_all_targets and not path.exists() and not path.is_symlink() and target != TARGETS[0]:
             continue
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"missing or non-regular archive: {name}")
@@ -161,11 +172,11 @@ def create(directory, release, require_all_targets=False, packages=False):
             for chunk in iter(lambda: source.read(65536), b""):
                 digest.update(chunk)
         assets.append(dict(target=target, name=name, size=size, sha256=digest.hexdigest()))
-    payload = json.dumps(dict(schema=2 if packages else 1, version=release, assets=assets), separators=(",", ":")).encode("ascii")
+    payload = json.dumps(dict(schema=schema, version=release, assets=assets), separators=(",", ":")).encode("ascii")
     if len(payload) > MANIFEST_LIMIT:
         raise ValueError("manifest exceeds 64 KiB")
-    with (directory / ("package-manifest.json" if packages else "update-manifest.json")).open("xb") as output:
-        output.write(payload)
+    with (directory / output).open("xb") as manifest:
+        manifest.write(payload)
     return payload
 
 
@@ -184,7 +195,9 @@ def main():
     manifest.add_argument("directory")
     manifest.add_argument("version")
     manifest.add_argument("--require-all-targets", action="store_true")
-    manifest.add_argument("--packages", action="store_true", help="write the separate signed Linux package manifest; require all six packages")
+    family = manifest.add_mutually_exclusive_group()
+    family.add_argument("--packages", action="store_true", help="write the separate signed Linux package manifest; require all six packages")
+    family.add_argument("--windows", action="store_true", help="write the separate signed Windows installer manifest; require both signed installers")
     commands.add_parser("validate-public-key")
     key = commands.add_parser("check-key")
     key.add_argument("openssl")
@@ -196,7 +209,7 @@ def main():
         elif args.command == "package-linux":
             package_linux(args.binary, args.target, args.version, args.destination)
         elif args.command == "create":
-            create(args.directory, args.version, args.require_all_targets, args.packages)
+            create(args.directory, args.version, args.require_all_targets, args.packages, args.windows)
         elif args.command == "validate-public-key":
             public_key(os.environ.get("HERDR_UPDATE_PUBLIC_KEY", ""))
         else:

@@ -1,8 +1,17 @@
 use super::*;
 
+/// A child that fails as `ssh` does: `message` on stderr, then exit 255.
+#[cfg(unix)]
 fn failing(message: &str) -> Command {
     let mut command = Command::new("/bin/sh");
     command.args(["-c", &format!("printf '%s\\n' '{message}' >&2; exit 255")]);
+    command
+}
+
+#[cfg(windows)]
+fn failing(message: &str) -> Command {
+    let mut command = crate::new_command("cmd.exe");
+    command.args(["/d", "/c", &format!("echo {message}1>&2& exit 255")]);
     command
 }
 

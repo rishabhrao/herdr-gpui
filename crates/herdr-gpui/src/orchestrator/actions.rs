@@ -207,7 +207,7 @@ fn herdr(
     operation: &'static str,
     cancelled: &AtomicBool,
 ) -> Result<Vec<u8>> {
-    host.capture(&Host::herdr_line(args), cancelled)
+    host.herdr_exec(args, Host::QUERY_IDLE, cancelled)
         .map_err(script(operation))
 }
 
@@ -248,6 +248,27 @@ fn remove_worktree(
     let Some(path) = workspace.path.as_deref() else {
         return Ok(());
     };
+    if host.is_local() {
+        if !path.is_dir() {
+            return Ok(());
+        }
+        let path = path.to_string_lossy();
+        let git = |args: &[&str]| {
+            host.exec("git", args, Host::QUERY_IDLE, cancelled)
+                .map_err(script(REMOVING))
+        };
+        let common = git(&[
+            "-C",
+            &path,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ])?;
+        let common = String::from_utf8_lossy(&common);
+        let git_dir = format!("--git-dir={}", common.trim_end_matches(['\r', '\n']));
+        git(&[&git_dir, "worktree", "remove", "--force", &path])?;
+        return Ok(());
+    }
     let body = format!(
         "path={path}\n\
          [ -d \"$path\" ] || exit 0\n\
@@ -383,14 +404,21 @@ fn destination(
             prepared: Some(prepared),
         });
     }
-    let body = format!(
-        "git -C {} rev-parse --verify --quiet {}\n",
-        shell_quote(&site.main_root),
-        shell_quote(&format!("{base}^{{commit}}")),
-    );
     let commit = site
         .host
-        .capture(&body, cancelled)
+        .exec(
+            "git",
+            &[
+                "-C",
+                &site.main_root,
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{base}^{{commit}}"),
+            ],
+            Host::QUERY_IDLE,
+            cancelled,
+        )
         .map_err(script("Reading the base commit"))?;
     let commit = String::from_utf8_lossy(&commit).trim().to_owned();
     if commit.len() < 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
