@@ -62,6 +62,9 @@ impl Render for SidebarView {
         // A closed window leaves nothing to draw.
         self.window
             .update(cx, |view, cx| match view.sidebar_mode() {
+                _ if view.drawer_open() && view.activity_bar_shown() => view
+                    .render_drawer_panel(self.indicators, window, cx)
+                    .into_any_element(),
                 _ if view.activity_bar_leads() => view
                     .render_activity(self.indicators, window, cx)
                     .into_any_element(),

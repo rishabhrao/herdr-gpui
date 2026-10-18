@@ -284,6 +284,22 @@ impl HerdrWindow {
                 self.drawer_open() || (self.sidebar_visible && !self.compact()),
                 &self.theme,
             ))
+            // On a phone the drawer hides what needs the user: a dot says so.
+            .when(
+                self.compact() && !self.drawer_open() && self.overview_needing() > 0,
+                |toggle| {
+                    toggle.relative().child(
+                        div()
+                            .debug_selector(|| "toggle-sidebar-attention".into())
+                            .absolute()
+                            .top(px(3.))
+                            .right(px(3.))
+                            .size(px(7.))
+                            .rounded_full()
+                            .bg(rgb(self.theme.primary())),
+                    )
+                },
+            )
             .into_any_element()
     }
 

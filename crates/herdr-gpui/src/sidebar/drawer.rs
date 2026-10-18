@@ -44,15 +44,10 @@ impl HerdrWindow {
             .into_any_element()
     }
 
-    /// The expanded sidebar's width in the drawer, after the activity bar
-    /// when the bar leads.
+    /// The expanded sidebar's width in the drawer, which the section tabs
+    /// sit above rather than beside.
     pub(crate) fn drawer_sidebar_width(&self, window_width: f32) -> f32 {
-        let bar = if self.activity_bar_leads() {
-            super::activity::BAR_WIDTH
-        } else {
-            0.
-        };
-        (drawer_width(window_width) - bar).max(120.)
+        drawer_width(window_width)
     }
 
     /// The open drawer over the window body, and the shade beside it that

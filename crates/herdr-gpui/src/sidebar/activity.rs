@@ -27,6 +27,8 @@ mod tests;
 /// The bar's width: a 32px button with a margin either side.
 pub(crate) const BAR_WIDTH: f32 = 44.;
 const BUTTON: f32 = 32.;
+/// A drawer tab on a phone: a thumb's target, not a pointer's.
+const DRAWER_TAB: f32 = 44.;
 const ICON: f32 = 17.;
 const TITLE_HEIGHT: f32 = 32.;
 /// Room after the toggle at the title's end, so its glyph lines up with the
@@ -184,6 +186,12 @@ impl HerdrWindow {
     /// on, and not set aside by zen mode. The sidebar toggle then lives in
     /// the column rather than the title bar.
     pub(crate) fn activity_bar_leads(&self) -> bool {
+        self.activity_on() && !self.compact()
+    }
+
+    /// Whether the bar picks what the window shows: on, and not set aside
+    /// by zen mode. On a phone it does so from the drawer, not a column.
+    fn activity_on(&self) -> bool {
         self.activity_bar_shown() && !self.zen_layout()
     }
 
@@ -200,7 +208,7 @@ impl HerdrWindow {
     /// The section that takes the window's body, if one other than
     /// Workspaces is shown. Zen mode keeps the terminals.
     pub(crate) fn activity_section(&self) -> Option<ActivityPanel> {
-        self.activity_bar_leads()
+        self.activity_on()
             .then_some(self.activity.panel)
             .filter(|panel| *panel != ActivityPanel::Workspaces)
     }
@@ -209,6 +217,10 @@ impl HerdrWindow {
     /// sidebar as its mode lays it out, with the bar's room added whenever
     /// the bar leads, even beside a hidden sidebar.
     pub(crate) fn sidebar_column_width(&self, window_width: f32) -> Option<f32> {
+        // A phone gives the terminal, or a section, the whole width.
+        if self.compact() {
+            return None;
+        }
         if self.activity_section().is_some() {
             return Some(BAR_WIDTH);
         }
@@ -227,14 +239,13 @@ impl HerdrWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // On a phone, Workspaces opens and closes the drawer.
-        if panel == ActivityPanel::Workspaces && self.compact() {
-            if self.activity.panel == panel {
-                self.sidebar_drawer = !self.sidebar_drawer;
-            } else {
+        // On a phone the drawer's tabs pick: Workspaces stays in the drawer
+        // to choose one; any other section takes the screen.
+        if self.compact() {
+            if panel != self.activity.panel {
                 self.show_activity_panel(panel, window, cx);
-                self.sidebar_drawer = true;
             }
+            self.sidebar_drawer = panel == ActivityPanel::Workspaces;
             cx.notify();
             return;
         }
@@ -499,6 +510,83 @@ impl HerdrWindow {
                     .hover(move |style| style.bg(rgb(hover)))
             })
             .child(glyph)
+    }
+
+    /// The drawer on a phone: the sections as a row of tabs, then the
+    /// expanded sidebar, so a thumb reaches both from one place.
+    pub(crate) fn render_drawer_panel(
+        &self,
+        indicators: Indicators,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let theme = &self.theme;
+        let counts = self.activity_counts(cx);
+        let mut tabs = div()
+            .id("drawer-tabs")
+            .debug_selector(|| "drawer-tabs".into())
+            .role(Role::TabList)
+            .aria_label("Activity")
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_between()
+            .h(px(DRAWER_TAB + 12.))
+            .px(px(8.))
+            .border_b_1()
+            .border_color(rgb(theme.active))
+            .bg(self.fill().panel(theme.sidebar_background()));
+        for &panel in ActivityPanel::ALL {
+            let state = if panel == self.activity.panel {
+                BarState::Selected
+            } else {
+                BarState::Idle
+            };
+            let busy = panel == ActivityPanel::Overview && self.overview_working() > 0;
+            tabs = tabs.child(
+                self.bar_button(
+                    panel_selector(panel),
+                    panel.icon(),
+                    panel.label(),
+                    (state, busy),
+                    counts.of(panel),
+                )
+                .size(px(DRAWER_TAB))
+                .role(Role::Tab)
+                .aria_selected(state == BarState::Selected)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.select_activity_panel(panel, window, cx);
+                })),
+            );
+        }
+        tabs = tabs.child(
+            self.bar_button(
+                "activity-settings",
+                "icons/settings.svg",
+                "Settings",
+                (BarState::Idle, false),
+                None,
+            )
+            .size(px(DRAWER_TAB))
+            .role(Role::Button)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.close_drawer();
+                this.command(Command::Settings, window, cx);
+            })),
+        );
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_h_0()
+            .child(tabs)
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.render_sidebar(indicators, window, cx)),
+            )
     }
 
     fn count_bubble(&self, count: usize) -> Div {

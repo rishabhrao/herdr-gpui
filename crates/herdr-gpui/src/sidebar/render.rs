@@ -24,6 +24,10 @@ use crate::{
 };
 use gpui::{prelude::*, *};
 
+/// Padding above and below a row's text in a phone's drawer, for rows
+/// about a fingertip tall.
+const DRAWER_ROW_PADDING: f32 = 9.;
+
 mod agent_rows;
 mod device_tree;
 mod nested_agents;
@@ -44,7 +48,11 @@ impl HerdrWindow {
             sidebar_width(self.sidebar_width, window_width)
         };
         let split = self.sidebar_split.unwrap_or(0.5).clamp(0.1, 0.9);
-        let look = layout::for_config(&self.config, self.fill());
+        let mut look = layout::for_config(&self.config, self.fill());
+        // A phone's drawer is used with a thumb: rows get a finger's height.
+        if self.drawer_open() {
+            look.density.row_padding = look.density.row_padding.max(DRAWER_ROW_PADDING);
+        }
         let rows = layout_for(self.config.layout.mode);
         // The row a workspace menu was opened for keeps looking hovered while
         // the pointer is over the menu.
