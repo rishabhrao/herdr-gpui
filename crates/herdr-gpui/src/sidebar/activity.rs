@@ -227,6 +227,17 @@ impl HerdrWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // On a phone, Workspaces opens and closes the drawer.
+        if panel == ActivityPanel::Workspaces && self.compact() {
+            if self.activity.panel == panel {
+                self.sidebar_drawer = !self.sidebar_drawer;
+            } else {
+                self.show_activity_panel(panel, window, cx);
+                self.sidebar_drawer = true;
+            }
+            cx.notify();
+            return;
+        }
         if panel == ActivityPanel::Workspaces
             && self.activity.panel == panel
             && self.sidebar_visible
@@ -314,7 +325,13 @@ impl HerdrWindow {
         if self.activity_section().is_some() {
             return column;
         }
-        let sidebar = match self.sidebar_mode() {
+        // The drawer shows the expanded sidebar whatever the column shows.
+        let mode = if self.drawer_open() {
+            SidebarMode::Expanded
+        } else {
+            self.sidebar_mode()
+        };
+        let sidebar = match mode {
             SidebarMode::Expanded => self.render_sidebar(indicators, window, cx),
             // A window too narrow for the rail keeps the bar alone, which
             // still brings the sidebar back.

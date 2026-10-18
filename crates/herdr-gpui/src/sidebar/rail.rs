@@ -69,6 +69,11 @@ impl HerdrWindow {
         if self.sidebar_visible && !self.compact() {
             return SidebarMode::Expanded;
         }
+        // On a phone the activity bar alone stays beside the terminal; its
+        // Workspaces button opens the drawer.
+        if self.compact() && self.activity_bar_leads() {
+            return SidebarMode::Hidden;
+        }
         match self
             .settings
             .shared

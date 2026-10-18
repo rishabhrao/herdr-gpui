@@ -39,7 +39,7 @@ impl HerdrWindow {
     ) -> Stateful<Div> {
         let window_width = f32::from(window.viewport_size().width);
         let width = if self.drawer_open() {
-            super::drawer::drawer_width(window_width)
+            self.drawer_sidebar_width(window_width)
         } else {
             sidebar_width(self.sidebar_width, window_width)
         };

@@ -857,10 +857,8 @@ impl Render for HerdrWindow {
                     .relative()
                     .children(sidebar.map(|(sidebar, width)| {
                         // The drawer draws the sidebar; its column keeps the room.
-                        if self.drawer_open()
-                            && let Some(spacer) = self.drawer_spacer()
-                        {
-                            return spacer;
+                        if self.drawer_open() {
+                            return self.drawer_spacer(width);
                         }
                         let column = match merged {
                             true => self.sidebar_column(sidebar, window, cx).into_any_element(),

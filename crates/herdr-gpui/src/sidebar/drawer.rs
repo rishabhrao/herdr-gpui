@@ -3,7 +3,7 @@
 //! instead of taking half the width from it. Choosing a place closes it.
 //! Wider windows keep the sidebar as it is, so the same app driven from a
 //! laptop gets its column back.
-use super::{SidebarMode, rail::RAIL_WIDTH};
+use super::rail::RAIL_WIDTH;
 use crate::HerdrWindow;
 use gpui::{prelude::*, *};
 
@@ -33,18 +33,26 @@ impl HerdrWindow {
         std::mem::take(&mut self.sidebar_drawer)
     }
 
-    /// The column beside the terminal while the drawer is open: the rail's
-    /// room, empty, so the terminal keeps its size under the drawer.
-    pub(crate) fn drawer_spacer(&self) -> Option<AnyElement> {
-        let width = SidebarMode::Rail.width(None, self.viewport_width)?;
-        Some(
-            div()
-                .w(px(width))
-                .flex_none()
-                .h_full()
-                .bg(self.fill().panel(self.theme.sidebar_background()))
-                .into_any_element(),
-        )
+    /// The column beside the terminal while the drawer is open: its room,
+    /// `width` wide and empty, so the terminal keeps its size under the drawer.
+    pub(crate) fn drawer_spacer(&self, width: f32) -> AnyElement {
+        div()
+            .w(px(width))
+            .flex_none()
+            .h_full()
+            .bg(self.fill().panel(self.theme.sidebar_background()))
+            .into_any_element()
+    }
+
+    /// The expanded sidebar's width in the drawer, after the activity bar
+    /// when the bar leads.
+    pub(crate) fn drawer_sidebar_width(&self, window_width: f32) -> f32 {
+        let bar = if self.activity_bar_leads() {
+            super::activity::BAR_WIDTH
+        } else {
+            0.
+        };
+        (drawer_width(window_width) - bar).max(120.)
     }
 
     /// The open drawer over the window body, and the shade beside it that
