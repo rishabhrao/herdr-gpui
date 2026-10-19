@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
+
+mod region;
 use gpui::{
     AtlasTextureId, AtlasTextureKind, AtlasTile, BorderStyle, Bounds, ContentMask, Corners,
     DevicePixels, Edges, MonochromeSprite, Path, PolychromeSprite, Quad, ScaledPixels, Scene,

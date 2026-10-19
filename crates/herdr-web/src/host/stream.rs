@@ -123,8 +123,16 @@ impl Stream {
                 });
                 self.start();
             }
-            PageOp::Place { page, bounds } => {
-                self.show(PageOp::Place { page, bounds });
+            PageOp::Place {
+                page,
+                bounds,
+                covered,
+            } => {
+                self.show(PageOp::Place {
+                    page,
+                    bounds,
+                    covered,
+                });
                 let size = (bounds[2].max(1.), bounds[3].max(1.));
                 let mut state = self.state();
                 state.shown = true;

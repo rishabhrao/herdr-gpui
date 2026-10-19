@@ -6,6 +6,7 @@
 use super::{
     Location, Tab, TabId,
     native::{Event, Source},
+    page::{Drawn, snap},
 };
 use gpui::{AnyElement, Bounds, IntoElement, Pixels, Styled as _, Window, canvas};
 use herdr_web::{
@@ -36,7 +37,10 @@ const SHIM: &str = r#"(function () {
 struct Placement {
     handle: PageHandle,
     shown: Cell<bool>,
-    placed: Cell<Option<[f32; 4]>>,
+    /// The window's, shared by its pages: whether a menu or dialog takes
+    /// every tap.
+    covered: Rc<Cell<bool>>,
+    placed: Cell<Option<([f32; 4], bool)>>,
 }
 
 impl Placement {
@@ -50,10 +54,12 @@ impl Placement {
             f32::from(bounds.size.width),
             f32::from(bounds.size.height),
         ];
-        if self.placed.replace(Some(rect)) != Some(rect) {
+        let covered = self.covered.get();
+        if self.placed.replace(Some((rect, covered))) != Some((rect, covered)) {
             self.handle.send(PageOp::Place {
                 page: self.handle.id(),
                 bounds: rect,
+                covered,
             });
         }
     }
@@ -118,6 +124,7 @@ fn files(root: std::path::PathBuf, theme: Arc<Mutex<String>>) -> PageFiles {
 pub(crate) struct Remote {
     pages: HashMap<TabId, Rc<Placement>>,
     theme: Arc<Mutex<String>>,
+    covered: Rc<Cell<bool>>,
 }
 
 impl Remote {
@@ -130,14 +137,33 @@ impl Remote {
     }
 
     /// What lays tab `id`'s page out: an empty element that places the
-    /// page in the browser wherever it is drawn.
-    pub(crate) fn view(&self, id: TabId) -> Option<AnyElement> {
+    /// page in the browser wherever it is drawn. The page lies beneath the
+    /// window's drawing there, as a native page does on macOS, so it notes
+    /// in `drawn` where it shows and the window paints around it.
+    pub(crate) fn view(&self, id: TabId, drawn: Drawn) -> Option<AnyElement> {
         let placement = self.pages.get(&id)?.clone();
         Some(
-            canvas(move |bounds, _, _| placement.place(bounds), |_, _, _, _| {})
-                .size_full()
-                .into_any_element(),
+            canvas(
+                move |bounds, window, _| {
+                    let scale = window.scale_factor();
+                    let bounds = snap(bounds, scale);
+                    if placement.shown.get() {
+                        let visible = snap(bounds.intersect(&window.content_mask().bounds), scale);
+                        drawn.borrow_mut().insert(id, visible);
+                    }
+                    placement.place(bounds);
+                },
+                |_, _, _, _| {},
+            )
+            .size_full()
+            .into_any_element(),
         )
+    }
+
+    /// Notes whether a menu or dialog covers the window and takes every
+    /// tap, pages included. Each page hears as it is next placed.
+    pub(crate) fn cover(&self, covered: bool) {
+        self.covered.set(covered);
     }
 
     pub(crate) fn set_theme(&self, css: &str) {
@@ -189,6 +215,7 @@ impl Remote {
         let placement = Rc::new(Placement {
             handle,
             shown: Cell::new(false),
+            covered: self.covered.clone(),
             placed: Cell::new(None),
         });
         self.pages.insert(id, placement);

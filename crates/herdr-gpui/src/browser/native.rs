@@ -280,7 +280,7 @@ impl Pages {
                 Some(PageElement::new(id, page.clone(), self.drawn.clone()).into_any_element())
             }
             // A served app's page: its stand-in places the page in the browser.
-            None => self.remote.view(id),
+            None => self.remote.view(id, self.drawn.clone()),
         }
     }
 
@@ -480,6 +480,8 @@ impl Pages {
         for page in self.pages.values() {
             page.refuse_drops(refuse);
         }
+        // A served window's pages take no taps then either.
+        self.remote.cover(refuse);
     }
 
     /// Shows the pages in `ids` and hides every other one; an empty list

@@ -3,6 +3,7 @@
 use super::{
     Location, Tab, TabId,
     native::{Event, Source},
+    page::Drawn,
 };
 use gpui::{AnyElement, Window};
 use herdr_web::wire::PageOp;
@@ -20,7 +21,7 @@ impl Remote {
         std::iter::empty()
     }
 
-    pub(crate) fn view(&self, _: TabId) -> Option<AnyElement> {
+    pub(crate) fn view(&self, _: TabId, _: Drawn) -> Option<AnyElement> {
         None
     }
 

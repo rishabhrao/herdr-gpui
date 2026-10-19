@@ -4,7 +4,10 @@
 //! cannot reach this page or its connection; they talk to the app by
 //! `postMessage`.
 use crate::{app::Shared, dom, stream, surface::Surface};
-use herdr_web::wire::{PageEvent, PageId, PageOp, ToHost, WindowId};
+use herdr_web::wire::{
+    PageEvent, PageId, PageOp, ToHost, WindowId, WireScene,
+    region::{self, Rect},
+};
 use std::collections::HashMap;
 use wasm_bindgen::JsValue;
 use web_sys::{
@@ -37,6 +40,23 @@ struct Page {
     /// The page's size in the app's pixels, which are a streamed page's
     /// CSS pixels.
     size: (f32, f32),
+    /// Where the app last placed it, in its pixels; `None` while hidden.
+    placed: Option<Rect>,
+    /// Whether the window takes every tap over it, as while a menu is open.
+    covered: bool,
+    /// Where it shows in the newest frame of its window, `Some(None)` if
+    /// nowhere. It takes this as that frame is drawn, so it moves with the
+    /// window's drawing.
+    next: Option<Option<Shown>>,
+    /// What it shows as now, written to the page once.
+    shown: Option<Shown>,
+}
+
+/// A page's place and the parts of it nothing covers, in the app's pixels.
+#[derive(Clone, Debug, PartialEq)]
+struct Shown {
+    bounds: Rect,
+    open: Vec<Rect>,
 }
 
 impl Page {
@@ -69,6 +89,9 @@ pub(crate) struct Pages {
     pages: HashMap<PageId, Page>,
     /// The streamed page keys go to, until the app's canvas is used.
     focused: Option<PageId>,
+    /// Each window's canvas clip as last written: the holes where its
+    /// pages show through and take taps.
+    clips: HashMap<WindowId, String>,
 }
 
 impl Pages {
@@ -116,6 +139,10 @@ impl Pages {
                             _load: load,
                         },
                         size: (0., 0.),
+                        placed: None,
+                        covered: false,
+                        next: None,
+                        shown: None,
                     },
                 );
             }
@@ -139,6 +166,10 @@ impl Pages {
                             _listeners: listeners,
                         },
                         size: (0., 0.),
+                        placed: None,
+                        covered: false,
+                        next: None,
+                        shown: None,
                     },
                 );
             }
@@ -166,27 +197,23 @@ impl Pages {
                     let _ = Url::revoke_object_url(&old);
                 }
             }
-            PageOp::Place { page, bounds } => {
+            // Both wait for the window's next frame, drawn with them.
+            PageOp::Place {
+                page,
+                bounds,
+                covered,
+            } => {
                 if let Some(page) = self.pages.get_mut(&page) {
                     page.size = (bounds[2], bounds[3]);
-                    let zoom = surfaces
-                        .iter()
-                        .find(|surface| surface.id == page.window)
-                        .map_or(1., |surface| surface.scale);
-                    let [x, y, width, height] = bounds.map(|value| f64::from(value) * zoom);
-                    let frame = &page.element;
-                    dom::style(frame, "left", &format!("{x}px"));
-                    dom::style(frame, "top", &format!("{y}px"));
-                    dom::style(frame, "width", &format!("{width}px"));
-                    dom::style(frame, "height", &format!("{height}px"));
-                    dom::style(frame, "display", "block");
+                    page.placed = Some(bounds);
+                    page.covered = covered;
                 }
             }
-            PageOp::Hide { page } => {
-                if let Some(shown) = self.pages.get(&page) {
-                    dom::style(&shown.element, "display", "none");
+            PageOp::Hide { page: id } => {
+                if let Some(page) = self.pages.get_mut(&id) {
+                    page.placed = None;
                 }
-                self.unfocus(page);
+                self.unfocus(id);
             }
             PageOp::Close { page } => {
                 self.pages.remove(&page);
@@ -217,6 +244,71 @@ impl Pages {
                 None => {}
             },
             PageOp::Blur { page } => self.unfocus(page),
+        }
+    }
+
+    /// Notes where window `window`'s pages show in its newest frame, `scene`,
+    /// drawn at `device` device pixels per app pixel: each placed page, less
+    /// what the window paints over it.
+    pub(crate) fn prepare(&mut self, window: WindowId, scene: &WireScene, device: f32) {
+        let device = if device > 0. { device } else { 1. };
+        for page in self.pages.values_mut().filter(|page| page.window == window) {
+            let covered = page.covered;
+            page.next = Some(page.placed.map(|bounds| {
+                let area = bounds.map(|value| value * device);
+                let open = if covered {
+                    Vec::new()
+                } else {
+                    region::uncovered(area, scene.painted_over(&area))
+                        .into_iter()
+                        .map(|piece| piece.map(|value| value / device))
+                        .collect()
+                };
+                Shown { bounds, open }
+            }));
+        }
+    }
+
+    /// Shows window `window`'s pages as its frame just drawn has them, at
+    /// `scale` CSS pixels per app pixel. Pages lie beneath the canvas, which
+    /// leaves them unpainted; holes cut in the canvas where nothing covers
+    /// them let them take taps there, as a native page does.
+    pub(crate) fn frame_drawn(&mut self, window: WindowId, scale: f64, canvas: &HtmlElement) {
+        let css = |value: f32| f64::from(value) * scale;
+        let mut holes = String::new();
+        for page in self.pages.values_mut().filter(|page| page.window == window) {
+            if let Some(next) = page.next.take()
+                && page.shown != next
+            {
+                let element = &page.element;
+                match &next {
+                    Some(shown) => {
+                        let [x, y, width, height] = shown.bounds.map(css);
+                        dom::style(element, "left", &format!("{x}px"));
+                        dom::style(element, "top", &format!("{y}px"));
+                        dom::style(element, "width", &format!("{width}px"));
+                        dom::style(element, "height", &format!("{height}px"));
+                        dom::style(element, "display", "block");
+                    }
+                    None => dom::style(element, "display", "none"),
+                }
+                page.shown = next;
+            }
+            for [x, y, width, height] in page.shown.iter().flat_map(|shown| &shown.open) {
+                let (x, y, width, height) = (css(*x), css(*y), css(*width), css(*height));
+                holes.push_str(&format!("M{x} {y}h{width}v{height}h{}z", -width));
+            }
+        }
+        // The canvas less the holes: the outer box reaches past any canvas.
+        let clip = if holes.is_empty() {
+            String::new()
+        } else {
+            format!("path(evenodd, \"M0 0H100000V100000H0z{holes}\")")
+        };
+        if self.clips.get(&window) != Some(&clip) {
+            let property = if clip.is_empty() { "none" } else { &clip };
+            dom::style(canvas, "clip-path", property);
+            self.clips.insert(window, clip);
         }
     }
 
@@ -263,6 +355,7 @@ impl Pages {
     /// Drops the pages of a closed window.
     pub(crate) fn close_window(&mut self, window: WindowId) {
         self.pages.retain(|_, page| page.window != window);
+        self.clips.remove(&window);
         if self
             .focused
             .is_some_and(|page| !self.pages.contains_key(&page))

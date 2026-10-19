@@ -230,6 +230,57 @@ impl WireScene {
         }
     }
 
+    /// Everything that paints over `area`, in device pixels: each visible
+    /// primitive's bounds, cut by its content mask and by `area`. The window
+    /// paints nothing where a page shows beneath it, so what this finds over
+    /// a page's area covers the page.
+    pub fn painted_over(&self, area: &Rect) -> Vec<Rect> {
+        let shows = |bounds: &Rect, mask: &Rect| {
+            super::region::overlap(bounds, mask)
+                .and_then(|seen| super::region::overlap(&seen, area))
+        };
+        let quads = self
+            .quads
+            .iter()
+            .filter(|quad| {
+                let filled = !matches!(quad.background, Fill::Solid([.., alpha]) if alpha <= 0.);
+                let bordered =
+                    quad.border_color[3] > 0. && quad.border_widths.iter().any(|width| *width > 0.);
+                filled || bordered
+            })
+            .map(|quad| (quad.bounds, quad.content_mask));
+        let shadows = self
+            .shadows
+            .iter()
+            .filter(|shadow| shadow.color[3] > 0.)
+            .map(|shadow| (shadow.bounds, shadow.content_mask));
+        let paths = self
+            .paths
+            .iter()
+            .map(|path| (path.bounds, path.content_mask));
+        let underlines = self
+            .underlines
+            .iter()
+            .map(|line| (line.bounds, line.content_mask));
+        let sprites = self
+            .monochrome
+            .iter()
+            .chain(&self.subpixel)
+            .map(|sprite| (sprite.bounds, sprite.content_mask));
+        let pictures = self
+            .polychrome
+            .iter()
+            .map(|picture| (picture.bounds, picture.content_mask));
+        quads
+            .chain(shadows)
+            .chain(paths)
+            .chain(underlines)
+            .chain(sprites)
+            .chain(pictures)
+            .filter_map(|(bounds, mask)| shows(&bounds, &mask))
+            .collect()
+    }
+
     /// The scene again, with each tile id swapped for the tile `tile` finds
     /// in this end's atlas. Sprites whose tile is unknown are left out.
     pub fn into_scene(self, mut tile: impl FnMut(WireTile, u32) -> Option<AtlasTile>) -> Scene {

@@ -1,6 +1,7 @@
 //! What the app and the page send each other. Both ends are built from the
 //! same commit, so the format carries a protocol number rather than
 //! negotiating; a page from another build is told to reload.
+pub mod region;
 mod scene;
 
 pub use scene::{WireScene, WireTile};
@@ -8,7 +9,7 @@ pub use scene::{WireScene, WireTile};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bumped whenever a message changes shape.
-pub const PROTOCOL: u32 = 10;
+pub const PROTOCOL: u32 = 11;
 /// No message the page sends is larger; the host refuses bigger frames.
 pub const MAX_TO_HOST_BYTES: usize = 16 * 1024 * 1024;
 /// A frame of a very dense window, with room to spare; larger ones are refused.
@@ -142,9 +143,12 @@ pub enum PageOp {
         /// A local file the app serves; it may post messages to the app.
         local: bool,
     },
+    /// Where the page shows. While `covered`, as when a menu or dialog is
+    /// open, the window takes every tap over it, as a native window does.
     Place {
         page: PageId,
         bounds: [f32; 4],
+        covered: bool,
     },
     Hide {
         page: PageId,

@@ -546,7 +546,11 @@ fn receive(shared: &Shared, message: ToBrowser) {
             }
         }
         ToBrowser::Frame { window, seq, scene } => {
-            if let Some(surface) = app.surface_mut(window) {
+            let App {
+                pages, surfaces, ..
+            } = &mut *app;
+            if let Some(surface) = surfaces.iter_mut().find(|surface| surface.id == window) {
+                pages.prepare(window, &scene, surface.device_scale());
                 surface.frame(seq, scene);
             }
         }
@@ -723,6 +727,8 @@ impl App {
             let (viewport, drawn) = surface.animate(ratio, self.zoom);
             messages.extend(viewport);
             if let Some(seq) = drawn {
+                self.pages
+                    .frame_drawn(surface.id, surface.scale, &surface.canvas);
                 messages.push(ToHost::Ack {
                     window: surface.id,
                     seq,

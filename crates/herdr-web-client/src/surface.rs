@@ -145,9 +145,11 @@ impl Surface {
         let _ = area.append_child(&canvas);
         let _ = element.append_child(&area);
         let _ = root.append_child(&element);
+        // Clear where the app paints nothing: its browser tabs' pages lie
+        // beneath the canvas and show there.
         let config = WgpuSurfaceConfig {
             size: size(DevicePixels(1), DevicePixels(1)),
-            transparent: false,
+            transparent: true,
             preferred_present_mode: None,
         };
         let renderer = match surface {
@@ -307,6 +309,13 @@ impl Surface {
             seq
         });
         (report, drawn)
+    }
+
+    /// The device pixels per app pixel the app draws this window's frames
+    /// at: its layout's, which is this page's own unless another page's
+    /// layout shows scaled.
+    pub(crate) fn device_scale(&self) -> f32 {
+        self.layout.or(self.sent).map_or(1., |(_, _, scale)| scale)
     }
 
     /// The window's canvas area on the page, in CSS pixels.
