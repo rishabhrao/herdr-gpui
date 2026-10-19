@@ -296,6 +296,8 @@ impl HerdrWindow {
         #[cfg(any(target_os = "macos", windows))]
         self.apply_page_events(window, cx);
         #[cfg(any(target_os = "macos", windows))]
+        self.build_shown_pages(window, cx);
+        #[cfg(any(target_os = "macos", windows))]
         self.forget_favicons(window, cx);
         if let Some(store) = store(cx) {
             let gone: HashSet<TabId> = self

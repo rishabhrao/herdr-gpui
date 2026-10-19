@@ -70,6 +70,32 @@ impl HerdrWindow {
         }
     }
 
+    /// Builds the pages of the tabs the window shows that have none yet.
+    /// Choosing a tab builds its page, but a tab the window restored, as
+    /// after the app restarts, shows without being chosen.
+    #[cfg(any(target_os = "macos", windows))]
+    pub(crate) fn build_shown_pages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for id in self.live_pages(cx) {
+            let pages = &self.browser.pages;
+            if pages.contains(id) || pages.is_building(id) || self.browser.failed.contains_key(&id)
+            {
+                continue;
+            }
+            // The VS Code tab's page waits for its server instead.
+            let Some(tab) = super::store(cx)
+                .and_then(|store| store.get(id))
+                .filter(|tab| !tab.place.is_code())
+                .cloned()
+            else {
+                continue;
+            };
+            if let Err(error) = self.browser.pages.ensure(&tab, window, cx) {
+                tracing::warn!(%error, "Cannot create a browser page");
+                self.browser.failed.insert(id, error.to_string().into());
+            }
+        }
+    }
+
     /// The pages of `live` that nothing the window draws reaches, and
     /// whether another frame must settle first: a popover covers what it
     /// covers only once it is laid out.
