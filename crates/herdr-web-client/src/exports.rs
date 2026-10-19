@@ -191,3 +191,9 @@ pub fn prompt_answer(id: f64, answer: u32) {
 pub fn keyboard(show: bool) {
     app::with_app(|_, app| app.show_keyboard(show));
 }
+
+/// The phone keyboard closed without the page asking.
+#[wasm_bindgen]
+pub fn keyboard_closed() {
+    app::with_app(|_, app| app.keyboard_closed());
+}

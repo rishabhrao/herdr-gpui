@@ -136,7 +136,9 @@ pub(crate) async fn run() -> Result<(), String> {
         app._listeners = listeners;
     }
     APP.with(|app| *app.borrow_mut() = Some(shared.clone()));
-    if !dom::coarse_pointer() {
+    if dom::coarse_pointer() {
+        let _ = text.set_attribute("inputmode", "none");
+    } else {
         let _ = text.focus();
     }
     animate(shared.clone());
@@ -767,15 +769,49 @@ impl App {
         &self.text
     }
 
+    /// The field asks for no phone keyboard unless one was asked for:
+    /// Chrome on Android opens the keyboard on any tap while a field that
+    /// takes text has focus, and the field keeps focus for a hardware
+    /// keyboard's keys.
     pub(crate) fn show_keyboard(&self, show: bool) {
+        let field = &self.text;
         if show {
+            let _ = field.remove_attribute("inputmode");
             // A field still focused after the keyboard was closed opens it
             // again only by focusing anew.
-            let _ = self.text.blur();
-            let _ = self.text.focus();
-        } else {
-            let _ = self.text.blur();
+            let _ = field.blur();
+            let _ = field.focus();
+            return;
         }
+        let _ = field.set_attribute("inputmode", "none");
+        let focused = dom::document()
+            .and_then(|document| document.active_element())
+            .is_some_and(|active| active.is_same_node(Some(field)));
+        if !focused {
+            return;
+        }
+        // Only a blur puts the keyboard away. The field takes focus back
+        // once it is gone, two frames on: any sooner and Chrome keeps it up.
+        let _ = field.blur();
+        let field = field.clone();
+        dom::after_frames(2, move || {
+            // Unless something else took focus meanwhile, such as a dialog's field.
+            let idle = dom::document().is_some_and(|document| {
+                let body = document.body();
+                document
+                    .active_element()
+                    .is_none_or(|active| body.is_some_and(|body| active.is_same_node(Some(&body))))
+            });
+            if idle {
+                let _ = field.focus();
+            }
+        });
+    }
+
+    /// The phone keyboard went away on its own, as by the Back gesture: the
+    /// next tap must not bring it back.
+    pub(crate) fn keyboard_closed(&self) {
+        let _ = self.text.set_attribute("inputmode", "none");
     }
 
     pub(crate) fn flush_move(&mut self) {

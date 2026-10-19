@@ -19,6 +19,21 @@ pub(crate) fn create<T: JsCast>(tag: &str) -> Option<T> {
     document()?.create_element(tag).ok()?.dyn_into().ok()
 }
 
+/// Runs `run` once `frames` animation frames have passed.
+pub(crate) fn after_frames(frames: u32, run: impl FnOnce() + 'static) {
+    let Some(window) = window() else {
+        return;
+    };
+    let callback = Closure::once_into_js(move || {
+        if frames <= 1 {
+            run();
+        } else {
+            after_frames(frames - 1, run);
+        }
+    });
+    let _ = window.request_animation_frame(callback.unchecked_ref());
+}
+
 pub(crate) fn style(element: &HtmlElement, property: &str, value: &str) {
     let _ = element.style().set_property(property, value);
 }

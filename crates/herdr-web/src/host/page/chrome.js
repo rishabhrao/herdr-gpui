@@ -341,11 +341,17 @@ function pickImage() {
   input.click();
 }
 
-// Whether the phone keyboard is up: it shrinks the visual viewport.
+// The tallest the visible area has been at its current width. The page
+// resizes for the phone keyboard, so the window's own height shrinks with
+// it and cannot tell; this height stands for no keyboard.
+let tallest = { width: 0, height: 0 };
+
+// Whether the phone keyboard is up: it shrinks the visible area far more
+// than a browser's own bars do.
 function keyboardUp() {
   const viewport = window.visualViewport;
   const focused = document.activeElement === $("herdr-input");
-  return Boolean(focused && viewport && viewport.height < window.innerHeight * 0.8);
+  return Boolean(focused && viewport && viewport.height < tallest.height * 0.8);
 }
 
 // Line-art icons for keys whose symbol many phone fonts lack. Static markup.
@@ -457,7 +463,18 @@ function keysBar() {
 function followViewport() {
   const viewport = window.visualViewport;
   if (!viewport) return;
+  // Whether the keyboard was up as of the last resize: the viewport has
+  // its new size by the time this hears of it.
+  let wasUp = false;
   const apply = () => {
+    const turned = viewport.width !== tallest.width;
+    if (turned) tallest = { width: viewport.width, height: 0 };
+    tallest.height = Math.max(tallest.height, viewport.height);
+    const up = keyboardUp();
+    // Closed by the Back gesture or its own key: it must not open again
+    // on the next tap.
+    if (wasUp && !up && !turned && app) app.keyboard_closed();
+    wasUp = up;
     document.documentElement.style.setProperty("--app-height", `${Math.round(viewport.height)}px`);
     window.scrollTo(0, 0);
   };
