@@ -448,6 +448,9 @@ pub(crate) fn install(shared: &Shared, text: &HtmlElement) -> Vec<Listener> {
         let shared_page = shared.clone();
         listeners.push(Listener::new(target, "visibilitychange", true, move |_| {
             let visible = dom::document().is_some_and(|document| !document.hidden());
+            if visible {
+                crate::app::probe(&shared_page);
+            }
             if let Ok(app) = app.try_borrow_mut() {
                 app.send(&ToHost::Visible { visible });
             }

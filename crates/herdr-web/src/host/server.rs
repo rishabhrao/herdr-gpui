@@ -47,6 +47,11 @@ fn close_politely(stream: &TcpStream) {
     let _ = stream.shutdown(Shutdown::Both);
 }
 
+/// With nothing else to send for this long, the page is sent `Alive`.
+/// Tunnels and phone networks drop connections that stay quiet, and a page
+/// that vanished without closing shows up only as a failed write.
+const HEARTBEAT: Duration = Duration::from_secs(10);
+
 /// Writes queued messages in order. Frames waiting behind a newer frame of
 /// the same window are skipped: a slow page catches up instead of falling
 /// further behind.
@@ -55,7 +60,21 @@ fn write_queued(
     socket: &Mutex<TcpStream>,
     deflate: bool,
 ) -> bool {
-    while let Ok(first) = outbound.recv() {
+    let Ok(alive) = wire::encode(&ToBrowser::Alive) else {
+        return false;
+    };
+    loop {
+        let first = match outbound.recv_timeout(HEARTBEAT) {
+            Ok(first) => first,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let mut socket = socket.lock().unwrap_or_else(PoisonError::into_inner);
+                if ws::write_message(&mut *socket, &alive, deflate).is_err() {
+                    return false;
+                }
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return true,
+        };
         let mut batch = vec![first];
         batch.extend(outbound.try_iter());
         let mut newest = HashSet::new();
@@ -71,7 +90,6 @@ fn write_queued(
             }
         }
     }
-    true
 }
 
 pub(super) fn start(listener: TcpListener, hub: Arc<Hub>) -> Result<()> {
@@ -264,7 +282,7 @@ fn websocket(
     let ended = if hub.receive(Inbound::Connected(link, visitor)) {
         read_messages(&mut reader, &writer, hub, link)
     } else {
-        "the app stopped"
+        "the app stopped".into()
     };
     note!("{label} disconnected: {ended}.");
     hub.detach(link);
@@ -273,45 +291,53 @@ fn websocket(
     Ok(())
 }
 
+/// Why the page closed its socket, from its close code.
+fn closed_because(code: Option<u16>) -> String {
+    match code {
+        Some(1000) | None => "the page closed it".into(),
+        Some(1001) => "the page was left or reloaded".into(),
+        Some(1002 | 1007) => "the browser found a bad message from here".into(),
+        Some(1009) => "a message from here was too large for the browser".into(),
+        Some(code) => format!("the page closed it (code {code})"),
+    }
+}
+
 fn read_messages(
     reader: &mut ws::Reader<impl std::io::Read>,
     writer: &Mutex<TcpStream>,
     hub: &Hub,
     link: u64,
-) -> &'static str {
+) -> String {
     loop {
         let message = match reader.next() {
             Ok(Some(message)) => message,
-            Ok(None) => return "the connection closed",
-            Err(error) => {
-                tracing::debug!(%error, "Web page sent a bad frame");
-                return "the page sent a bad frame";
-            }
+            Ok(None) => return "the connection closed".into(),
+            Err(error) => return format!("the page sent a bad frame ({error})"),
         };
         match message {
             ws::Message::Binary(bytes) => match wire::decode::<ToHost>(&bytes) {
                 Ok(ToHost::Page(event)) => hub.page_event(event),
                 Ok(message) => {
                     if !hub.receive(Inbound::Message(link, message)) {
-                        return "the app stopped";
+                        return "the app stopped".into();
                     }
                 }
                 Err(error) => {
                     tracing::warn!(%error, "Web page sent a message this build cannot read");
-                    return "the page sent a message this build cannot read";
+                    return "the page sent a message this build cannot read".into();
                 }
             },
             ws::Message::Text(_) => {}
             ws::Message::Ping(payload) => {
                 let mut writer = writer.lock().unwrap_or_else(PoisonError::into_inner);
                 if ws::write_frame(&mut *writer, ws::PONG, &payload).is_err() {
-                    return "the connection closed";
+                    return "the connection closed".into();
                 }
             }
-            ws::Message::Close => {
+            ws::Message::Close(code) => {
                 let mut writer = writer.lock().unwrap_or_else(PoisonError::into_inner);
                 let _ = ws::write_frame(&mut *writer, ws::CLOSE, &[]);
-                return "the page closed it";
+                return closed_because(code);
             }
         }
     }

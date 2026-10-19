@@ -8,7 +8,7 @@ pub use scene::{WireScene, WireTile};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bumped whenever a message changes shape.
-pub const PROTOCOL: u32 = 9;
+pub const PROTOCOL: u32 = 10;
 /// No message the page sends is larger; the host refuses bigger frames.
 pub const MAX_TO_HOST_BYTES: usize = 16 * 1024 * 1024;
 /// A frame of a very dense window, with room to spare; larger ones are refused.
@@ -115,6 +115,9 @@ pub enum ToBrowser {
         bounds: [f32; 4],
     },
     Page(PageOp),
+    /// Sent when nothing else was for a while, and to a page shown again:
+    /// the page knows its connection still works.
+    Alive,
 }
 
 /// What a browser tab's page should do. Pages are `<iframe>`s laid over the

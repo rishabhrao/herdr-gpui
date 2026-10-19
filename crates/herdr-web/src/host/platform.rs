@@ -347,6 +347,8 @@ impl Shared {
             ToHost::Visible { visible } => {
                 self.peers.borrow_mut().set_visible(link, visible);
                 if visible {
+                    // A page shown again checks its connection by this answer.
+                    self.hub.send_to(link, &ToBrowser::Alive);
                     self.take_control(link);
                 }
                 self.update_visible();

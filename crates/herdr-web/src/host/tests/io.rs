@@ -98,6 +98,7 @@ fn websocket_messages_are_unmasked_joined_and_bounded() {
     bytes.extend(masked(true, 0x1, b"text is skipped"));
     bytes.extend(masked(true, ws::BINARY, &[7; 300]));
     bytes.extend(masked(true, ws::CLOSE, b""));
+    bytes.extend(masked(true, ws::CLOSE, &[0x03, 0xe9, b'b', b'y', b'e']));
     let mut reader = ws::Reader::new(Cursor::new(bytes), 1024, false);
     assert_eq!(
         reader.next().unwrap(),
@@ -111,7 +112,9 @@ fn websocket_messages_are_unmasked_joined_and_bounded() {
         reader.next().unwrap(),
         Some(ws::Message::Binary(vec![7; 300]))
     );
-    assert_eq!(reader.next().unwrap(), Some(ws::Message::Close));
+    assert_eq!(reader.next().unwrap(), Some(ws::Message::Close(None)));
+    // A page that is left closes with 1001, "going away".
+    assert_eq!(reader.next().unwrap(), Some(ws::Message::Close(Some(1001))));
     assert_eq!(reader.next().unwrap(), None);
 
     let mut big = ws::Reader::new(Cursor::new(masked(true, ws::BINARY, &[0; 300])), 100, false);

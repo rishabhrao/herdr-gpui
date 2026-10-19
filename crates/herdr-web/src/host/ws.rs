@@ -30,7 +30,8 @@ pub(super) enum Message {
     /// Only a client reader returns text; a server reader skips it.
     Text(Vec<u8>),
     Ping(Vec<u8>),
-    Close,
+    /// The status code the peer closed with, when it gave one.
+    Close(Option<u16>),
 }
 
 struct Frame {
@@ -81,7 +82,13 @@ impl<R: Read> Reader<R> {
             match frame.opcode {
                 PING => return Ok(Some(Message::Ping(frame.payload))),
                 PONG => continue,
-                CLOSE => return Ok(Some(Message::Close)),
+                CLOSE => {
+                    let code = frame
+                        .payload
+                        .first_chunk::<2>()
+                        .map(|code| u16::from_be_bytes(*code));
+                    return Ok(Some(Message::Close(code)));
+                }
                 CONTINUATION => {
                     let Some((_, _, buffer)) = message.as_mut() else {
                         return Err(Error::BadRequest);

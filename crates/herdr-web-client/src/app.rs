@@ -23,6 +23,17 @@ const RETRY_MAX_MS: i32 = 10_000;
 /// A socket still opening after this long is given up and tried again: a
 /// phone that wakes can leave one waiting on a network that is gone.
 const OPEN_TIMEOUT_MS: i32 = 8_000;
+/// The app sends something at least every 10 seconds; silence for longer
+/// than this means the connection died without closing.
+const SILENT_MS: f64 = 25_000.;
+/// How long a page shown again waits for the app's answer before it takes
+/// the connection for dead.
+const PROBE_MS: f64 = 4_000.;
+/// A connection that lasted this long was a good one, and the next failure
+/// retries quickly again. One that keeps dropping sooner backs off.
+const STEADY_MS: f64 = 10_000.;
+/// A connection back within this long never shows that it was lost.
+const QUIET_LOSS_MS: i32 = 2_000;
 /// The page's UI scale, kept per browser.
 const ZOOM_KEY: &str = "herdr-zoom";
 pub(crate) const MIN_ZOOM: f64 = 0.5;
@@ -77,6 +88,11 @@ pub(crate) struct App {
     attempts: u32,
     /// A retry is waiting on its timer; coming back to the page runs it now.
     retry_pending: bool,
+    /// When the connection opened, and when the app was last heard from.
+    opened_at: f64,
+    heard: f64,
+    /// When the page, shown again, asked whether the connection still works.
+    probe: Option<f64>,
     /// CSS pixels per app pixel: below 1 fits more of the app, above 1
     /// makes it larger to touch.
     pub(crate) zoom: f64,
@@ -107,6 +123,9 @@ pub(crate) async fn run() -> Result<(), String> {
         replaced: false,
         attempts: 0,
         retry_pending: false,
+        opened_at: 0.,
+        heard: 0.,
+        probe: None,
         zoom: saved_zoom(),
         cursor: "default".into(),
         _listeners: Vec::new(),
@@ -121,6 +140,7 @@ pub(crate) async fn run() -> Result<(), String> {
         let _ = text.focus();
     }
     animate(shared.clone());
+    watch(shared.clone());
     connect(&shared);
     Ok(())
 }
@@ -167,8 +187,11 @@ fn connect(shared: &Shared) {
             // while it slept, though this socket opened.
             app.start_over();
         }
+        let first = !app.connected_once;
         app.connected_once = true;
-        app.attempts = 0;
+        app.opened_at = dom::now();
+        app.heard = app.opened_at;
+        app.probe = None;
         trap_history();
         app.send(&ToHost::Hello { protocol: PROTOCOL });
         let dark = dom::window()
@@ -176,12 +199,19 @@ fn connect(shared: &Shared) {
             .flatten()
             .is_some_and(|query| query.matches());
         app.send(&ToHost::Dark { dark });
-        dom::show_status("Waiting for Herdr UI\u{2026}");
+        // A page that reconnects keeps showing its last picture meanwhile.
+        if first {
+            dom::show_status("Waiting for Herdr UI\u{2026}");
+        }
     }));
 
     let received = shared.clone();
     handlers.push(Listener::new(target, "message", true, move |event| {
         let event: MessageEvent = event.unchecked_into();
+        if let Ok(mut app) = received.try_borrow_mut() {
+            app.heard = dom::now();
+            app.probe = None;
+        }
         let bytes = js_sys::Uint8Array::new(&event.data()).to_vec();
         match wire::decode::<ToBrowser>(&bytes) {
             Ok(message) => receive(&received, message),
@@ -192,22 +222,25 @@ fn connect(shared: &Shared) {
     }));
 
     let closed = shared.clone();
-    handlers.push(Listener::new(target, "close", true, move |_| {
+    handlers.push(Listener::new(target, "close", true, move |event| {
+        let event: web_sys::CloseEvent = event.unchecked_into();
+        dom::log(&format!(
+            "Herdr UI's connection closed: code {}{}",
+            event.code(),
+            if event.was_clean() {
+                ""
+            } else {
+                ", not cleanly"
+            }
+        ));
         if let Ok(mut app) = closed.try_borrow_mut() {
             app.socket = None;
             app.socket_handlers.clear();
             if app.replaced {
                 return;
             }
-            if app.connected_once {
-                dom::show_status("Herdr UI stopped serving this page. Reconnecting\u{2026}");
-                // After a few failures the page checks why: a sign-in that
-                // ended or a device that was removed needs a reload, not
-                // retries forever.
-                dom::emit("disconnected", &[("attempts", &app.attempts.to_string())]);
-            }
         }
-        retry(&closed);
+        lost(&closed);
     }));
 
     let opening = socket.clone();
@@ -274,6 +307,80 @@ fn history_listener(shared: &Shared) -> Option<Listener> {
         // Back to resting, which reports `REST` and is ignored.
         step_history(!back);
     }))
+}
+
+/// The connection is gone: try again, and say so if it stays gone.
+fn lost(shared: &Shared) {
+    if let Ok(mut app) = shared.try_borrow_mut() {
+        if app.socket.is_some() {
+            return;
+        }
+        if app.opened_at > 0. && dom::now() - app.opened_at >= STEADY_MS {
+            app.attempts = 0;
+        }
+        app.opened_at = 0.;
+        app.probe = None;
+        if app.connected_once {
+            // After a few failures the page checks why: a sign-in that
+            // ended or a device that was removed needs a reload, not
+            // retries forever.
+            dom::emit("disconnected", &[("attempts", &app.attempts.to_string())]);
+        }
+    }
+    let watch = shared.clone();
+    let say = Closure::once_into_js(move || {
+        if let Ok(app) = watch.try_borrow_mut()
+            && app.connected_once
+            && !app.replaced
+            && app
+                .socket
+                .as_ref()
+                .is_none_or(|socket| socket.ready_state() != WebSocket::OPEN)
+        {
+            dom::show_status("Herdr UI stopped serving this page. Reconnecting\u{2026}");
+        }
+    });
+    if let Some(window) = dom::window() {
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+            say.unchecked_ref(),
+            QUIET_LOSS_MS,
+        );
+    }
+    retry(shared);
+}
+
+/// Gives up on a connection that stopped answering without closing, as
+/// one through a phone network that changed while the page slept.
+fn abandon(shared: &Shared) {
+    {
+        let Ok(mut app) = shared.try_borrow_mut() else {
+            return;
+        };
+        let Some(socket) = app.socket.take() else {
+            return;
+        };
+        // Its close event, whenever it comes, is not this connection's news.
+        app.socket_handlers.clear();
+        let _ = socket.close();
+        dom::log("Herdr UI's connection stopped answering; connecting again");
+    }
+    lost(shared);
+}
+
+/// A page shown again asks the app whether the connection still works;
+/// `animate` gives up on it when no answer comes.
+pub(crate) fn probe(shared: &Shared) {
+    if let Ok(mut app) = shared.try_borrow_mut()
+        && app
+            .socket
+            .as_ref()
+            .is_some_and(|socket| socket.ready_state() == WebSocket::OPEN)
+    {
+        let now = dom::now();
+        app.probe = Some(now);
+        // Time hidden is not silence.
+        app.heard = app.heard.max(now - PROBE_MS);
+    }
 }
 
 fn retry(shared: &Shared) {
@@ -447,6 +554,7 @@ fn receive(shared: &Shared, message: ToBrowser) {
             }
             app.cursor = css;
         }
+        ToBrowser::Alive => {}
         ToBrowser::Ime { window, bounds } => {
             if let Some(((left, top), scale)) = app
                 .surface(window)
@@ -513,6 +621,27 @@ fn open_window(shared: &Shared, id: WindowId, title: &str, main: bool, width: f3
     }
 }
 
+/// Every second, while the page is shown: gives up on a connection that
+/// went silent. A timer, as a window behind others gets no animation
+/// frames though it counts as shown.
+fn watch(shared: Shared) {
+    let Some(window) = dom::window() else {
+        return;
+    };
+    let check = Closure::<dyn FnMut()>::new(move || {
+        let shown = dom::document().is_some_and(|document| !document.hidden());
+        if shown && shared.try_borrow().is_ok_and(|app| app.silent()) {
+            abandon(&shared);
+        }
+    });
+    let _ = window.set_interval_with_callback_and_timeout_and_arguments_0(
+        check.as_ref().unchecked_ref(),
+        1_000,
+    );
+    // The timer holds it for the life of the page.
+    check.forget();
+}
+
 /// The animation-frame callback, which schedules itself again.
 type FrameLoop = Rc<RefCell<Option<Closure<dyn FnMut()>>>>;
 
@@ -569,6 +698,19 @@ impl App {
             }
             Err(error) => dom::log(&format!("Could not encode a message: {error}")),
         }
+    }
+
+    /// Whether the open connection has been silent too long to be alive.
+    fn silent(&self) -> bool {
+        if self
+            .socket
+            .as_ref()
+            .is_none_or(|socket| socket.ready_state() != WebSocket::OPEN)
+        {
+            return false;
+        }
+        let now = dom::now();
+        now - self.heard > SILENT_MS || self.probe.is_some_and(|asked| now - asked > PROBE_MS)
     }
 
     fn frame(&mut self) {
