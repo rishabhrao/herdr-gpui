@@ -89,6 +89,10 @@ impl HerdrWindow {
     pub(crate) fn toggle_sidebar(&mut self) {
         if self.compact() {
             self.sidebar_drawer = !self.sidebar_drawer;
+            // The drawer covers the terminal the keyboard typed into.
+            if self.sidebar_drawer {
+                crate::served::hide_keyboard();
+            }
             return;
         }
         self.sidebar_visible = !self.sidebar_visible;

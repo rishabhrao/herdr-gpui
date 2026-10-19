@@ -386,6 +386,7 @@ fn receive(shared: &Shared, message: ToBrowser) {
                 wire::DeviceAction::TextLarger => "text-larger",
                 wire::DeviceAction::AllowNotifications => "allow-notifications",
                 wire::DeviceAction::SignOut => "sign-out",
+                wire::DeviceAction::HideKeyboard => "hide-keyboard",
             };
             dom::emit("device", &[("action", action)]);
         }

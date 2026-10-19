@@ -23,6 +23,18 @@ pub(crate) fn active() -> bool {
     SERVED.load(Ordering::Relaxed)
 }
 
+/// Puts down the phone keyboard of the page the user is tapping in, when
+/// what it typed into is covered.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+pub(crate) fn hide_keyboard() {
+    if let Some(served) = herdr_web::host::Served::get() {
+        served.device_action(herdr_web::wire::DeviceAction::HideKeyboard);
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "freebsd")))]
+pub(crate) fn hide_keyboard() {}
+
 /// Offers the keymap's prefix on the page's touch keys bar. Cheap to call on
 /// every render: only a changed prefix reaches the server.
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]

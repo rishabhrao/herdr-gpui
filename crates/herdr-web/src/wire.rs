@@ -8,7 +8,7 @@ pub use scene::{WireScene, WireTile};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bumped whenever a message changes shape.
-pub const PROTOCOL: u32 = 8;
+pub const PROTOCOL: u32 = 9;
 /// No message the page sends is larger; the host refuses bigger frames.
 pub const MAX_TO_HOST_BYTES: usize = 16 * 1024 * 1024;
 /// A frame of a very dense window, with room to spare; larger ones are refused.
@@ -290,6 +290,8 @@ pub enum DeviceAction {
     TextLarger,
     AllowNotifications,
     SignOut,
+    /// Puts the phone keyboard down: the app covered what it typed into.
+    HideKeyboard,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

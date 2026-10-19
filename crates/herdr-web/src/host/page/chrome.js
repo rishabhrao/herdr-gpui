@@ -517,6 +517,9 @@ function deviceAction(action) {
         });
       }
       break;
+    case "hide-keyboard":
+      app.keyboard(false);
+      break;
     case "sign-out":
       if (appStatus && appStatus.local) {
         toast("A browser on this Mac needs no sign-in.");
