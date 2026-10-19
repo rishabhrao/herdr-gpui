@@ -323,12 +323,12 @@ async function paste() {
   }
 }
 
-// Chooses an image from the phone's photos or files and pastes it.
+// Chooses images from the phone's photos or files and pastes them, in the
+// order chosen. The app prepares one at a time and holds the rest.
 function pickImage() {
-  const input = element("input", { type: "file", accept: "image/*" });
-  input.addEventListener("change", () => {
-    const [file] = input.files || [];
-    if (file) pasteImage(file);
+  const input = element("input", { type: "file", accept: "image/*", multiple: "" });
+  input.addEventListener("change", async () => {
+    for (const file of input.files || []) await pasteImage(file);
   });
   input.click();
 }

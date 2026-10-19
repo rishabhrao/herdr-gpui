@@ -366,6 +366,8 @@ pub(crate) struct HerdrWindow {
     pub(crate) version_notice_shown: bool,
     /// The window's width at its last render, which caps side panels.
     pub(crate) viewport_width: f32,
+    /// Images a served page pasted while another was being prepared.
+    pub(crate) waiting_images: std::collections::VecDeque<images::Waiting>,
     /// Tells a sleep from the clocks, so connections are checked on waking.
     pub(crate) wake: endpoint::WakeClock,
     pub(crate) wheel: WheelAccumulator,

@@ -290,6 +290,7 @@ impl HerdrWindow {
             usage: Default::default(),
             version_notice_shown: false,
             viewport_width: 0.,
+            waiting_images: Default::default(),
             wake: endpoint::WakeClock::new(std::time::Instant::now(), std::time::SystemTime::now()),
             wheel: WheelAccumulator::default(),
             workspace_drag: None,

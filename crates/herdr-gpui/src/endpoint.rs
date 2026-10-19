@@ -488,6 +488,7 @@ impl HerdrWindow {
         for image in &self.pending_images {
             image.cancel();
         }
+        self.waiting_images.clear();
         self.clear_pending_input();
         self.menu.reset();
         self.selection_epoch += 1;

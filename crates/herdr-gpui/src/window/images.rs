@@ -34,6 +34,17 @@ pub(crate) struct PendingImage {
     _task: Task<()>,
 }
 
+/// An image a served page pasted while another was still being prepared.
+/// A phone sends a choice of several as pastes in a row; each waits its
+/// turn rather than failing as busy.
+pub(crate) struct Waiting {
+    target: InputTarget,
+    source: Source,
+}
+
+/// How many pasted images may wait their turn.
+const MAX_WAITING_IMAGES: usize = 16;
+
 impl PendingImage {
     pub(crate) fn cancel(&self) {
         self.cancellation.cancel();
@@ -230,10 +241,68 @@ impl HerdrWindow {
             })
             && let Some(target) = self.focused_input_target()
         {
-            self.start_remote_image(target, Source::Clipboard(image), None, cx);
+            let source = Source::Clipboard(image);
+            if crate::served::active() {
+                self.paste_or_wait(target, source, cx);
+            } else {
+                self.start_remote_image(target, source, None, cx);
+            }
             return true;
         }
         false
+    }
+
+    fn paste_or_wait(&mut self, target: InputTarget, source: Source, cx: &mut Context<Self>) {
+        if !self.image_busy(PreparationKind::Image) && self.waiting_images.is_empty() {
+            self.start_remote_image(target, source, None, cx);
+            return;
+        }
+        if self.waiting_images.len() >= MAX_WAITING_IMAGES {
+            self.local_error = Some(format!(
+                "Image not sent: {}",
+                herdr_client::Error::ClipboardImageBusy
+            ));
+            cx.notify();
+            return;
+        }
+        self.waiting_images.push_back(Waiting { target, source });
+        self.start_waiting_images(cx);
+    }
+
+    /// Starts the waiting images whose turn it is, in the order pasted.
+    fn start_waiting_images(&mut self, cx: &mut Context<Self>) {
+        while !self.image_busy(PreparationKind::Image)
+            && let Some(Waiting { target, source }) = self.waiting_images.pop_front()
+        {
+            if self.input_target_shown(&target) {
+                self.start_remote_image(target, source, None, cx);
+            }
+        }
+        // A preparation that ends starts the next one. Uploads still being
+        // sent fill the slots without one, so look again shortly.
+        if !self.waiting_images.is_empty()
+            && !self.pending_images.iter().any(|image| image.preparing)
+        {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(200))
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    this.cancel_stale_image();
+                    this.start_waiting_images(cx);
+                });
+            })
+            .detach();
+        }
+    }
+
+    fn image_busy(&self, kind: PreparationKind) -> bool {
+        self.pending_images.len() >= 4
+            || (kind == PreparationKind::Image
+                && self
+                    .pending_images
+                    .iter()
+                    .any(|image| image.kind == PreparationKind::Image && image.preparing))
     }
 
     pub(super) fn start_remote_image(
@@ -337,13 +406,7 @@ impl HerdrWindow {
         // Keep a cancelled preparation until it actually exits. Reconnecting or
         // repeated drops cannot build up background readers holding large images.
         self.cancel_stale_image();
-        if self.pending_images.len() >= 4
-            || (kind == PreparationKind::Image
-                && self
-                    .pending_images
-                    .iter()
-                    .any(|image| image.kind == PreparationKind::Image && image.preparing))
-        {
+        if self.image_busy(kind) {
             self.local_error = Some(format!(
                 "Image not sent: {}",
                 herdr_client::Error::ClipboardImageBusy
@@ -408,6 +471,7 @@ impl HerdrWindow {
                         pending.preparing = false;
                         pending.cancel();
                         this.cancel_stale_image();
+                        this.start_waiting_images(cx);
                     } else if let Err(error) = &prepared {
                         this.report_image_error(error, cx);
                     }
@@ -463,6 +527,7 @@ impl HerdrWindow {
                     }
                 }
                 this.cancel_stale_image();
+                this.start_waiting_images(cx);
             });
         });
         self.pending_images.push(PendingImage {

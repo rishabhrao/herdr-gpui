@@ -679,6 +679,7 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
         integrations: Default::default(),
         install_warning_shown: false,
         version_notice_shown: false,
+        waiting_images: Default::default(),
         collapsed_repos: Default::default(),
         wheel: WheelAccumulator::default(),
         sidebar_width: None,
