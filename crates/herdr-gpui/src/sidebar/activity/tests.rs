@@ -8,6 +8,7 @@ use crate::{
 
 mod back;
 mod counts;
+mod drawer;
 mod layout;
 mod sections;
 mod toggle;

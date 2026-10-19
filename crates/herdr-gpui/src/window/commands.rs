@@ -59,8 +59,17 @@ impl HerdrWindow {
         if self.menu.page.is_some() {
             return false;
         }
-        // Choosing a place in the drawer is done with it.
-        self.close_drawer();
+        // Choosing a place in the drawer is done with it, and shows that
+        // place rather than a section the drawer was opened over.
+        if self.close_drawer() {
+            self.activity.return_to = None;
+            if self
+                .activity
+                .pick(crate::sidebar::ActivityPanel::Workspaces)
+            {
+                self.save_chrome();
+            }
+        }
         self.dispatch_navigation(target, cx)
     }
 
