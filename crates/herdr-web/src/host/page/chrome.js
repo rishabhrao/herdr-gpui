@@ -240,6 +240,14 @@ export function listen() {
       case "disconnected":
         checkReach(Number(note.attempts || 0));
         break;
+      case "reconnected":
+        // The app shows its open questions again to a new connection.
+        prompts = [];
+        if (shownPrompt !== null) {
+          shownPrompt = null;
+          closeOverlay();
+        }
+        break;
       case "prompt":
         prompts.push(note);
         showPrompt();
@@ -467,7 +475,12 @@ async function checkReach(attempts) {
   if (checking || attempts < 2) return;
   checking = true;
   try {
-    const response = await fetch("/auth/status", { cache: "no-store", credentials: "same-origin", redirect: "manual" });
+    const response = await fetch("/auth/status", {
+      cache: "no-store",
+      credentials: "same-origin",
+      redirect: "manual",
+      signal: AbortSignal.timeout(8000),
+    });
     if (response.type === "opaqueredirect" || response.status === 401 || response.status === 403) {
       location.reload();
       return;

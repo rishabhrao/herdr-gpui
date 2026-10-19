@@ -20,6 +20,9 @@ pub(crate) type Shared = Rc<RefCell<App>>;
 /// doubles it, up to `RETRY_MAX_MS`.
 const RETRY_MS: i32 = 1000;
 const RETRY_MAX_MS: i32 = 10_000;
+/// A socket still opening after this long is given up and tried again: a
+/// phone that wakes can leave one waiting on a network that is gone.
+const OPEN_TIMEOUT_MS: i32 = 8_000;
 /// The page's UI scale, kept per browser.
 const ZOOM_KEY: &str = "herdr-zoom";
 pub(crate) const MIN_ZOOM: f64 = 0.5;
@@ -65,8 +68,8 @@ pub(crate) struct App {
     pub(crate) pages: Pages,
     pub(crate) input: input::State,
     pub(crate) dragging: Option<(WindowId, (f64, f64))>,
-    /// Whether this page has been connected; a later connection reloads it,
-    /// so each one starts from a clean page.
+    /// Whether this page has been connected; a later connection starts its
+    /// windows and pages over.
     connected_once: bool,
     /// The app was updated and this page is too old; it no longer reconnects.
     replaced: bool,
@@ -159,11 +162,10 @@ fn connect(shared: &Shared) {
             return;
         };
         if app.connected_once {
-            // A fresh page is simpler than undoing the old connection's state.
-            if let Some(window) = dom::window() {
-                let _ = window.location().reload();
-            }
-            return;
+            // Resume in place. A reload fetches the page again, and after a
+            // phone wakes that fetch can wait on a connection that died
+            // while it slept, though this socket opened.
+            app.start_over();
         }
         app.connected_once = true;
         app.attempts = 0;
@@ -207,6 +209,18 @@ fn connect(shared: &Shared) {
         }
         retry(&closed);
     }));
+
+    let opening = socket.clone();
+    let give_up = Closure::once_into_js(move || {
+        if opening.ready_state() == WebSocket::CONNECTING {
+            // Its close event retries.
+            let _ = opening.close();
+        }
+    });
+    let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+        give_up.unchecked_ref(),
+        OPEN_TIMEOUT_MS,
+    );
 
     app.socket = Some(socket);
     app.socket_handlers = handlers;
@@ -458,14 +472,25 @@ fn open_window(shared: &Shared, id: WindowId, title: &str, main: bool, width: f3
         let Ok(mut app) = shared.try_borrow_mut() else {
             return;
         };
+        // A new connection's main window takes over the old one's canvas.
+        let kept = main
+            .then(|| app.surfaces.iter().position(|surface| surface.main))
+            .flatten()
+            .map(|index| app.surfaces.remove(index));
         app.surfaces.retain(|surface| surface.id != id);
-        // The GPU's own canvas suits the main window best.
-        let spare = if main { app.spare.take() } else { None };
-        match Surface::new(id, main, width, height, &app.context, spare, &app.root) {
-            Ok(surface) => surface,
-            Err(error) => {
-                dom::show_status(&format!("Herdr UI could not open a window: {error}"));
-                return;
+        if let Some(mut surface) = kept {
+            surface.start_over(id);
+            surface.listeners.clear();
+            surface
+        } else {
+            // The GPU's own canvas suits the main window best.
+            let spare = if main { app.spare.take() } else { None };
+            match Surface::new(id, main, width, height, &app.context, spare, &app.root) {
+                Ok(surface) => surface,
+                Err(error) => {
+                    dom::show_status(&format!("Herdr UI could not open a window: {error}"));
+                    return;
+                }
             }
         }
     };
@@ -514,6 +539,22 @@ fn animate(shared: Shared) {
 }
 
 impl App {
+    /// Forgets what the last connection showed, before a new one opens the
+    /// windows and pages again. The main window keeps its picture until the
+    /// app sends its new one.
+    fn start_over(&mut self) {
+        self.surfaces.retain(|surface| surface.main);
+        for surface in &mut self.surfaces {
+            surface.start_over(surface.id);
+        }
+        self.focused = None;
+        self.pages = Pages::default();
+        self.dragging = None;
+        self.input.start_over();
+        crate::edit::reset(self);
+        dom::emit("reconnected", &[]);
+    }
+
     pub(crate) fn send(&self, message: &ToHost) {
         let Some(socket) = self
             .socket

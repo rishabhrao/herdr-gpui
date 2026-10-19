@@ -1,7 +1,9 @@
 // Keeps the page's own files for a quick start and an install prompt. The
-// network answers first; a copy serves only when it cannot. Pairing, the
-// socket, and tab pages always go to the network.
+// network answers first; a copy serves only when it cannot, or is slow to:
+// a connection that died while the phone slept can hold a request for a
+// long time. Pairing, the socket, and tab pages always go to the network.
 const CACHE = "herdr-shell-v2";
+const NETWORK_WAIT_MS = 4000;
 const SHELL = new Set([
   "/",
   "/boot.js",
@@ -35,17 +37,22 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     (async () => {
       const cache = await caches.open(CACHE);
-      try {
-        const response = await fetch(event.request);
+      const network = fetch(event.request).then(async (response) => {
         if (response.ok && response.type === "basic") {
           await cache.put(event.request, response.clone());
         }
         return response;
-      } catch (error) {
-        const kept = await cache.match(event.request);
-        if (kept) return kept;
-        throw error;
+      });
+      // A late answer still refreshes the copy for next time.
+      event.waitUntil(network.catch(() => {}));
+      const slow = new Promise((resolve) => setTimeout(resolve, NETWORK_WAIT_MS));
+      try {
+        const response = await Promise.race([network, slow]);
+        if (response) return response;
+      } catch {
+        // No network: a kept copy, if there is one.
       }
+      return (await cache.match(event.request)) || network;
     })(),
   );
 });

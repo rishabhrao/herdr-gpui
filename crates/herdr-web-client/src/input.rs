@@ -39,6 +39,16 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// A new connection: no button or key is down there. Held keys-bar
+    /// modifiers stay, as the bar still shows them.
+    pub(crate) fn start_over(&mut self) {
+        let sticky = self.sticky;
+        *self = Self {
+            sticky,
+            ..Self::default()
+        };
+    }
+
     pub(crate) fn set_sticky(&mut self, mods: Mods) {
         self.sticky = mods;
     }

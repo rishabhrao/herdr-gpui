@@ -219,6 +219,17 @@ impl Surface {
         }
     }
 
+    /// Starts the window over as `id` for a new connection, keeping its
+    /// canvas: a WebGL page draws only on the canvas the GPU was set up on.
+    /// The old picture stays until the new connection's first frame.
+    pub(crate) fn start_over(&mut self, id: WindowId) {
+        self.remove(self.tiles.keys().copied().collect());
+        self.id = id;
+        self.pending = None;
+        self.sent = None;
+        self.layout = None;
+    }
+
     /// Keeps the newest frame for the next animation frame.
     pub(crate) fn frame(&mut self, seq: u64, scene: WireScene) {
         let scene = scene.into_scene(|_, id| self.tiles.get(&id).map(|(_, tile)| *tile));
