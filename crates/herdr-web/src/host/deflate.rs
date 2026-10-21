@@ -1,8 +1,7 @@
 //! `permessage-deflate` (RFC 7692) without context takeover: each message is
 //! compressed on its own, so neither side keeps a window between messages.
 //! Frames are what crosses a tunnel to a phone, and they compress well.
-use flate2::{Compression, Decompress, FlushDecompress, Status, write::DeflateEncoder};
-use std::io::Write as _;
+use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress, Status};
 
 /// What a sync flush ends with; the extension leaves it off the wire.
 const TAIL: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
@@ -22,17 +21,24 @@ pub(crate) fn offered(header: Option<&str>) -> bool {
     })
 }
 
-pub(crate) fn compress(data: &[u8]) -> std::io::Result<Vec<u8>> {
-    let mut encoder =
-        DeflateEncoder::new(Vec::with_capacity(data.len() / 3 + 64), Compression::fast());
-    encoder.write_all(data)?;
-    // A sync flush ends on a byte boundary with the tail, which is dropped.
-    encoder.flush()?;
-    let mut out = std::mem::take(encoder.get_mut());
-    if out.ends_with(&TAIL) {
+/// `data` as one message: a deflate stream that ends on a sync flush, less
+/// its tail. `None` if the stream did not end so. The page inflates every
+/// message through one inflater, so a message that ends mid-block breaks
+/// every message after it, and the browser drops the connection.
+pub(crate) fn compress(data: &[u8]) -> Option<Vec<u8>> {
+    let mut compressor = Compress::new(Compression::fast(), false);
+    // Room for the worst case, so the flush is done in one call: a sync
+    // flush that runs out of room ends mid-block, both through
+    // `write::DeflateEncoder::flush` and when repeated with more room.
+    let mut out = Vec::with_capacity(data.len() + data.len() / 8 + 1024);
+    compressor
+        .compress_vec(data, &mut out, FlushCompress::Sync)
+        .ok()?;
+    let whole = compressor.total_in() as usize == data.len() && out.len() < out.capacity();
+    (whole && out.ends_with(&TAIL)).then(|| {
         out.truncate(out.len() - TAIL.len());
-    }
-    Ok(out)
+        out
+    })
 }
 
 /// Inflates one message, refusing one that would grow past `limit`.

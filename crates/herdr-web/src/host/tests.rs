@@ -10,6 +10,7 @@ use super::{
 use std::{path::PathBuf, sync::Arc};
 
 mod access;
+mod deflate;
 mod devices;
 mod gate;
 mod hub;

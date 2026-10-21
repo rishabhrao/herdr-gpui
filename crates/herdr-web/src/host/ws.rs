@@ -223,8 +223,10 @@ pub(super) fn write_message(
     payload: &[u8],
     deflate: bool,
 ) -> io::Result<()> {
-    if deflate && payload.len() >= deflate::MIN_COMPRESSED {
-        let compressed = deflate::compress(payload)?;
+    if deflate
+        && payload.len() >= deflate::MIN_COMPRESSED
+        && let Some(compressed) = deflate::compress(payload)
+    {
         return write_frame_with(writer, BINARY, &compressed, true);
     }
     write_frame_with(writer, BINARY, payload, false)
