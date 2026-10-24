@@ -20,6 +20,11 @@ use std::{
 /// A page that has not acknowledged a frame for this long gets the next
 /// one anyway, so a lost acknowledgement cannot freeze the window.
 const FRAME_TIMEOUT: Duration = Duration::from_secs(1);
+/// The shortest time between frames: about 60 a second. A page on a 120 Hz
+/// screen asks every 8 ms, and a window that animates all the time would
+/// otherwise send it twice the frames for no gain it can see. A little
+/// under 1/60 s, so a 60 Hz page's ticks, which jitter, are never skipped.
+const FRAME_GAP: Duration = Duration::from_millis(13);
 /// What a window assumes before the page reports its pixel ratio.
 const DEFAULT_SCALE: f32 = 2.;
 
@@ -54,6 +59,8 @@ struct State {
     background: WindowBackgroundAppearance,
     seq: u64,
     in_flight: Option<(u64, Instant)>,
+    /// When the last frame was asked of GPUI.
+    asked: Option<Instant>,
     /// The next frame must repaint everything: the page lost its picture.
     force: bool,
 }
@@ -102,6 +109,7 @@ impl WindowState {
                 background: WindowBackgroundAppearance::Opaque,
                 seq: 0,
                 in_flight: None,
+                asked: None,
                 force: true,
             }),
             callbacks: RefCell::default(),
@@ -226,6 +234,14 @@ impl WindowState {
                 }
                 state.in_flight = None;
             }
+            let now = Instant::now();
+            if state
+                .asked
+                .is_some_and(|asked| now.duration_since(asked) < FRAME_GAP)
+            {
+                return;
+            }
+            state.asked = Some(now);
             std::mem::take(&mut state.force)
         };
         self.with_callback(
