@@ -5,9 +5,9 @@ host, and clicking one opens its panel. The service selected in the panel
 comes first, followed by those closest to their limits. Narrowing the window
 hides segments that no longer fit; the panel still lists every available
 service. Compact mode leaves room for more services. Each service is a
-*provider*: one module in `crates/herdr-gpui/src/usage/providers/` with a
+*provider*: one module in `crates/herdr-usage/src/providers/` with a
 unit struct implementing `Service`, listed once in
-`crates/herdr-gpui/src/usage/registry.rs`. Providers are ported from
+`crates/herdr-usage/src/registry.rs`. Providers are ported from
 [CodexBar](https://github.com/steipete/CodexBar) (MIT), whose
 `docs/<id>.md` and `Sources/CodexBarCore/Providers/<Name>/` document each
 service's sign-in, endpoints, and response shapes.
@@ -15,6 +15,8 @@ service's sign-in, endpoints, and response shapes.
 Detection, local and remote fetching, caching, refresh timing, the status
 bar, and the panel all work from the trait. A provider only says how to
 find its sign-in, how to ask its service, and how to read the answer.
+`herdr-usage` has no GPUI; the app draws the status bar and panel in
+`crates/herdr-gpui/src/usage/`.
 
 ## ChatGPT usage through OpenCode
 
@@ -37,15 +39,30 @@ when its usage request fails, so a failure does not switch the shown account.
 SSH hosts and WSL distributions need `python3` or `jq` to read the JSON
 sign-in; detection is skipped when neither parser is available.
 
+## Grok prepaid balance
+
+Legacy and unified Grok accounts use the same CLI billing endpoint. Herdr
+reads the quota and wallet independently, including when the server omits
+the `isUnifiedBillingUser` flag; account migration is not required.
+
+Grok's CLI billing response can report a prepaid balance without an included
+usage percentage. Herdr shows that balance in USD (the
+[Grok billing contract](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/extensions/billing.rs)
+sends USD cents),
+including zero balances, and the reported period end in the usage panel.
+Included usage stays **Not reported** until the API supplies a percentage or
+the existing on-demand usage ratio; the wallet does not imply a quota or a
+percentage used. The period end does not imply that purchased credits expire.
+When both quota and balance are available, the panel shows both and the status
+bar continues to show quota usage. Sign in with `grok login` on the selected
+host; no additional credentials are needed.
+
 ## The trait
 
 ```rust
-pub(crate) trait Service: Sync {
+pub trait Service: Sync {
     fn meta(&self) -> &'static Meta;
     fn fetch(&self, probe: &mut Probe) -> Option<Result<Report>>;
-    fn render(&self, report: &Report, ui: &Ui, cx: &App) -> AnyElement {
-        ui.standard(report)
-    }
 }
 ```
 
@@ -187,7 +204,7 @@ from response text.
 Report::new(Provider(&MyService), Account { email, plan }, windows)
     .with_balances([Balance::new("Credits", 12.5, Unit::Currency("USD".into())).out_of(50.)])
     .with_sections([Section::Facts { title, facts }, Section::Shares { .. }, Section::Limit(window)])
-    .with_detail(MyDetail { .. })   // provider-specific, for its own render
+    .with_detail(MyDetail { .. })   // provider-specific, drawn by the app
 ```
 
 - `Window::new(kind, used_percent, resets_at, length)`. `Kind` is
@@ -205,9 +222,11 @@ Report::new(Provider(&MyService), Account { email, plan }, windows)
 
 ## Rendering
 
-The default `render` draws windows, balances, and sections. A provider with
-richer data stores it with `with_detail` and overrides `render`, reading it
-back with `report.detail::<MyDetail>()` and composing `Ui` pieces:
+The panel draws windows, balances, and sections for every provider. A
+provider with richer data stores it with `with_detail`, makes its type `pub`
+and re-exports it from `herdr_usage::details`, and the app's
+`crates/herdr-gpui/src/usage/details.rs` draws it, reading it back with
+`report.detail::<MyDetail>()` and composing `Ui` pieces:
 `ui.limit(&window)`, `ui.balances(&[..])`, `ui.facts(title, &facts)`,
 `ui.shares(title, &shares)`, `ui.bar(fill, used, None)`, `ui.block()`,
 `ui.heading(..)`, `ui.rule()`, with `ui.theme`, `ui.small()`, `ui.muted()`.

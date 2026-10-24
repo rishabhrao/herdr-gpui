@@ -106,6 +106,28 @@ impl HerdrWindow {
 
     /// Shows the move picker in place of the menu's rows.
     pub(super) fn open_move_picker(&mut self, cx: &mut Context<Self>) {
+        let availability = self
+            .menu
+            .pane
+            .as_ref()
+            .filter(|pane| {
+                pane.target.repository.is_none()
+                    && !pane.target.devices.is_empty()
+                    && pane.carry_availability.is_none()
+            })
+            .and_then(|pane| {
+                let seen =
+                    super::carry::PaneState::of(self.live.snapshot.as_deref()?, &pane.target.pane);
+                Some(super::carry::Availability::check(
+                    self.carry_origin(&pane.target).ok()?,
+                    seen,
+                ))
+            });
+        if let Some(availability) = availability
+            && let Some(pane) = &mut self.menu.pane
+        {
+            pane.carry_availability = Some(availability);
+        }
         if let Some(pane) = &mut self.menu.pane {
             pane.selected = None;
             pane.error = None;
@@ -303,7 +325,13 @@ impl HerdrWindow {
             let chosen = device.clone();
             body = body.child(
                 row(index)
-                    .when(busy, |row| row.text_color(rgb(self.theme.muted)))
+                    .when(
+                        busy || pane
+                            .carry_availability
+                            .as_ref()
+                            .is_some_and(super::carry::Availability::muted),
+                        |row| row.text_color(rgb(self.theme.muted)),
+                    )
                     .child(destination_label(
                         index,
                         Some(device.label.clone()),

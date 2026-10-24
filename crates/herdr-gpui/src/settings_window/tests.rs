@@ -6,6 +6,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+mod activity_bar_windows;
 mod config_watch;
 #[cfg(windows)]
 mod launch_at_login;
@@ -22,6 +23,7 @@ mod scrollbars;
 mod search;
 mod section_order;
 mod sidebar_drafts;
+mod tab_layout;
 mod theme_drafts;
 // Saving a shared Herdr theme is Unix-only.
 mod theme_hover;

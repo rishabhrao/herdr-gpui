@@ -6,8 +6,8 @@
 //! provider's own work, reporting the shared [`Step`]s.
 
 use super::worker::{self, Worker};
-use super::{CloudProvider, SavedDevice, Step};
 use crate::HerdrWindow;
+use crate::cloud::{CloudProvider, SavedDevice, Step};
 use gpui::Context;
 
 enum Update {
@@ -86,18 +86,16 @@ impl HerdrWindow {
     /// Run `work` to add the machine `name` from `provider`; it reports
     /// through the picker and a toast. `work` blocks on its own worker. A
     /// machine added with a `setup` script runs it once a window shows it.
-    pub(crate) fn start_cloud_job(
+    pub(crate) fn start_cloud_job<E: Into<crate::Error>>(
         &mut self,
         provider: CloudProvider,
         name: String,
         setup: Option<String>,
-        work: impl FnOnce(&dyn Fn() -> bool, &dyn Fn(Step)) -> crate::Result<SavedDevice>
-        + Send
-        + 'static,
+        work: impl FnOnce(&dyn Fn() -> bool, &dyn Fn(Step)) -> Result<SavedDevice, E> + Send + 'static,
         cx: &mut Context<Self>,
     ) -> crate::Result<()> {
-        if let Some(reason) = super::unavailable() {
-            return Err(super::Error::Unavailable(reason).into());
+        if let Some(reason) = crate::cloud::unavailable() {
+            return Err(crate::cloud::Error::Unavailable(reason).into());
         }
         let id = self.cloud_jobs.next;
         self.cloud_jobs.next += 1;
@@ -105,20 +103,20 @@ impl HerdrWindow {
             "herdr-cloud-job",
             cx,
             move |cancelled, send| {
-                let result = work(cancelled, &|step| send(Update::Step(step)));
+                let result = work(cancelled, &|step| send(Update::Step(step))).map_err(Into::into);
                 send(Update::Finished(result));
             },
             move |this: &mut Self, update, cx| this.apply_cloud_job(id, update, cx),
         )
         .map_err(|error| {
             tracing::error!(category = "cloud_worker", error_kind = ?error.kind(), "Could not start cloud job worker");
-            super::Error::Worker("job")
+            crate::cloud::Error::Worker("job")
         })?;
         self.cloud_jobs.jobs.push(Job {
             id,
             provider,
             name,
-            status: format!("Contacting {}…", super::name(provider)),
+            status: format!("Contacting {}…", crate::cloud::name(provider)),
             progress: None,
             setup,
             _worker: worker,
@@ -142,7 +140,10 @@ impl HerdrWindow {
             Update::Finished(result) => {
                 let job = self.cloud_jobs.jobs.remove(index);
                 self.cloud_jobs.finished += 1;
-                let (name, noun) = (super::name(job.provider), super::noun(job.provider));
+                let (name, noun) = (
+                    crate::cloud::name(job.provider),
+                    crate::cloud::noun(job.provider),
+                );
                 match result {
                     Ok(saved) => {
                         let then = if job.setup.is_some() {

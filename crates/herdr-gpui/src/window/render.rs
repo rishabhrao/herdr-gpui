@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     CheckForUpdates, Minimize, PlaySound, RunCommand, ShowHerdrNotDetected, ShowUpdatePreview,
+    ZoomWindow,
     actions::{RingBellPreview, ShowToastPreview},
     browser::Shown,
     config::ClipboardToastPosition,
@@ -25,7 +26,7 @@ impl HerdrWindow {
     /// reachable. A menu page owns the window's attention, and zen mode keeps
     /// the window clear; they wait behind either.
     fn render_notices(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.menu.page.is_some() || self.zen_active() {
+        if !self.notices_allowed() {
             return None;
         }
         let mut cards = self.config_diagnostic_cards(cx);
@@ -36,31 +37,71 @@ impl HerdrWindow {
         // Spans the terminal area so a narrow window shrinks the cards rather
         // than pushing them off the left edge. Each card sits in its own row:
         // a column only shrinks its children along its height, so a card with
-        // a long line kept its full width there.
+        // a long line kept its full width there. The stack ends above the
+        // window's foot, and a card that scrolls gives up height so the cards
+        // under it stay on screen; the rest keep theirs. Neither the stack nor
+        // a row takes the pointer, so the terminal around the cards scrolls
+        // and selects as before.
         Some(
             div()
                 .absolute()
                 .top(px(self.tab_strip_height() + 8.))
+                .bottom(px(8.))
                 .left(px(8.))
                 .right(px(8.))
                 .flex()
                 .flex_col()
                 .gap(px(8.))
-                .children(
-                    cards
-                        .into_iter()
-                        .map(|card| div().flex().justify_end().child(card)),
-                )
+                .children(cards.into_iter().map(|Notice { card, shrinks }| {
+                    div()
+                        .flex()
+                        .justify_end()
+                        .map(|row| match shrinks {
+                            true => row.min_h_0(),
+                            false => row.flex_none(),
+                        })
+                        .child(card)
+                }))
                 .into_any_element(),
         )
+    }
+}
+
+/// One card in the notice stack, and whether it scrolls, so it can give up
+/// height to keep the stack inside the window.
+pub(super) struct Notice {
+    pub(super) card: AnyElement,
+    pub(super) shrinks: bool,
+}
+
+impl HerdrWindow {
+    fn notices_allowed(&self) -> bool {
+        self.menu.page.is_none() && !self.zen_active()
+    }
+
+    /// Whether [`Self::render_notices`] draws a card, so the keyboard can
+    /// reach the cards as a region of their own.
+    pub(super) fn notices_shown(&self) -> bool {
+        self.notices_allowed()
+            && (self.gui_config_diagnostic.visible().is_some()
+                || self.icon_font_notice.visible().is_some()
+                || self
+                    .endpoints
+                    .get(self.selected_endpoint)
+                    .is_some_and(|endpoint| endpoint.config_diagnostic.visible().is_some())
+                || self.live.product_announcement().is_some())
     }
 }
 
 impl Render for HerdrWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.restore_menu_focus(window, cx);
+        self.leave_vanished_region(window, cx);
         self.sync_backdrop(window, cx);
         self.tick_chrome(window, cx);
+        if self.chats.glide(Instant::now(), self.config.chat.glide) {
+            window.request_animation_frame();
+        }
         self.sync_device_themes(cx);
         let fill = self.fill();
         let ground = self.ground();
@@ -198,6 +239,10 @@ impl Render for HerdrWindow {
         let regions = self.terminal_regions(surface.as_ref(), &highlights, slide, &look, cx);
         // Without regions the canvas paints the whole grid, images included.
         let whole = regions.is_empty();
+        // A chat's page panel lies beneath the window's drawing on macOS,
+        // over the cells of the chat's pane, so the cells paint around it.
+        #[cfg(target_os = "macos")]
+        let drawn_pages = self.browser.drawn_pages();
         // The IME composition paints inline at the input cursor; a menu's
         // text field shows its own.
         // It anchors to the live surface, as the IME's candidate window does,
@@ -245,6 +290,7 @@ impl Render for HerdrWindow {
         let find_bar = self.render_find_bar(surface.as_deref(), cx);
         let terminal_note = self.render_terminal_note(surface.as_deref(), cx);
         let copy_badge = self.render_copy_mode_badge(surface.as_deref(), cx);
+        let chats = self.render_chats(surface.as_deref(), cx);
         let terminal = padding
             .pad(div())
             .id("terminal")
@@ -277,7 +323,12 @@ impl Render for HerdrWindow {
             .min_h_0()
             .min_w_0()
             .overflow_hidden()
-            .bg(fill.base(self.terminal_theme().background))
+            // On macOS a chat's page panel shows from beneath the window's
+            // drawing, so the terminal's background paints around it.
+            .when(!cfg!(target_os = "macos"), |terminal| {
+                terminal.bg(fill.base(self.terminal_theme().background))
+            })
+            .children(self.terminal_ground(fill.base(self.terminal_theme().background)))
             .track_focus(&self.focus)
             // Screen readers and selection tools read the rows on screen and
             // the selection among them. The rows are built while GPUI
@@ -490,24 +541,49 @@ impl Render for HerdrWindow {
                                 );
                                 if let Some(surface) = &surface {
                                     if whole {
-                                        painter.borrow_mut().paint_frame(
-                                            &surface.frame,
-                                            bounds.origin,
-                                            Some(bounds.size),
-                                            ground,
-                                            cell_width,
-                                            &font,
-                                            &highlights,
-                                            &surface.panes,
-                                            None,
-                                            images.as_deref().map(|images| PlacedImages {
-                                                placements: &surface.graphics.placements,
-                                                images,
-                                                target: ImageTarget::Main,
-                                            }),
-                                            window,
-                                            cx,
-                                        );
+                                        let paint = |window: &mut Window, cx: &mut App| {
+                                            painter.borrow_mut().paint_frame(
+                                                &surface.frame,
+                                                bounds.origin,
+                                                Some(bounds.size),
+                                                ground,
+                                                cell_width,
+                                                &font,
+                                                &highlights,
+                                                &surface.panes,
+                                                None,
+                                                images.as_deref().map(|images| PlacedImages {
+                                                    placements: &surface.graphics.placements,
+                                                    images,
+                                                    target: ImageTarget::Main,
+                                                }),
+                                                window,
+                                                cx,
+                                            );
+                                        };
+                                        #[cfg(target_os = "macos")]
+                                        {
+                                            let pages: Vec<Bounds<Pixels>> = drawn_pages
+                                                .borrow()
+                                                .values()
+                                                .copied()
+                                                .filter(|page| page.intersects(&bounds))
+                                                .collect();
+                                            if pages.is_empty() {
+                                                paint(window, cx);
+                                            } else {
+                                                for piece in
+                                                    crate::browser::around_pages(bounds, pages)
+                                                {
+                                                    window.with_content_mask(
+                                                        Some(ContentMask { bounds: piece }),
+                                                        |window| paint(window, cx),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        #[cfg(not(target_os = "macos"))]
+                                        paint(window, cx);
                                     } else {
                                         // Regions place no images, so nothing
                                         // else releases the ones that went away.
@@ -583,6 +659,7 @@ impl Render for HerdrWindow {
                         .size_full(),
                     );
                 cells
+                    .children(chats)
                     .children(self.render_reconnecting(cx))
                     .when_some(find_bar, |terminal, bar| terminal.child(bar))
                     .when_some(terminal_note, |terminal, note| terminal.child(note))
@@ -646,7 +723,7 @@ impl Render for HerdrWindow {
         let mut terminal = Some(terminal);
         // An activity bar section takes the body; its title bar is the
         // window's own, with no group's tab strip in it.
-        let section = self.render_activity_section(cx);
+        let section = self.render_activity_section(window, cx);
         let merged = section.is_none()
             && slots
                 .first()
@@ -764,11 +841,19 @@ impl Render for HerdrWindow {
                     this.set_layout(action.mode, cx);
                 }),
             )
+            .on_action(
+                cx.listener(|this, action: &crate::actions::SetTabLayout, _, cx| {
+                    this.set_tab_layout(action.mode, cx);
+                }),
+            )
             .on_action(cx.listener(|this, action: &RunCommand, window, cx| {
                 this.command(action.command, window, cx);
             }))
             .on_action(cx.listener(|_, _: &Minimize, window, _| {
                 window.minimize_window();
+            }))
+            .on_action(cx.listener(|_, _: &ZoomWindow, window, _| {
+                window.zoom_window();
             }))
             .on_action(cx.listener(|this, _: &ShowHerdrNotDetected, window, cx| {
                 this.show_install_modal(window, cx);

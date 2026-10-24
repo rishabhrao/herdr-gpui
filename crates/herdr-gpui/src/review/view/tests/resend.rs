@@ -45,7 +45,7 @@ fn edited_notes_are_sent_again_and_sent_ones_stay_until_cleared(cx: &mut gpui::T
             let review = view.reviews.values().next().unwrap();
             assert_eq!(review.editing, None);
             assert_eq!(review.notes[0].comment, "Implement it fully");
-            assert!(!review.notes[0].sent && review.notes[1].sent);
+            assert!(review.notes[0].sent.is_none() && review.notes[1].sent.is_some());
         });
     });
     let edited = send(&view, cx);

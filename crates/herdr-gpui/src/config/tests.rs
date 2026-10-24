@@ -1,5 +1,6 @@
 use super::*;
 use anyhow::Context as _;
+use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod accent;
@@ -9,6 +10,7 @@ mod agents_placement;
 mod backdrop;
 mod bitmap_fonts;
 mod bold_color;
+mod change_counts;
 mod cloud_setup;
 mod code;
 mod code_navigation;
@@ -35,6 +37,7 @@ mod missing_fonts;
 mod notification_settings;
 mod omarchy_theme;
 mod preferences;
+mod px0;
 mod repository_icons;
 mod sidebar_scope;
 mod sidebar_search;
@@ -45,11 +48,13 @@ mod status_bar;
 mod status_bar_awake_scope;
 mod status_icons;
 mod system_themes;
+mod tab_layout;
 mod terminal_padding;
 mod theme_files;
 mod themes;
 mod update_channel;
 mod usage_inline;
+mod worktrees;
 mod zen;
 
 struct TempDirectory(PathBuf);

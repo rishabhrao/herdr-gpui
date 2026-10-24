@@ -8,10 +8,9 @@ human and agent contributors alike.
 
 ## Before You Start
 
-- **macOS and experimental Linux builds.** GPUI uses Metal on macOS and
-  Vulkan with X11/Wayland on Linux. CI/release builds cover Linux x86_64 and
-  ARM64; native Linux desktop verification is still pending. No Windows build
-  currently exists.
+- **macOS, Linux, and Windows builds.** GPUI uses Metal on macOS, Vulkan
+  with X11/Wayland on Linux, and DirectX on Windows. CI and release builds
+  cover x86_64 and ARM64 on Linux and Windows.
 - **You need Herdr installed.** This repository is a client of the
   daemon from [herdrdev/herdr](https://github.com/herdrdev/herdr). Normal local
   launches may start it if absent; explicit sockets remain attach-only. The GUI

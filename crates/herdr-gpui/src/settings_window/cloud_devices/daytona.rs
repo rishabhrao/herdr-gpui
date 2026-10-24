@@ -164,6 +164,7 @@ impl SettingsWindow {
     }
 
     fn refresh_daytona(&mut self, cx: &mut Context<Self>) {
+        self.watch_sandbox_images(cx);
         let Some(settings) = self.daytona_settings() else {
             if let Some(card) = &mut self.daytona_card {
                 card.job = None;
@@ -442,6 +443,7 @@ impl SettingsWindow {
             .child(account)
             .child(sandboxes)
             .child(devices)
+            .child(self.render_sandbox_images(CloudProvider::Daytona, cx))
     }
 }
 

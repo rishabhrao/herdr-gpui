@@ -65,23 +65,34 @@ fn metadata_gaps_deliver_keys_wheel_and_click_without_waiting_for_surface(
             assert_eq!(view.pending_input.len(), 0);
         });
     });
-    for event in [
-        ClientPaneInputEvent::TextCommit("immediate".into()),
-        ClientPaneInputEvent::Mouse {
-            kind: ClientMouseKind::ScrollUp,
-            position: ClientMousePosition::Cell { column: 2, row: 3 },
-            geometry: None,
-            modifiers: 0,
-            lines: crate::herdr_settings::DEFAULT_MOUSE_SCROLL_LINES.get(),
-        },
-        mouse_event(ClientMouseKind::Down(ClientMouseButton::Left), 2, 3),
-        mouse_event(ClientMouseKind::Up(ClientMouseButton::Left), 2, 3),
+    // The pane reports the mouse, so a notch arrives as one report per line.
+    let notch = ClientPaneInputEvent::Mouse {
+        kind: ClientMouseKind::ScrollUp,
+        position: ClientMousePosition::Cell { column: 2, row: 3 },
+        geometry: None,
+        modifiers: 0,
+        lines: 1,
+    };
+    let lines = usize::from(crate::herdr_settings::DEFAULT_MOUSE_SCROLL_LINES.get());
+    for events in [
+        vec![ClientPaneInputEvent::TextCommit("immediate".into())],
+        vec![notch; lines],
+        vec![mouse_event(
+            ClientMouseKind::Down(ClientMouseButton::Left),
+            2,
+            3,
+        )],
+        vec![mouse_event(
+            ClientMouseKind::Up(ClientMouseButton::Left),
+            2,
+            3,
+        )],
     ] {
         assert_eq!(
             server.receive(),
             ClientMessage::ClientShellPaneInput {
                 pane_id: "w1:p1".into(),
-                events: vec![event],
+                events,
             }
         );
     }

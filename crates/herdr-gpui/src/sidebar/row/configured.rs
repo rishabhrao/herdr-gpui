@@ -240,7 +240,7 @@ pub(super) fn configured_lines(
     key: &str,
     lines: &[Vec<ResolvedToken>],
     look: TokenLook,
-    label_width: f32,
+    (label_width, detail_limit): (f32, f32),
     mut workspace_icon: RowIcon,
     cx: &RowContext<'_>,
 ) -> Div {
@@ -260,6 +260,13 @@ pub(super) fn configured_lines(
         ICON_RESERVE
     };
     for (index, line) in lines.iter().enumerate() {
+        // The second line sits beside the badge's counts, so it may have
+        // less room than the first.
+        let label_width = if index == 1 {
+            detail_limit
+        } else {
+            label_width
+        };
         let agent_here = agent_at == Some(index);
         let reserve = if index == 0 { workspace_reserve } else { 0. }
             + if agent_here { agent_reserve } else { 0. };
@@ -274,7 +281,7 @@ pub(super) fn configured_lines(
         if agent_here && let Some(icon) = agent_icon {
             text = text.child(agent_mark(key, icon, agent_size, icon_color, font));
         }
-        if index == 0 && !matches!(workspace_icon, RowIcon::None) {
+        if index == 0 && workspace_icon.draws() {
             text = text.child(std::mem::replace(&mut workspace_icon, RowIcon::None).slot(
                 key,
                 font,

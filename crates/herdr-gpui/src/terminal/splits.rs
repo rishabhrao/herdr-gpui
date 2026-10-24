@@ -52,6 +52,38 @@ pub(crate) fn edge(split: &PaneSurfaceSplit, cell_width: f32, cell_height: f32) 
     f32::from(split.pos) * cell
 }
 
+/// The ratio one split should be set to.
+#[derive(Clone, Debug)]
+pub(crate) struct SplitTarget {
+    pub(crate) path: Vec<bool>,
+    pub(crate) ratio: f32,
+}
+
+/// A ratio for every split that gives each pane the same area: the first side's
+/// share of the split's panes, within Herdr's 0.1..=0.9 range. A ratio divides
+/// the split's own rectangle, so the order they are applied in does not matter.
+pub(crate) fn even_targets(splits: &[PaneSurfaceSplit]) -> Vec<SplitTarget> {
+    splits
+        .iter()
+        .map(|split| {
+            let first = panes(splits, &[split.path.as_slice(), &[false]].concat());
+            let second = panes(splits, &[split.path.as_slice(), &[true]].concat());
+            SplitTarget {
+                path: split.path.clone(),
+                ratio: (first as f32 / (first + second) as f32).clamp(0.1, 0.9),
+            }
+        })
+        .collect()
+}
+
+/// Panes under `path`: one more than the splits at or below it.
+fn panes(splits: &[PaneSurfaceSplit], path: &[bool]) -> usize {
+    1 + splits
+        .iter()
+        .filter(|split| split.path.starts_with(path))
+        .count()
+}
+
 /// The ratio that starts the border at `position` along its axis, within the
 /// range Herdr's layout accepts; asking beyond it would only leave the border
 /// behind the pointer. `None` for geometry that cannot divide the split.

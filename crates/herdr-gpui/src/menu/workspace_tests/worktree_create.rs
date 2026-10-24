@@ -98,7 +98,8 @@ fn worktree_creation_reports_failures_and_follows_the_created_checkout(
             assert!(view.pending_navigation.is_none());
 
             // Only the correlated response closes the dialog and navigates.
-            let created = serde_json::json!({"result":{"type":"worktree_created","workspace":{"workspace_id":"w6"},"tab":{"tab_id":"t9"}}});
+            let created = serde_json::json!({"result":{"type":"worktree_created",
+                "workspace":{"workspace_id":"w6"},"tab":{"tab_id":"t9"},"root_pane":{"pane_id":"p9"}}});
             view.collapsed_repos
                 .insert(sidebar::layout_tests::REPO_KEY.to_owned());
             view.menu.creation = Some("create".into());
@@ -111,9 +112,10 @@ fn worktree_creation_reports_failures_and_follows_the_created_checkout(
             view.update_workspace_dialog(window, cx);
             assert!(view.menu.page.is_none());
             assert!(view.menu.creation.is_none());
+            // Creating navigates to the pane so the shell is immediately focused.
             assert_eq!(
                 view.pending_navigation,
-                Some(crate::NavigationTarget::Workspace("w6".into()))
+                Some(crate::NavigationTarget::Pane("p9".into()))
             );
             // A folded group cannot hide the checkout that was just created.
             assert!(view.collapsed_repos.is_empty());

@@ -68,7 +68,7 @@ Every command accepts:
 | `window detach\|reconnect` | Detach from, or reconnect to, the selected host |
 | `ui sidebar\|statusbar [on\|off\|toggle]` | For this window and session |
 | `ui font-size +\|-\|reset\|POINTS` | The terminal font size for this session |
-| `ui panel workspaces\|overview\|pull-requests\|issues\|usage` | Show an activity bar section: Workspaces with the sidebar expanded, Overview of what needs you on every host, the focused workspace's pull requests or issues across the window, or every host's plan usage |
+| `ui panel workspaces\|overview\|pull-requests\|issues\|security\|automations\|usage` | Show an activity bar section: Workspaces with the sidebar expanded, Overview of what needs you on every host, the focused workspace's pull requests or issues across the window, the vulnerability reports and Dependabot alerts of your repositories, every host's automation scripts and runs, or every host's plan usage |
 | `run COMMAND` | Any app command by its `[keybindings]` name, as the palette runs it |
 | `commands` | The names `run` accepts (no app needed) |
 | `open DIR` | Open a folder as **Open Project** in the palette does, starting the app if needed (below) |
@@ -99,6 +99,7 @@ Herdr UI** entry, which both Windows installers add, runs this command through
 | `browser list` | Page tabs only |
 | `browser navigate ID URL` | Load another address in a page tab |
 | `browser back\|forward ID` | |
+| `browser zoom ID +\|-\|reset\|PERCENT` | Zoom a page tab a step, back to 100%, or to 50-300%; the tab keeps it |
 | `browser text ID` | The page's visible text |
 | `browser screenshot ID PATH` | A PNG of the visible page, at most 2000 px a side (macOS) |
 | `code open FILE[:LINE]` | A read-only code tab at a line |
@@ -107,6 +108,14 @@ Herdr UI** entry, which both Windows installers add, runs this command through
 | `orchestrator [--repo PATH]` | Show the Issues section narrowed to your checkout's project, or PATH's |
 | `orchestrator items\|issues\|prs` | What it last synced, from its local database (no app needed) |
 | `review` | The review of your workspace's uncommitted changes |
+| `px0 [open]` | Open or focus px0 on your local workspace's checkout (macOS and Windows) |
+
+`px0 open` reuses one editor tab per workspace. It discovers a local px0
+workbench or starts an installed px0; `config set px0.url http://127.0.0.1:7777/`
+selects an existing workbench, and `config unset px0.url` restores automatic
+discovery. `--json` returns the opened tab ID and workspace. Exit 0 means the
+tab opened; startup errors appear in that tab with Retry. Remote workspaces
+and builds without embedded pages return exit 8. See [px0](../crates/herdr-gpui/README.md#px0).
 
 ### Worktrees and agents
 
@@ -123,6 +132,9 @@ Herdr UI** entry, which both Windows installers add, runs this command through
 | `scripts setup\|run` | Run one in a new tab; an unseen script still asks first. Archive removes the worktree, so it stays behind the app's delete dialog |
 | `teleport --to HOST` | Open the teleport dialog for your linked worktree, reviewing HOST; you confirm there |
 | `fan-out PROMPT [--agent KIND[:N]]...` | Open the fan-out dialog prefilled; you start it there |
+| `chat [status]` | The `herdr-acp` chat panes of the window's host, this machine or an SSH host: agent, status, model, context window use, and whether the chat view or the terminal shows |
+| `chat show\|hide\|toggle [--pane ID]` | Show the native chat view over your pane (or ID, else the focused one), or its terminal |
+| `chat new AGENT [--pane ID]` | Open a tab running a `herdr-acp` chat with a built-in agent (`claude`, `codex`, `copilot`, `gemini`, `opencode`, `pi`) in the workspace and folder of your pane (or ID). On an SSH host the tab runs that host's `herdr-acp` (see [Chats on SSH hosts](#chats-on-ssh-hosts)). Exits 8 when `herdr-acp` is missing here, the host cannot be reached, or the agent is not installed on it (`herdr-acp agents` lists those that are) |
 
 ### Hosts
 
@@ -134,9 +146,19 @@ Herdr UI** entry, which both Windows installers add, runs this command through
 | `ports forward\|unforward PORT` | Forward a port of the SSH host to this machine |
 | `ports open PORT` | `localhost:PORT` in a tab, forwarded first when remote |
 | `usage`, `system` | Plan usage and load of the selected host |
+| `security` | Private vulnerability reports in triage (titles and metadata only, never their descriptions) and open Dependabot alerts of the github.com repositories the window's workspaces hold, most severe first, as the Security section last read them. Exits 4 when there are none |
+| `security open REPOSITORY ALERT\|GHSA` | Show alert `ALERT` (its number) or private report `GHSA` (its GHSA ID) of `REPOSITORY` (`owner/name`) in the Security section, beside its list: the fix, the advisory, and the dependency for an alert; the report, its advisory draft, and its conversation for a report. Only items the section lists open; nothing on GitHub changes |
+| `automation approve FILE [--host ID]` | Open the approval of the automation script `FILE` in the app: its plan, caps, and content hash, for the user to approve or cancel. The command approves nothing. `FILE` is the script's path on the host as `herdr-automate status` lists it, resolved here when it exists; `--host` names the host by ID or label (default: your workspace's host). Exits 5 when the host does not list the script, 6 while a dialog is open or the host was not read yet |
 | `cloud [list]` | Saved cloud machines (no app needed) |
 | `cloud add` | Open the settings that add one |
+| `cloud images [list]` | Sandbox images built from projects' recipes (no app needed) |
+| `cloud images build [PROVIDER]` | Build the current repository's sandbox images ahead of a dispatch |
 | `cloud setup ID` | Run the `[cloud]` setup script on a saved machine again, in a new tab once the window shows it. `ID` is the machine ID from `cloud list`, its host ID, or its label |
+| `cloud create PROVIDER [--count N] [--template T] [--preset P] [--sandbox] [--no-install] [--no-setup]` | Ask in the window to create up to 16 machines; the user confirms there, once for all of them. Prints the batch to follow (below) |
+| `cloud exec ID [--timeout S] [--cwd DIR] -- COMMAND...` | Run a command on a saved machine through the app's connection to it, and print its output (below) |
+| `cloud destroy ID... \| --batch BATCH` | Ask in the window to delete saved machines at their providers and forget them; the user confirms there, once for all of them. Prints the batch to follow (below) |
+| `cloud wait BATCH [--timeout S]` | Each machine of a batch once all are settled, or after S seconds (default 60, at most 600) |
+| `cloud batches` | The batches the app keeps, newest last; the oldest are left out when they would not fit in one answer |
 | `processes [--pane ID]` | The processes under a pane, with CPU and memory (no app needed) |
 | `search symbol\|file QUERY` | Go to Symbol or Go to File over the current checkout (no app needed) |
 
@@ -186,6 +208,68 @@ herdr-gpui config set cloud.coder.agents '[]'   # nothing extra on Coder
 herdr-gpui cloud setup herdr-tidy-lark-aa
 ```
 
+An agent that needs machines of its own asks for them with `cloud create`,
+then follows the batch with `cloud wait` until each is ready:
+
+```sh
+herdr-gpui cloud create coder --count 10 --template dev --json
+herdr-gpui cloud wait 3 --timeout 600 --json   # again while it exits 4
+```
+
+The window asks once, saying how many machines of which provider, how they
+are made, and that the provider bills each until it is destroyed. Once
+confirmed, each machine is made on its own, saved as a device, given Herdr
+when it lacks it (unless `--no-install`), and has the `[cloud]` setup script
+run on it in a login shell from its home directory, without a terminal
+(unless `--no-setup`). Only then is it `ready`; `cloud wait` shows each
+machine's step meanwhile, and its device ID once saved. A failed setup script
+fails the machine with the end of its output, but the machine stays saved;
+destroy it like any other. Coder takes `--template` and `--preset` by name
+(without them, the deployment's only template and its default preset);
+Azure makes a Container Apps sandbox with `--sandbox`. Boat and Railway make
+their machines one at a time. Providers are named by key or name: azure,
+boat, coder, container, daytona, opensandbox, railway, sprites. The device
+list keeps at most 64 cloud devices, counting those being made.
+
+`cloud exec` runs one command on a saved cloud machine, named as for
+`cloud setup`, through the same authenticated command the app connects with
+(`coder ssh`, a provider's SSH gateway, and so on), so the agent needs no
+credentials of its own. Everything after `--` is the command, word for word;
+it gets no input. `--cwd` runs it in a directory, `~/` being the machine's
+home. `--timeout` (default 120 seconds, at most 600) counts everything,
+including waiting for a stopped machine to start; past it the command is
+stopped. Its stdout comes back on stdout and its stderr on stderr, each cut
+to its last 64 or 32 KiB and with terminal controls removed; `--json` gives
+`{"device", "status", "stdout", "stderr", "truncated"}`. It exits 0 when the
+command exited 0, and 1 otherwise. It asks nothing: like the agent's own
+shell, it acts on the user's machine at once. Git pushes from a machine need
+credentials there, such as Coder's external auth or a `gh auth login` in the
+`[cloud]` setup script.
+
+```sh
+herdr-gpui cloud exec herdr-tidy-lark-aa --cwd ~/code -- git clone https://github.com/me/app
+herdr-gpui cloud exec herdr-tidy-lark-aa --cwd ~/code/app -- sh -c 'git switch -c fix && make test'
+```
+
+An agent that worked on cloud machines removes them with `cloud destroy`,
+naming each by its machine ID, host ID, or label (a label two machines share
+is refused), or with `--batch` every machine a batch named. The window asks
+once, listing each machine and what happens to it: Azure, Boat, Coder,
+Container, Daytona, OpenSandbox, and Sprites delete the machine with what
+goes with it and then forget it here;
+Railway VMs cannot be deleted from this app, so they are only forgotten and
+expire on their own. A dialog already open refuses the request (exit 6).
+
+```sh
+herdr-gpui cloud destroy coder:5d1c… herdr-tidy-lark-aa --json
+herdr-gpui cloud wait 3 --timeout 600 --json
+```
+
+`cloud wait` exits 0 once every machine went as asked, 1 once the batch
+settled otherwise (a machine failed, with why, or the user said no), and 4
+while it is still waiting for the user or running. A batch keeps going if the
+command or the window that asked goes away; the app keeps the last 32.
+
 Focus-on-hover between split terminal panes is on by default. Disable it with
 `herdr-gpui config set focus_follows_mouse false`.
 The change applies live; `config get focus_follows_mouse` reads it back.
@@ -194,7 +278,9 @@ The change applies live; `config get focus_follows_mouse` reads it back.
 
 `events` prints what happened in the app: windows opening, closing, and
 gaining focus; the app's tabs opening and closing; notes kept for a pane;
-worktree notes changing; and host status changes. Each event has a sequence
+worktree notes changing; host status changes; and cloud batches moving on
+(`cloud_batch`, with the batch and its phase: `confirming`, `running`,
+`done`, or `cancelled`). Each event has a sequence
 number; pass back the `INSTANCE:SEQ` cursor a call prints with `--after` to
 get only newer events. A cursor from an earlier run of the app gets every
 event the new run has kept, so a restart never hides events.
@@ -278,20 +364,24 @@ herdr-gpui serve --port 8080 --session work
 
 Commands never bypass a confirmation. Restoring a checkpoint, teleporting a
 worktree, fanning out a prompt, running a worktree script the app has not
-seen, and adding a cloud machine open the app's own dialog (archiving a
-worktree has no command at all), already pointed
-at your checkout, and the user confirms there. Nothing here installs,
-starts, stops, or upgrades Herdr, and `update` never installs the app.
+seen, creating or destroying cloud machines, and adding a cloud machine open
+the app's own dialog (archiving a worktree has no command at all), already
+pointed at your checkout or the machines named, and the user confirms there.
+`cloud exec` asks nothing because it confirms nothing: it is the agent's own
+work, run on a machine the user saved. Nothing here installs, starts, stops,
+or upgrades Herdr on this computer, and `update` never installs the app;
+`cloud create` installs Herdr only on the machines the user confirmed, as
+creating them in Settings does.
 
-Adding a device has no command either: the Add Device dialog runs it. Its
-setup workspace runs `herdr-gpui __device-setup-attach SOCKET`, an internal
-helper that shows the setup the app runs (see the Native Shell README's
-"Local Network access"); it is not a command to call yourself, and the socket
-it names is single use.
+Adding an SSH or local network device has no command: the Add Device dialog
+runs it. Its setup workspace runs `herdr-gpui __device-setup-attach SOCKET`,
+an internal helper that shows the setup the app runs (see the Native Shell
+README's "Local Network access"); it is not a command to call yourself, and
+the socket it names is single use.
 
 Scrollback search is not repeated here: `herdr pane read` covers it. Moving a
-window, capturing a whole window, and destroying a cloud machine have no
-command because the app cannot do them.
+window and capturing a whole window have no command because the app cannot
+do them.
 
 ## Links
 
@@ -320,7 +410,7 @@ request is `{"method", "caller", "op"}`, where `caller` carries the pane,
 workspace, daemon socket, and window, and `op` is tagged with `"op"`. Browser
 requests keep their original flat form (`browser.open`, `browser.reload`,
 `browser.feedback`, `notes.send`). `status` reports the protocol version,
-currently 4. Requests and responses are bounded to 256 KiB, a request that
+currently 6. Requests and responses are bounded to 256 KiB, a request that
 waits says for how long (at most 600 seconds), and the app answers at most a
 few requests at a time.
 
@@ -348,3 +438,28 @@ A pipe has no receive or send timeout. Reads poll with `PeekNamedPipe`, as
 the daemon client does; writes have no deadline, so the app's out buffer
 holds a whole answer and the connection bound limits what a stalled caller
 can hold.
+
+## Chats on SSH hosts
+
+Native chat views are opt-in: turn on **ACP chats** in Settings > General
+(`acp_chats = true` under `[features]`). While it is off, chat panes show
+their terminal and `chat new` exits 8.
+
+A chat on an SSH host shows in the native chat view like a local one. Herdr UI
+runs `herdr-acp connect ID` on the host over the same SSH connection it uses
+for Herdr, and the program there sees an ordinary client on its own socket.
+Starting a chat there (`chat new`, or the workspace menu) runs the host's own
+`herdr-acp`, looked for in `~/.herdr/bin`, `~/.cargo/bin`, `~/.local/bin`, and
+then the remote `PATH`. Install it on the host with:
+
+```sh
+cargo install --locked --git https://github.com/penso/herdr-gpui herdr-acp --root ~/.herdr
+```
+
+The workspace menu offers only the agents whose own ACP command is installed
+on the host, as `herdr-acp agents` lists them; an agent `npx` would have to
+download first is left out.
+
+Files dropped on a remote chat are copied to the host first, into private
+temporary files under its `${TMPDIR:-/tmp}`, and the copies are attached.
+

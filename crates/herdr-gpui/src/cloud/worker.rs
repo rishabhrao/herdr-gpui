@@ -36,17 +36,32 @@ pub(crate) fn spawn<V: 'static, U: Send + 'static>(
     work: impl FnOnce(&dyn Fn() -> bool, &dyn Fn(U)) + Send + 'static,
     apply: impl Fn(&mut V, U, &mut Context<V>) + 'static,
 ) -> std::io::Result<Worker> {
+    spawn_flagged(
+        name,
+        cx,
+        move |flag, send| work(&|| flag.load(Ordering::Acquire), send),
+        apply,
+    )
+}
+
+/// [`spawn`] for work that hands the cancellation flag itself to what it
+/// calls, such as a host script.
+pub(crate) fn spawn_flagged<V: 'static, U: Send + 'static>(
+    name: &str,
+    cx: &mut Context<V>,
+    work: impl FnOnce(&AtomicBool, &dyn Fn(U)) + Send + 'static,
+    apply: impl Fn(&mut V, U, &mut Context<V>) + 'static,
+) -> std::io::Result<Worker> {
     let cancel = Arc::new(AtomicBool::new(false));
     let flag = cancel.clone();
     let (tx, rx) = mpsc::sync_channel(MAILBOX);
     std::thread::Builder::new()
         .name(name.into())
         .spawn(move || {
-            let cancelled = || flag.load(Ordering::Acquire);
             let send = |update: U| {
                 let _ = tx.send(update);
             };
-            work(&cancelled, &send);
+            work(&flag, &send);
         })?;
     let task = cx.spawn(async move |this, cx| {
         loop {

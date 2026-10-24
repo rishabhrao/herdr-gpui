@@ -8,7 +8,7 @@ use super::{
     agents_sort,
     cell::{Cell, Fold, RowContext, RowData, WorkspaceRow, layout_for},
     label_text,
-    layout::{self, SidebarLook},
+    layout::SidebarLook,
     line_height,
     reorder::{self, Plan},
     row::{RowIcon, RowLift, RowTree},
@@ -19,14 +19,11 @@ use super::{
 };
 use crate::{
     Command, HerdrWindow, NavigationTarget,
+    avatars::Checkout,
     config::{AgentsPlacement, FontConfig, Theme},
     fonts::StyledFont,
 };
 use gpui::{prelude::*, *};
-
-/// Padding above and below a row's text in a phone's drawer, for rows
-/// about a fingertip tall.
-const DRAWER_ROW_PADDING: f32 = 9.;
 
 mod agent_rows;
 mod device_tree;
@@ -41,18 +38,9 @@ impl HerdrWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let window_width = f32::from(window.viewport_size().width);
-        let width = if self.drawer_open() {
-            self.drawer_sidebar_width(window_width)
-        } else {
-            sidebar_width(self.sidebar_width, window_width)
-        };
+        let width = self.sidebar_shown_width(f32::from(window.viewport_size().width));
         let split = self.sidebar_split.unwrap_or(0.5).clamp(0.1, 0.9);
-        let mut look = layout::for_config(&self.config, self.fill());
-        // A phone's drawer is used with a thumb: rows get a finger's height.
-        if self.drawer_open() {
-            look.density.row_padding = look.density.row_padding.max(DRAWER_ROW_PADDING);
-        }
+        let look = self.sidebar_look();
         let rows = layout_for(self.config.layout.mode);
         // The row a workspace menu was opened for keeps looking hovered while
         // the pointer is over the menu.
@@ -135,6 +123,7 @@ impl HerdrWindow {
         // A lifted device folds the list to its headers.
         let device_plan = headed.then(|| self.device_plan(devices, &query)).flatten();
         let mut sliding = device_plan.as_ref().is_some_and(|plan| plan.sliding);
+        let worktree_glyph = self.config.worktrees.glyph(theme);
         for (endpoint_index, endpoint) in self.displayed_devices() {
             if !self.device_visible(&endpoint.id)
                 || (devices && !self.device_listed(endpoint_index, &query))
@@ -190,6 +179,7 @@ impl HerdrWindow {
             let Some(snapshot) = &live.snapshot else {
                 continue;
             };
+            let pr_view = self.endpoint_pr_view(endpoint_index);
             let collapsed_repos = if endpoint_index == 0 {
                 &self.collapsed_repos
             } else {
@@ -242,6 +232,7 @@ impl HerdrWindow {
                     break;
                 }
                 let workspace = &snapshot.workspaces[index];
+                let linked = crate::worktree_identity::is_linked(workspace);
                 if selected && workspace.focused {
                     highlighted[0] = Some(space_rows);
                 }
@@ -402,22 +393,34 @@ impl HerdrWindow {
                         label,
                         title: super::workspaces::workspace_title(workspace),
                         tree,
-                        icon: if indented || !self.config.show_repository_icons {
+                        // A child hangs from the main checkout on the guide
+                        // lines; one standing alone has no line to hang from,
+                        // so it takes the branch glyph where the owner's
+                        // avatar sat.
+                        icon: if let Some(glyph) = worktree_glyph.filter(|_| linked && !indented) {
+                            RowIcon::Worktree(glyph)
+                        } else if indented || !self.config.show_repository_icons {
                             RowIcon::None
+                        } else if workspace.branch.is_none() {
+                            // Not a Git checkout, so no mark that reads as one.
+                            RowIcon::Blank
                         } else {
+                            let target = &endpoint.connection.target;
                             self.avatars
                                 .as_ref()
-                                .filter(|_| endpoint_index == 0)
-                                .and_then(|avatars| avatars.image(&workspace.new_workspace_cwd))
+                                .zip(Checkout::of(endpoint_index == 0, target, workspace))
+                                .and_then(|(avatars, checkout)| avatars.image(checkout))
                                 .map_or(RowIcon::Mark, RowIcon::Avatar)
                         },
                         fold,
                         grouped,
                         badge: workspace_badge(
                             workspace,
-                            (endpoint_index == self.selected_endpoint)
-                                .then_some(&self.menu.pr_cache),
-                            &self.git,
+                            pr_view.as_ref().map(|view| (&self.menu.pr_cache, view)),
+                            (
+                                (endpoint_index == 0).then_some(&self.git),
+                                self.config.sidebar_style.change_counts,
+                            ),
                             (&self.teleport_marks, &endpoint.id),
                             note.as_deref(),
                             theme,
@@ -502,8 +505,12 @@ impl HerdrWindow {
                 )
                 .id(SharedString::from(format!("workspace-{endpoint_id}-{id}")))
                 .map(|row| {
-                    let name =
-                        super::accessibility::workspace_name(label, shown_status, row_cx.host);
+                    let name = super::accessibility::workspace_name(
+                        label,
+                        linked,
+                        shown_status,
+                        row_cx.host,
+                    );
                     self.workspace_item(row, name, selected && workspace.focused, folds, cx)
                 })
                 .when(multi, |row| {

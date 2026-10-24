@@ -65,9 +65,8 @@ fn the_new_worktree_dialog_offers_other_hosts_and_keeps_this_one(cx: &mut gpui::
         let view = view.read(cx);
         assert_eq!(dispatched(view).as_deref(), Some("ssh:box"));
         assert_eq!(
-            view.dispatch_choice(WorkspaceAction::NewWorktree)
-                .as_deref(),
-            Some("ssh:box")
+            view.dispatch_choice(WorkspaceAction::NewWorktree),
+            Some(crate::dispatch::Target::Host("ssh:box".into()))
         );
     });
     cx.simulate_click(local.center(), gpui::Modifiers::none());
@@ -154,12 +153,20 @@ fn a_second_dispatch_waits_for_the_first(cx: &mut gpui::TestAppContext) {
             view.menu.dispatch.as_mut().unwrap().choose("ssh:box");
             view.menu.input = Some(DialogInput::new("bad branch name".into()));
             assert!(matches!(
-                view.submit_dispatch(WorkspaceAction::NewWorktree, "ssh:box", None),
+                view.submit_dispatch(
+                    WorkspaceAction::NewWorktree,
+                    &crate::dispatch::Target::Host("ssh:box".into()),
+                    None
+                ),
                 Err(crate::Error::InvalidBranchName)
             ));
             assert!(view.dispatch_job.is_none(), "nothing starts on a bad name");
             assert!(matches!(
-                view.submit_dispatch(WorkspaceAction::NewWorktree, "ssh:gone", None),
+                view.submit_dispatch(
+                    WorkspaceAction::NewWorktree,
+                    &crate::dispatch::Target::Host("ssh:gone".into()),
+                    None
+                ),
                 Err(crate::Error::DispatchHostUnavailable(host)) if host == "ssh:gone"
             ));
         })

@@ -1,6 +1,6 @@
 //! The Add Device dialog's frame: one title, a rail of what can be added (this
-//! platform's own hosts, then each cloud provider this build supports), and
-//! the chosen source's form beside it. Each source keeps its own form state,
+//! platform's own hosts, then the cloud providers in use here and **Add
+//! provider** for the rest), and the chosen source's form beside it. Each source keeps its own form state,
 //! so switching back and forth does not lose what was typed.
 
 use super::super::Page;
@@ -25,6 +25,9 @@ pub(in crate::menu) enum Source {
     Wsl,
     #[cfg(feature = "cloud")]
     Cloud(crate::cloud::CloudProvider),
+    /// The providers the rail leaves out, as tiles opening their Settings.
+    #[cfg(feature = "cloud")]
+    Catalog,
 }
 
 impl Source {
@@ -37,6 +40,8 @@ impl Source {
             Page::AddCoder => Some(Self::Cloud(crate::cloud::CloudProvider::Coder)),
             #[cfg(feature = "cloud")]
             Page::AddCloud(provider) => Some(Self::Cloud(provider)),
+            #[cfg(feature = "cloud")]
+            Page::AddProvider => Some(Self::Catalog),
             _ => None,
         }
     }
@@ -47,6 +52,8 @@ impl Source {
             Self::Wsl => "WSL",
             #[cfg(feature = "cloud")]
             Self::Cloud(provider) => crate::cloud::name(provider),
+            #[cfg(feature = "cloud")]
+            Self::Catalog => "Add provider",
         }
     }
 
@@ -56,6 +63,8 @@ impl Source {
             Self::Wsl => "icons/computer.svg",
             #[cfg(feature = "cloud")]
             Self::Cloud(provider) => crate::cloud::icon(provider),
+            #[cfg(feature = "cloud")]
+            Self::Catalog => "icons/plus.svg",
         }
     }
 
@@ -69,17 +78,27 @@ impl Source {
             Self::Cloud(crate::cloud::CloudProvider::Boat) => "add-device-source-boat",
             #[cfg(feature = "coder")]
             Self::Cloud(crate::cloud::CloudProvider::Coder) => "add-device-source-coder",
+            #[cfg(feature = "container")]
+            Self::Cloud(crate::cloud::CloudProvider::Container) => "add-device-source-container",
             #[cfg(feature = "daytona")]
             Self::Cloud(crate::cloud::CloudProvider::Daytona) => "add-device-source-daytona",
             #[cfg(feature = "railway")]
             Self::Cloud(crate::cloud::CloudProvider::Railway) => "add-device-source-railway",
+            #[cfg(feature = "opensandbox")]
+            Self::Cloud(crate::cloud::CloudProvider::OpenSandbox) => {
+                "add-device-source-opensandbox"
+            }
+            #[cfg(feature = "sprites")]
+            Self::Cloud(crate::cloud::CloudProvider::Sprites) => "add-device-source-sprites",
+            #[cfg(feature = "cloud")]
+            Self::Catalog => "add-device-source-catalog",
         }
     }
 
     /// Whether this source starts the rail's cloud section.
     fn is_cloud(self) -> bool {
         #[cfg(feature = "cloud")]
-        return matches!(self, Self::Cloud(_));
+        return matches!(self, Self::Cloud(_) | Self::Catalog);
         #[cfg(not(feature = "cloud"))]
         false
     }
@@ -90,12 +109,9 @@ enum State {
     None,
     /// Hosts found nearby and not saved yet.
     Nearby(usize),
-    /// An account is configured, so the form can create or attach machines.
+    /// In use here: an account is configured, or a device was made.
     #[cfg(feature = "cloud")]
     Ready,
-    /// Nothing is configured yet; the pane points to Settings.
-    #[cfg(feature = "cloud")]
-    SetUp,
 }
 
 /// The Devices picker's line under "Add Device…".
@@ -118,20 +134,19 @@ impl HerdrWindow {
         false
     }
 
-    /// This platform's own hosts first, then each offered cloud provider.
-    fn rail_sources(&self) -> Vec<Source> {
+    /// This platform's own hosts first, then the cloud providers in use here,
+    /// then **Add provider** while any is left out.
+    pub(in crate::menu) fn rail_sources(&self) -> Vec<Source> {
         let mut sources = vec![Source::Host];
         if cfg!(windows) {
             sources.push(Source::Wsl);
         }
         #[cfg(feature = "cloud")]
         if self.cloud_offered() {
-            sources.extend(
-                crate::cloud::CloudProvider::ALL
-                    .iter()
-                    .copied()
-                    .map(Source::Cloud),
-            );
+            sources.extend(self.cloud_listed().into_iter().map(Source::Cloud));
+            if !self.cloud_unlisted().is_empty() {
+                sources.push(Source::Catalog);
+            }
         }
         sources
     }
@@ -150,10 +165,11 @@ impl HerdrWindow {
                 .filter(|count| *count > 0)
                 .map_or(State::None, State::Nearby),
             Source::Wsl => State::None,
+            // The rail lists only providers in use.
             #[cfg(feature = "cloud")]
-            Source::Cloud(provider) if self.cloud_providers().contains(&provider) => State::Ready,
+            Source::Cloud(_) => State::Ready,
             #[cfg(feature = "cloud")]
-            Source::Cloud(_) => State::SetUp,
+            Source::Catalog => State::None,
         }
     }
 
@@ -187,6 +203,8 @@ impl HerdrWindow {
             },
             #[cfg(feature = "cloud")]
             Source::Cloud(provider) => self.open_cloud_source(provider, window, cx),
+            #[cfg(feature = "cloud")]
+            Source::Catalog => self.open_add_provider(window, cx),
         }
         cx.notify();
     }
@@ -327,6 +345,16 @@ impl HerdrWindow {
     ) -> Div {
         let theme = &self.theme;
         let current = self.menu.page.and_then(Source::of);
+        // A provider's pane opened from elsewhere, such as Coder's sign-in
+        // falling back, belongs under Add provider while the rail omits it.
+        #[cfg(feature = "cloud")]
+        let current = current.map(|shown| {
+            if sources.contains(&shown) {
+                shown
+            } else {
+                Source::Catalog
+            }
+        });
         let mut rail = div()
             .debug_selector(|| "add-device-rail".into())
             .flex_none()
@@ -386,13 +414,6 @@ impl HerdrWindow {
                         .size(px(7.))
                         .rounded_full()
                         .bg(rgb(super::super::colors::online(theme))),
-                ),
-                #[cfg(feature = "cloud")]
-                State::SetUp => Some(
-                    div()
-                        .text_size(px(self.config.ui.size * 0.85))
-                        .text_color(rgb(theme.muted))
-                        .child("Set up"),
                 ),
             };
             rail = rail.child(
@@ -483,23 +504,28 @@ impl HerdrWindow {
                     .flex()
                     .justify_end()
                     .child(
-                        div()
-                            .id("cloud-setup-settings")
-                            .debug_selector(|| "cloud-setup-settings".into())
-                            .p(px(8.))
-                            .rounded(px(crate::config::corners::CONTROL))
-                            .bg(rgb(theme.active))
-                            .cursor_pointer()
-                            .hover(|s| {
-                                s.bg(rgb(theme.active).blend(rgba((theme.foreground << 8) | 0x20)))
-                            })
-                            .child("Open Settings…")
+                        self.settings_button("cloud-setup-settings")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_provider_settings(provider, window, cx);
                             })),
                     ),
             );
         self.add_device_frame("cloud-setup-dialog", "cloud-setup-close", compact, pane, cx)
+    }
+
+    /// A pane's **Open Settings…** button, waiting for its click handler.
+    #[cfg(feature = "cloud")]
+    pub(super) fn settings_button(&self, id: &'static str) -> Stateful<Div> {
+        let theme = &self.theme;
+        div()
+            .id(id)
+            .debug_selector(move || id.into())
+            .p(px(8.))
+            .rounded(px(crate::config::corners::CONTROL))
+            .bg(rgb(theme.active))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(theme.active).blend(rgba((theme.foreground << 8) | 0x20))))
+            .child("Open Settings…")
     }
 
     /// Enter opens the provider's Settings; Escape closes the dialog.

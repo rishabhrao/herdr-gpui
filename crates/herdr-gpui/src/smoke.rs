@@ -91,6 +91,31 @@ pub struct InputProbe {
     pub compositions_discarded: u64,
 }
 
+/// The focus changes the window last asked of the daemon, each with the
+/// code that asked, so a step that times out names the request that undid it.
+#[derive(Clone, Debug, Default)]
+pub struct Navigations(std::collections::VecDeque<String>);
+
+impl Navigations {
+    const KEPT: usize = 12;
+
+    pub(crate) fn record(
+        &mut self,
+        label: &str,
+        focus: Option<&crate::navigation::OwnedNavigationTarget>,
+        at: &std::panic::Location<'_>,
+    ) {
+        if self.0.len() == Self::KEPT {
+            self.0.pop_front();
+        }
+        self.0.push_back(format!(
+            "{label} {focus:?} from {}:{}",
+            at.file(),
+            at.line()
+        ));
+    }
+}
+
 const STEPS: &[&str] = &[
     "initial painted surface",
     "Cmd-T new tab",
@@ -284,6 +309,7 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                 let active = window.is_window_active();
                 let actions_ready = window.is_action_available(&RunCommand { command: Command::Tab }, cx);
                 let probe = view.read(cx).input_probe;
+                let navigations = view.read(cx).navigations.clone();
                 // A command sent while a focus change is fenced is dropped,
                 // as a user's would be, so each step waits for the fence.
                 let fenced = view.read(cx).activation_deadline.is_some();
@@ -293,7 +319,7 @@ pub fn start(handle: WindowHandle<HerdrWindow>, cx: &mut App) {
                     (view.live.clone(), view.local_error.clone(), view.options, view.last_queued_options, view.bounds)
                 };
                 let diagnostic = || format!(
-                    "step={step} ({}) elapsed={:?} frames={frames} focus={focused} actions_ready={actions_ready} fenced={fenced} ready={ready} active={} probe={probe:?} status={:.160} local_error={:.240} live.error={:.240} connected={} snapshot={:?} surface={:?} size={:?} last_queued_options={last_queued_options:?}",
+                    "step={step} ({}) elapsed={:?} frames={frames} focus={focused} actions_ready={actions_ready} fenced={fenced} ready={ready} active={} probe={probe:?} status={:.160} local_error={:.240} live.error={:.240} connected={} snapshot={:?} surface={:?} size={:?} last_queued_options={last_queued_options:?} navigations={navigations:?}",
                     STEPS[step], since.elapsed(), active, live.status,
                     local_error.as_deref().unwrap_or("none"), live.error.as_deref().unwrap_or("none"), live.status.is_connected(),
                     live.snapshot.as_ref().map(|s| (s.revision, s.workspaces.len(), s.tabs.len())),

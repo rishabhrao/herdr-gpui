@@ -301,6 +301,17 @@ impl Sections {
         sections
     }
 
+    /// Whether no row is in any section.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.pinned.is_empty()
+            && self.needs.is_empty()
+            && self.working.is_empty()
+            && self.ready.is_empty()
+            && self.idle.is_empty()
+            && self.snoozed.is_empty()
+            && self.settled.is_empty()
+    }
+
     /// What the activity bar counts: rows that need the user and are not
     /// held.
     pub(crate) fn needing(&self) -> usize {
@@ -310,5 +321,15 @@ impl Sections {
                 .iter()
                 .filter(|row| row.state.needs_you())
                 .count()
+    }
+
+    /// When the latest of the rows [`Self::needing`] counts entered its
+    /// state.
+    pub(crate) fn needing_since(&self) -> Option<SystemTime> {
+        self.needs
+            .iter()
+            .chain(self.pinned.iter().filter(|row| row.state.needs_you()))
+            .filter_map(|row| row.since)
+            .max()
     }
 }

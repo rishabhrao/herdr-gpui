@@ -33,7 +33,12 @@ fn a_failed_vs_code_page_stays_failed_when_another_page_fails(cx: &mut gpui::Tes
             view.browser.code_server.probe = answers;
         });
         Store::update(cx, |store| {
-            store.open_code_tab(tab_scope, "w0", Some(url("http://127.0.0.1:8000/")))
+            store.open_editor_tab(
+                tab_scope,
+                "w0",
+                Editor::VsCode,
+                Some(url("http://127.0.0.1:8000/")),
+            )
         })
         .unwrap()
     });
@@ -165,9 +170,10 @@ fn a_new_token_on_the_same_server_keeps_the_tabs(cx: &mut gpui::TestAppContext) 
     let kept = cx.update(|_, cx| {
         let tab_scope = scope(&view.read(cx).endpoints[0]);
         Store::update(cx, |store| {
-            store.open_code_tab(
+            store.open_editor_tab(
                 tab_scope,
                 "w1",
+                Editor::VsCode,
                 Some(url("http://127.0.0.1:8000/?folder=/x")),
             )
         })

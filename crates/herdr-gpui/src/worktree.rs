@@ -125,6 +125,8 @@ pub(super) fn checkout_preview(root: &str, repo: &str, branch: &str) -> String {
     )
 }
 
+pub(super) use herdr_github::checkout::{checkout_root, left_checkout};
+
 #[cfg(test)]
 mod tests {
     use super::*;

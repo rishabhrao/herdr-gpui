@@ -33,7 +33,7 @@ fn invalid(message: impl Into<String>) -> Response {
 
 /// Brings the window forward, where the user confirms. Deferred: activating
 /// a window updates it, which cannot happen inside this update.
-fn bring_forward(window: &Window, cx: &mut App) {
+pub(in crate::control::server) fn bring_forward(window: &Window, cx: &mut App) {
     let handle = window.window_handle();
     cx.activate(true);
     cx.defer(move |cx| {

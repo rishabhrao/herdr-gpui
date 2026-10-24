@@ -1,5 +1,5 @@
 # Reviewed distribution choices; order prefers Apache for dual-licensed crates.
-# Union of packaging targets, including experimental Windows. Build/dev
+# Union of packaging targets, including Windows. Build/dev
 # dependencies and all features remain included as a conservative superset.
 targets = [
     "aarch64-apple-darwin",

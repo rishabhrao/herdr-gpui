@@ -341,6 +341,36 @@ impl Error {
         }
     }
 
+    /// Whether a host script's `ssh` was dropped before key exchange, as sshd
+    /// drops connections past its `MaxStartups` while many are still
+    /// authenticating. Nothing ran on the host, so the script may run again
+    /// once the host has caught up. `ssh` exits 255 for its own failures, and
+    /// OpenSSH before 8.0 printed `ssh_exchange_identification` instead.
+    pub fn dropped_before_key_exchange(&self) -> bool {
+        const MARKERS: [&str; 2] = [
+            "kex_exchange_identification:",
+            "ssh_exchange_identification:",
+        ];
+        matches!(
+            self,
+            Self::ScriptExit { status, stderr }
+                if status.code() == Some(255)
+                    && MARKERS.iter().any(|marker| stderr.contains(marker))
+        )
+    }
+
+    /// Whether a host script failed for want of its host, not on it: the
+    /// connection could not be made, went quiet past its deadline, or `ssh`
+    /// itself failed, which it reports by exiting 255. What the host last
+    /// answered may still hold, so a caller can keep it and ask again later.
+    pub fn host_unreached(&self) -> bool {
+        match self {
+            Self::ScriptConnect(_) | Self::ScriptTimeout => true,
+            Self::ScriptExit { status, .. } => status.code() == Some(255),
+            _ => false,
+        }
+    }
+
     /// Preserve transport retry/cancellation categories, including the historical
     /// InvalidData category for session deadlines and validation failures.
     pub fn kind(&self) -> io::ErrorKind {

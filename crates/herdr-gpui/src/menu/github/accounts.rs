@@ -65,7 +65,7 @@ impl HerdrWindow {
                         continue;
                     };
                     let mut auth = Auth::for_account(kind);
-                    auth.initialize(&self.config);
+                    auth.initialize(&self.config.github);
                     accounts.push(AdditionalAccount {
                         id: entry.id.clone(),
                         owners: entry.owners.clone(),
@@ -232,13 +232,13 @@ impl HerdrWindow {
             .selected_github_account_index()
             .map(|index| &mut self.menu.github_accounts[index].auth)
         {
-            Some(auth) => auth.use_token(token, config),
+            Some(auth) => auth.use_token(token, &config.github),
             None => {
                 let host = self.github_host().map(str::to_owned);
                 let menu = &mut self.menu;
                 host.and_then(|id| menu.github_hosts.get_mut(&id))
                     .unwrap_or(&mut menu.github)
-                    .use_token(token, config);
+                    .use_token(token, &config.github);
             }
         }
     }

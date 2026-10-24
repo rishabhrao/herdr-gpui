@@ -99,20 +99,20 @@ fn decode_file(path: &Path) -> Result<SoundDecoder> {
         let file = options.open(path)?;
         let metadata = file.metadata()?;
         if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
-            return Err(Error::SoundFileSize);
+            return Err(Error::Sound(crate::sound::Error::FileSize));
         }
         let mut bytes = Vec::new();
         file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
         if bytes.len() as u64 > MAX_FILE_BYTES {
-            return Err(Error::SoundFileSize);
+            return Err(Error::Sound(crate::sound::Error::FileSize));
         }
         Ok(bytes)
     };
     let bytes = read().map_err(|error| match error {
-        Error::Io(source) => Error::SoundFile {
+        Error::Io(source) => Error::Sound(crate::sound::Error::File {
             path: path.into(),
             source,
-        },
+        }),
         error => error,
     })?;
     Ok(Decoder::try_from(Cursor::new(Cow::Owned(bytes)))?)
@@ -120,10 +120,10 @@ fn decode_file(path: &Path) -> Result<SoundDecoder> {
 
 fn check(deadline: Instant, cancel: &[&AtomicBool], stop: &AtomicBool, now: Instant) -> Result<()> {
     if cancel.iter().any(|flag| flag.load(Ordering::Acquire)) || stop.load(Ordering::Acquire) {
-        return Err(Error::SoundCancelled);
+        return Err(Error::Sound(crate::sound::Error::Cancelled));
     }
     if now >= deadline {
-        return Err(Error::SoundTimeout);
+        return Err(Error::Sound(crate::sound::Error::Timeout));
     }
     Ok(())
 }
@@ -142,7 +142,7 @@ fn wait(
             break Err(error);
         }
         if let Ok(error) = errors.try_recv() {
-            break Err(Error::SoundStream(error));
+            break Err(Error::Sound(crate::sound::Error::Stream(error)));
         }
         if player.empty() {
             break Ok(());

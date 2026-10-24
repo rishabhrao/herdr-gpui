@@ -1,7 +1,9 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
 
+mod editors;
 mod orchestrator_tabs;
+mod px0;
 
 fn url(value: &str) -> Option<Location> {
     Some(Location::Web {
@@ -182,13 +184,13 @@ fn a_workspace_has_one_vs_code_tab_listed_in_its_strips() {
     let strip = store.open(local.clone(), "w_1", None, None).unwrap();
     assert!(store.code_tab(&local, "w_1").is_none());
     let code = store
-        .open_code_tab(local.clone(), "w_1", page.clone())
+        .open_editor_tab(local.clone(), "w_1", Editor::VsCode, page.clone())
         .unwrap();
     assert_ne!(code, strip);
     // Opening it again finds the same tab, wherever it went since.
     store.visited(code, url("http://127.0.0.1:8000/?folder=/x"), None);
     assert_eq!(
-        store.open_code_tab(local.clone(), "w_1", page.clone()),
+        store.open_editor_tab(local.clone(), "w_1", Editor::VsCode, page.clone()),
         Some(code)
     );
     assert_eq!(
@@ -196,11 +198,13 @@ fn a_workspace_has_one_vs_code_tab_listed_in_its_strips() {
         url("http://127.0.0.1:8000/?folder=/x")
     );
     // One opened before its server's address is known gets it later.
-    let waiting = store.open_code_tab(local.clone(), "w_2", None).unwrap();
+    let waiting = store
+        .open_editor_tab(local.clone(), "w_2", Editor::VsCode, None)
+        .unwrap();
     assert_eq!(store.get(waiting).unwrap().location, None);
     // Each workspace of each daemon has its own.
     let other = store
-        .open_code_tab(remote.clone(), "w_1", page.clone())
+        .open_editor_tab(remote.clone(), "w_1", Editor::VsCode, page.clone())
         .unwrap();
     assert_ne!(other, code);
     assert_eq!(store.code_tab(&local, "w_1").map(|tab| tab.id), Some(code));
@@ -229,7 +233,12 @@ fn saved_vs_code_tabs_round_trip_and_older_places_still_read() {
         .open(scope.clone(), "w_1", url("https://a.test/"), None)
         .unwrap();
     store
-        .open_code_tab(scope.clone(), "w_1", url("http://127.0.0.1:8000/"))
+        .open_editor_tab(
+            scope.clone(),
+            "w_1",
+            Editor::VsCode,
+            url("http://127.0.0.1:8000/"),
+        )
         .unwrap();
     let bytes = serde_json::to_vec(&Saved {
         tabs: store.tabs.clone(),
@@ -246,7 +255,10 @@ fn saved_vs_code_tabs_round_trip_and_older_places_still_read() {
         let saved = format!(
             r#"{{"tabs":[{{"id":0,"scope":"local","workspace_id":"w","location":null,"title":"","place":"{place}"}}]}}"#
         );
-        assert_eq!(parse(saved.as_bytes()).unwrap()[0].place, Place::Code);
+        assert_eq!(
+            parse(saved.as_bytes()).unwrap()[0].place,
+            Place::Editor(Editor::VsCode)
+        );
     }
     for invalid in [
         r#"{"tabs":[{"id":0,"scope":"local","workspace_id":"w","location":null,"title":"","origin":"w:p1","place":"code"}]}"#,

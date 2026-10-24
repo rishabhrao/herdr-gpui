@@ -4,7 +4,7 @@
 
 use crate::{
     HerdrWindow,
-    devices_overview::{Device, Link, Look},
+    devices_overview::{Device, Link, Look, Tally},
     system_load::{self, CPU_WARN, MEMORY_WARN},
 };
 use gpui::{prelude::*, *};
@@ -142,11 +142,7 @@ impl HerdrWindow {
         let memory = sample.and_then(|sample| sample.memory.map(|memory| memory.percent()));
         let id = device.id.clone();
         let agents = match device.link {
-            Link::Online => format!(
-                "{} agents · {} working",
-                device.tally.total(),
-                device.tally.working
-            ),
+            Link::Online => agents_line(device.tally),
             Link::Connecting => "Connecting…".to_owned(),
             Link::Offline | Link::Disabled => "Not connected".to_owned(),
         };
@@ -184,8 +180,11 @@ impl HerdrWindow {
                     .child(device.label.clone()),
             )
             .when(folded, |header| {
+                let total = device.tally.total();
                 header
-                    .child(look.mono(device.tally.total().to_string()))
+                    .when(total > 0, |header| {
+                        header.child(look.mono(total.to_string()))
+                    })
                     .child(self.load_dot(look, cpu))
                     .child(
                         look.mono(cpu.map_or_else(|| "—".to_owned(), |cpu| format!("{cpu:.0}%"))),
@@ -277,6 +276,20 @@ impl HerdrWindow {
             .into_iter()
             .map(|(number, process)| format!(":{number} {process}"))
             .collect()
+    }
+}
+
+/// An online host's agents, leaving out counts of none as the rest of the
+/// Overview does.
+pub(super) fn agents_line(tally: Tally) -> String {
+    let agents = match tally.total() {
+        0 => return "No agents".to_owned(),
+        1 => "1 agent".to_owned(),
+        total => format!("{total} agents"),
+    };
+    match tally.working {
+        0 => agents,
+        working => format!("{agents} · {working} working"),
     }
 }
 

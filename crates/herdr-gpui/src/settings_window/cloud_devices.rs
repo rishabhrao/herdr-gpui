@@ -9,11 +9,19 @@ mod azure;
 mod boat;
 #[cfg(feature = "coder")]
 mod coder;
+#[cfg(feature = "container")]
+mod container;
 #[cfg(feature = "daytona")]
 mod daytona;
+#[cfg(any(feature = "container", feature = "daytona"))]
+mod images;
+#[cfg(feature = "opensandbox")]
+mod opensandbox;
 #[cfg(feature = "railway")]
 mod railway;
 mod setup;
+#[cfg(feature = "sprites")]
+mod sprites;
 
 #[cfg(feature = "azure")]
 pub(super) use azure::AzureCard;
@@ -21,10 +29,18 @@ pub(super) use azure::AzureCard;
 pub(super) use boat::BoatCard;
 #[cfg(feature = "coder")]
 pub(super) use coder::CoderCard;
+#[cfg(feature = "container")]
+pub(super) use container::ContainerCard;
 #[cfg(feature = "daytona")]
 pub(super) use daytona::DaytonaCard;
+#[cfg(any(feature = "container", feature = "daytona"))]
+pub(super) use images::SandboxImages;
+#[cfg(feature = "opensandbox")]
+pub(super) use opensandbox::OpenSandboxCard;
 #[cfg(feature = "railway")]
 pub(super) use railway::RailwayCard;
+#[cfg(feature = "sprites")]
+pub(super) use sprites::SpritesCard;
 
 use super::SettingsWindow;
 use crate::{
@@ -90,7 +106,10 @@ fn input(
     feature = "azure",
     feature = "boat",
     feature = "coder",
-    feature = "daytona"
+    feature = "container",
+    feature = "daytona",
+    feature = "opensandbox",
+    feature = "sprites"
 ))]
 fn follow_config<const N: usize>(
     inputs: &[Entity<SearchInput>; N],
@@ -138,10 +157,16 @@ impl SettingsWindow {
                 CloudProvider::Boat => self.open_boat_card(cx),
                 #[cfg(feature = "coder")]
                 CloudProvider::Coder => self.open_coder_card(cx),
+                #[cfg(feature = "container")]
+                CloudProvider::Container => self.open_container_card(cx),
                 #[cfg(feature = "daytona")]
                 CloudProvider::Daytona => self.open_daytona_card(cx),
                 #[cfg(feature = "railway")]
                 CloudProvider::Railway => self.open_railway_card(cx),
+                #[cfg(feature = "opensandbox")]
+                CloudProvider::OpenSandbox => self.open_opensandbox_card(cx),
+                #[cfg(feature = "sprites")]
+                CloudProvider::Sprites => self.open_sprites_card(cx),
             }
         }
     }
@@ -157,10 +182,16 @@ impl SettingsWindow {
                 CloudProvider::Boat => self.boat_config_changed(cx),
                 #[cfg(feature = "coder")]
                 CloudProvider::Coder => self.coder_config_changed(cx),
+                #[cfg(feature = "container")]
+                CloudProvider::Container => self.container_config_changed(cx),
                 #[cfg(feature = "daytona")]
                 CloudProvider::Daytona => self.daytona_config_changed(cx),
                 #[cfg(feature = "railway")]
                 CloudProvider::Railway => self.railway_config_changed(cx),
+                #[cfg(feature = "opensandbox")]
+                CloudProvider::OpenSandbox => self.opensandbox_config_changed(cx),
+                #[cfg(feature = "sprites")]
+                CloudProvider::Sprites => self.sprites_config_changed(cx),
             }
         }
     }
@@ -222,10 +253,16 @@ impl SettingsWindow {
             CloudProvider::Boat => self.render_boat_card(cx),
             #[cfg(feature = "coder")]
             CloudProvider::Coder => self.render_coder_card(cx),
+            #[cfg(feature = "container")]
+            CloudProvider::Container => self.render_container_card(cx),
             #[cfg(feature = "daytona")]
             CloudProvider::Daytona => self.render_daytona_card(cx),
             #[cfg(feature = "railway")]
             CloudProvider::Railway => self.render_railway_card(cx),
+            #[cfg(feature = "opensandbox")]
+            CloudProvider::OpenSandbox => self.render_opensandbox_card(cx),
+            #[cfg(feature = "sprites")]
+            CloudProvider::Sprites => self.render_sprites_card(cx),
         };
         div()
             .relative()
@@ -288,8 +325,11 @@ impl SettingsWindow {
     #[cfg(any(
         feature = "boat",
         feature = "coder",
+        feature = "container",
         feature = "daytona",
-        feature = "railway"
+        feature = "opensandbox",
+        feature = "railway",
+        feature = "sprites"
     ))]
     fn cloud_device_row(
         &self,
@@ -307,8 +347,11 @@ impl SettingsWindow {
     #[cfg(any(
         feature = "boat",
         feature = "coder",
+        feature = "container",
         feature = "daytona",
-        feature = "railway"
+        feature = "opensandbox",
+        feature = "railway",
+        feature = "sprites"
     ))]
     #[allow(clippy::too_many_arguments)]
     fn cloud_device_row_with(
@@ -342,8 +385,11 @@ impl SettingsWindow {
         feature = "azure",
         feature = "boat",
         feature = "coder",
+        feature = "container",
         feature = "daytona",
-        feature = "railway"
+        feature = "opensandbox",
+        feature = "railway",
+        feature = "sprites"
     ))]
     fn cloud_device_row_actions(
         &self,

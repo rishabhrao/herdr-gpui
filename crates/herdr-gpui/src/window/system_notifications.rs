@@ -1,16 +1,19 @@
 //! OS notification center delivery for Herdr's shared `system` toast setting.
 //!
 //! GPUI owns the platform work: `UNUserNotificationCenter` on macOS (only from
-//! an app bundle; it asks for permission on the first post), freedesktop
-//! notifications over D-Bus on Linux, and WinRT toasts on Windows. Posting
-//! never blocks this thread. Notifications are silent: sounds stay with the
-//! sound service and its per-agent policy.
+//! an app bundle; it asks for permission on the first post) and WinRT toasts
+//! on Windows. Linux posts freedesktop notifications over one shared D-Bus
+//! connection of its own, because GPUI's opens one per notification (see
+//! `freedesktop`). Posting never blocks this thread. Notifications are
+//! silent: sounds stay with the sound service and its per-agent policy.
 //!
 //! GPUI accepts one app-wide response handler, so this registry routes a click
 //! back to the window, host, and connection generation that posted it. The
 //! window then resolves the target through the toast path, which rejects a
 //! reconnected inbox or a restarted daemon instead of guessing.
 
+#[cfg(target_os = "linux")]
+mod freedesktop;
 #[cfg(windows)]
 mod toast;
 
@@ -39,12 +42,19 @@ struct Posted {
     inbox: Weak<Mutex<LiveState>>,
     id: u64,
     at: Instant,
+    /// The notification daemon's id, once its reply arrives.
+    #[cfg(target_os = "linux")]
+    bus_id: Option<u32>,
 }
 
 #[derive(Default)]
 pub(crate) struct Registry {
     posted: VecDeque<Posted>,
     identity: bool,
+    #[cfg(target_os = "linux")]
+    bus: freedesktop::Bus,
+    #[cfg(target_os = "linux")]
+    outbox: freedesktop::Outbox,
     /// What the shell offers, once known; until then GPUI posts.
     #[cfg(windows)]
     shell: Option<toast::Shell>,
@@ -65,6 +75,12 @@ impl Registry {
     }
 
     fn record(&mut self, posted: Posted) {
+        #[cfg(target_os = "linux")]
+        let posted = Posted {
+            // A replacement remains clickable while its Notify reply is pending.
+            bus_id: self.find(&posted.tag).and_then(|old| old.bus_id),
+            ..posted
+        };
         self.posted.retain(|old| old.tag != posted.tag);
         if self.posted.len() == REGISTRY_LIMIT {
             self.posted.pop_front();
@@ -75,11 +91,35 @@ impl Registry {
     fn find(&self, tag: &str) -> Option<&Posted> {
         self.posted.iter().rev().find(|posted| posted.tag == tag)
     }
+
+    /// The Linux outbox sends only one request at a time, so a reply cannot
+    /// overwrite the id of a newer request.
+    #[cfg(target_os = "linux")]
+    fn set_bus_id(&mut self, tag: &str, bus_id: u32) {
+        if let Some(posted) = self.posted.iter_mut().rev().find(|p| p.tag == tag) {
+            posted.bus_id = Some(bus_id);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn find_bus_id(&self, bus_id: u32) -> Option<&Posted> {
+        self.posted
+            .iter()
+            .rev()
+            .find(|posted| posted.bus_id == Some(bus_id))
+    }
 }
 
 /// Only the user's own app posts. Fixtures and tests leave this uninstalled,
 /// so they never reach the notification center or prompt for permission.
 pub(crate) fn install(cx: &mut App) {
+    install_registry(cx);
+    #[cfg(target_os = "linux")]
+    freedesktop::connect(cx);
+}
+
+/// Everything but the Linux session bus, which tests must not reach.
+pub(crate) fn install_registry(cx: &mut App) {
     cx.set_global(Registry::default());
     #[cfg(windows)]
     {
@@ -202,7 +242,22 @@ impl HerdrWindow {
             inbox: std::sync::Arc::downgrade(&source.connection.inbox),
             id,
             at: now,
+            #[cfg(target_os = "linux")]
+            bus_id: None,
         });
+        #[cfg(target_os = "linux")]
+        match &cx.global::<Registry>().bus {
+            freedesktop::Bus::Gpui => {}
+            freedesktop::Bus::Unavailable => {
+                tracing::debug!("Skipping a system notification: no session bus");
+                return;
+            }
+            freedesktop::Bus::Connected(session) => {
+                let session = session.clone();
+                freedesktop::post(session, notification, cx);
+                return;
+            }
+        }
         #[cfg(windows)]
         {
             let registry = cx.global_mut::<Registry>();
@@ -319,7 +374,7 @@ mod tests {
     #[allow(clippy::unwrap_used)]
     fn qa_preview_posts_for_the_focused_pane_after_the_delay(cx: &mut TestAppContext) {
         let (view, cx) = cx.add_window_view(crate::sidebar::layout_tests::fixture_window);
-        cx.update(|_, cx| super::install(cx));
+        cx.update(|_, cx| super::install_registry(cx));
         cx.update(|window, cx| {
             view.update(cx, |view, cx| window.focus(&view.focus, cx));
             window.draw(cx).clear(cx);

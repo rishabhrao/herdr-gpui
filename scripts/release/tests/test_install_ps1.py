@@ -39,8 +39,8 @@ $registered = [ordered]@{
 
 
 def app_id():
-    constants = (ROOT / "crates/herdr-gpui/src/constants.rs").read_text(encoding="utf-8")
-    return re.search(r'^pub\(crate\) const APP_ID: &str = "([^"]+)";$', constants, re.M).group(1)
+    identity = (ROOT / "crates/herdr-updater/src/lib.rs").read_text(encoding="utf-8")
+    return re.search(r'^pub const APP_ID: &str = "([^"]+)";$', identity, re.M).group(1)
 
 
 def snippet():

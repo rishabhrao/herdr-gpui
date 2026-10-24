@@ -157,3 +157,73 @@ fn custom_command_and_resize_mode_keys_send_endpoint_requests(cx: &mut gpui::Tes
         }
     }
 }
+
+/// A daemon custom command bound to a catalog default's keystroke, as
+/// `ctrl+shift+t` is New Tab's on Linux, runs from the window's keymap
+/// instead of the default, and the default's action does not also run. The
+/// window is the focused root view with the app's bindings, so New Tab's
+/// binding and handler are live: without the custom command the keystroke
+/// opens New Tab's name prompt, which the fixture's Herdr settings ask for.
+#[gpui::test]
+fn a_custom_command_runs_from_a_catalog_default_keystroke(cx: &mut gpui::TestAppContext) {
+    use crate::menu::{Page, WorkspaceAction};
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        crate::bind_keys(cx);
+        crate::sidebar::layout_tests::fixture_window(window, cx)
+    });
+    // Draw once with the window focused, before any endpoint is connected, so
+    // the keystroke has a dispatch path. Drawing later would size the window
+    // past the fixture's surface and hold input until the daemon answered.
+    cx.update(|window, cx| {
+        let focus = view.read(cx).focus.clone();
+        window.focus(&focus, cx);
+        window.draw(cx).clear(cx);
+    });
+    let new_tab = crate::controls::platform_default("cmd-t");
+    for custom in [false, true] {
+        let (endpoint, mut server) = connected_endpoint("ssh:fixture");
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.endpoints.truncate(1);
+                view.endpoints.push(endpoint);
+                view.selected_endpoint = 1;
+                view.options = ConnectOptions::default();
+                view.reset_selected(cx);
+                view.activation_deadline = None;
+                // As with a daemon without surface projection, the custom
+                // command raises no focus fence. The fence would make New Tab
+                // refuse after it and hide a keystroke that reached both.
+                view.live.supports_surface = false;
+                assert_eq!(view.keymap().primary(Command::Tab), new_tab);
+                let labels = if custom {
+                    vec![new_tab.replace('-', "+")]
+                } else {
+                    Vec::new()
+                };
+                let relabel = |snapshot: &mut Arc<ClientShellSnapshot>| {
+                    Arc::make_mut(snapshot).commands[0].binding_labels = labels.clone();
+                };
+                relabel(view.live.snapshot.as_mut().unwrap());
+                let mut inbox = view.endpoints[1].connection.inbox.lock().unwrap();
+                relabel(inbox.snapshot.as_mut().unwrap());
+                drop(inbox);
+                assert!(view.input_ready());
+            });
+            window.dispatch_keystroke(gpui::Keystroke::parse(new_tab).unwrap(), cx);
+        });
+        let prompt = view.read_with(cx, |view, _| view.menu.page);
+        if !custom {
+            assert_eq!(prompt, Some(Page::Dialog(WorkspaceAction::NewTab)));
+            continue;
+        }
+        // New Tab's handler would have opened its prompt; the custom command
+        // stopped the keystroke before it.
+        assert_eq!(prompt, None);
+        let ClientMessage::ClientShellEndpointRequest { request, .. } = server.receive() else {
+            panic!("missing command");
+        };
+        let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+        assert_eq!(request["method"], Method::CommandInvoke.as_str());
+        assert_eq!(request["params"]["command_id"], "command-v1");
+    }
+}

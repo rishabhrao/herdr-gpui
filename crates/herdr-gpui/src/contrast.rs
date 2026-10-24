@@ -179,6 +179,13 @@ pub(crate) fn ink(color: u32, backgrounds: &[u32], target: f32) -> u32 {
     found
 }
 
+/// `color`'s OKLab hue, in degrees.
+#[cfg(test)]
+pub(crate) fn hue_degrees(color: u32) -> f32 {
+    let [_, a, b] = to_oklab(color);
+    b.atan2(a).to_degrees().rem_euclid(360.)
+}
+
 /// Distinct inputs kept before the cache starts over. A theme inks a few
 /// dozen fixed colors, so this is only reached after many theme switches.
 const CACHE_LIMIT: usize = 512;

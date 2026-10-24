@@ -1,7 +1,8 @@
 //! The Overview page as drawn: a summary line, then the list beside the
 //! host column. A row shows its state, agent, title, checkout, host, pull
 //! request, and how long it has been so; hovering it offers Snooze, Settle,
-//! Pin, and Open.
+//! Pin, and Open, or on a closed agent Reopen and Forget. With nothing to
+//! list, the page says what it is for.
 
 use super::{Marks, Row, Sections, State, presets};
 use crate::{
@@ -29,6 +30,8 @@ enum Shelf {
     Active,
     Snoozed(SystemTime),
     Settled,
+    /// With the closed agent's id and when it closed.
+    Closed(u64, SystemTime),
 }
 
 /// What every row of one frame draws with.
@@ -48,7 +51,11 @@ impl HerdrWindow {
         };
         let sections = self.overview_sections(cx);
         let theme = frame.look.theme;
-        let list = self.overview_list(&frame, &sections, cx);
+        let list = if sections.is_empty() && self.overview.closed.is_empty() {
+            overview_empty(&frame.look)
+        } else {
+            self.overview_list(&frame, &sections, cx)
+        };
         div()
             .id("overview")
             .debug_selector(|| "overview".into())
@@ -86,17 +93,20 @@ impl HerdrWindow {
     fn overview_summary(&self, look: &Look, sections: &Sections) -> Div {
         let theme = look.theme;
         let stat = |count: usize, label: &'static str, status: AgentStatus| {
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(look.dot(status))
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(count.to_string()),
-                )
-                .child(div().text_color(rgb(theme.subtext())).child(label))
+            // A zero says nothing the missing stat does not.
+            (count > 0).then(|| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(look.dot(status))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(count.to_string()),
+                    )
+                    .child(div().text_color(rgb(theme.subtext())).child(label))
+            })
         };
         div()
             .debug_selector(|| "overview-summary".into())
@@ -114,13 +124,13 @@ impl HerdrWindow {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Overview"),
             )
-            .child(stat(sections.needing(), "need you", AgentStatus::Blocked))
-            .child(stat(
+            .children(stat(sections.needing(), "need you", AgentStatus::Blocked))
+            .children(stat(
                 sections.working.len(),
                 "working",
                 AgentStatus::Working,
             ))
-            .child(stat(sections.ready.len(), "ready", AgentStatus::Done))
+            .children(stat(sections.ready.len(), "ready", AgentStatus::Done))
     }
 
     fn overview_list(&self, frame: &Frame, sections: &Sections, cx: &mut Context<Self>) -> Div {
@@ -220,32 +230,37 @@ impl HerdrWindow {
                 list = list.child(row(idle, Shelf::Active, cx));
             }
         }
-        list = list
-            .child(div().mt_3().h(px(1.)).bg(rgb(theme.active)))
-            .child(self.overview_shelf(
-                look,
-                "overview-snoozed",
-                "Snoozed",
-                sections.snoozed.len(),
-                self.overview.snoozed_open,
-                cx,
-            ));
+        // The shelves of rows held out of the way, each only when it holds
+        // some: an empty one is a click that shows nothing.
+        let closed = self.overview.closed.len();
+        if sections.snoozed.is_empty() && sections.settled.is_empty() && closed == 0 {
+            return list;
+        }
+        list = list.child(div().mt_3().h(px(1.)).bg(rgb(theme.active)));
+        if !sections.snoozed.is_empty() {
+            list =
+                list.child(self.overview_shelf(look, ShelfId::Snoozed, sections.snoozed.len(), cx));
+        }
         if self.overview.snoozed_open {
             for (snoozed, until) in &sections.snoozed {
                 list = list.child(row(snoozed, Shelf::Snoozed(*until), cx));
             }
         }
-        list = list.child(self.overview_shelf(
-            look,
-            "overview-settled",
-            "Settled",
-            sections.settled.len(),
-            self.overview.settled_open,
-            cx,
-        ));
+        if !sections.settled.is_empty() {
+            list =
+                list.child(self.overview_shelf(look, ShelfId::Settled, sections.settled.len(), cx));
+        }
         if self.overview.settled_open {
             for settled in &sections.settled {
                 list = list.child(row(settled, Shelf::Settled, cx));
+            }
+        }
+        if closed > 0 {
+            list = list.child(self.overview_shelf(look, ShelfId::Closed, closed, cx));
+        }
+        if self.overview.closed_open {
+            for agent in self.overview.closed.agents() {
+                list = list.child(row(&agent.row, Shelf::Closed(agent.id, agent.closed), cx));
             }
         }
         list
@@ -254,13 +269,16 @@ impl HerdrWindow {
     fn overview_shelf(
         &self,
         look: &Look,
-        id: &'static str,
-        label: &'static str,
+        shelf: ShelfId,
         count: usize,
-        open: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = look.theme;
+        let (id, label, open) = match shelf {
+            ShelfId::Snoozed => ("overview-snoozed", "Snoozed", self.overview.snoozed_open),
+            ShelfId::Settled => ("overview-settled", "Settled", self.overview.settled_open),
+            ShelfId::Closed => ("overview-closed", "Closed", self.overview.closed_open),
+        };
         div()
             .id(id)
             .debug_selector(move || id.into())
@@ -289,10 +307,10 @@ impl HerdrWindow {
             .child(label)
             .child(count.to_string())
             .on_click(cx.listener(move |this, _, _, cx| {
-                let open = if id == "overview-snoozed" {
-                    &mut this.overview.snoozed_open
-                } else {
-                    &mut this.overview.settled_open
+                let open = match shelf {
+                    ShelfId::Snoozed => &mut this.overview.snoozed_open,
+                    ShelfId::Settled => &mut this.overview.settled_open,
+                    ShelfId::Closed => &mut this.overview.closed_open,
                 };
                 *open = !*open;
                 cx.notify();
@@ -308,7 +326,11 @@ impl HerdrWindow {
     ) -> AnyElement {
         let look = &frame.look;
         let theme = look.theme;
-        let selector = format!("overview-row-{}", row.key.selector());
+        // A closed agent may share its key with others, closed or running.
+        let selector = match shelf {
+            Shelf::Closed(id, _) => format!("overview-closed-{id}"),
+            _ => format!("overview-row-{}", row.key.selector()),
+        };
         let group = SharedString::from(selector.clone());
         let woke = Marks::of(cx)
             .and_then(|marks| marks.get(&row.key))
@@ -338,7 +360,14 @@ impl HerdrWindow {
         };
         let actions = self.overview_actions(row, shelf, pinned, &group, menu_open, look, cx);
         let clicked = row.clone();
-        let title_selector = format!("overview-title-{}", row.key.selector());
+        let title_selector = match shelf {
+            Shelf::Closed(id, _) => format!("overview-closed-title-{id}"),
+            _ => format!("overview-title-{}", row.key.selector()),
+        };
+        let since = match shelf {
+            Shelf::Closed(_, closed) => Some(closed),
+            _ => row.since,
+        };
         div()
             .id(SharedString::from(selector.clone()))
             .debug_selector(move || selector.clone())
@@ -355,13 +384,7 @@ impl HerdrWindow {
             .hover(|style| style.bg(rgb(theme.active)))
             .when(shelf != Shelf::Active, |row| row.opacity(0.7))
             .child(div().w(px(12.)).flex().justify_center().child(glyph))
-            .child(
-                svg()
-                    .path(icon)
-                    .size(px(15.))
-                    .flex_none()
-                    .text_color(rgb(theme.foreground)),
-            )
+            .child(crate::icons::icon(icon, 15., theme.foreground))
             .child(
                 div()
                     .debug_selector(move || title_selector.clone())
@@ -431,7 +454,7 @@ impl HerdrWindow {
                     .justify_end()
                     .child(
                         look.mono(
-                            row.since
+                            since
                                 .map(|since| presets::elapsed(since, frame.now))
                                 .unwrap_or_default(),
                         ),
@@ -439,7 +462,11 @@ impl HerdrWindow {
             )
             .child(actions)
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.open_overview_row(&clicked, window, cx);
+                if let Shelf::Closed(id, _) = shelf {
+                    this.open_closed_agent(id, window, cx);
+                } else {
+                    this.open_overview_row(&clicked, window, cx);
+                }
             }))
             .into_any_element()
     }
@@ -456,7 +483,10 @@ impl HerdrWindow {
         cx: &mut Context<Self>,
     ) -> Div {
         let theme = look.theme;
-        let key = row.key.selector();
+        let key = match shelf {
+            Shelf::Closed(id, _) => id.to_string(),
+            _ => row.key.selector(),
+        };
         let action = |name: &'static str, icon: &'static str, label: &'static str| {
             div()
                 .id(SharedString::from(format!("overview-{name}-{key}")))
@@ -505,6 +535,38 @@ impl HerdrWindow {
                     .opacity(0.)
                     .group_hover(group.clone(), |style| style.opacity(1.))
             });
+        if let Shelf::Closed(id, _) = shelf {
+            let reopenable = self
+                .overview
+                .closed
+                .get(id)
+                .and_then(super::reopen::kind)
+                .is_some();
+            if reopenable {
+                actions = actions.child(action("reopen", "icons/play.svg", "Reopen").on_click(
+                    cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.show_activity_panel(
+                            crate::sidebar::ActivityPanel::Workspaces,
+                            window,
+                            cx,
+                        );
+                        this.activity.return_to = Some(crate::sidebar::ActivityPanel::Overview);
+                        this.reopen_closed_agent(id, cx);
+                        window.focus(&this.focus, cx);
+                    }),
+                ));
+            }
+            return actions.child(
+                action("forget", "icons/x.svg", "Forget").on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.overview.closed.forget(id);
+                        cx.notify();
+                    },
+                )),
+            );
+        }
         if shelf == Shelf::Active {
             actions = actions
                 .child(
@@ -616,6 +678,53 @@ impl HerdrWindow {
         }
         menu
     }
+}
+
+/// The shelves under the list, which fold.
+#[derive(Clone, Copy)]
+enum ShelfId {
+    Snoozed,
+    Settled,
+    Closed,
+}
+
+/// What the page is for, while it has nothing to list.
+fn overview_empty(look: &Look) -> Div {
+    let theme = look.theme;
+    div()
+        .debug_selector(|| "overview-empty".into())
+        .size_full()
+        .min_h(px(320.))
+        .px_6()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .child(
+            svg()
+                .path("icons/computer.svg")
+                .size(px(22.))
+                .text_color(rgb(theme.muted)),
+        )
+        .child(
+            div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("No agents to look at"),
+        )
+        .child(
+            div()
+                .max_w(px(460.))
+                .text_center()
+                .text_color(rgb(theme.muted))
+                .child(
+                    "The Overview gathers the agents on every host this window connects \
+                     to: those waiting on you and failed runs first, then finished work \
+                     ready for review, working agents, and idle ones. Snooze or settle a \
+                     row to put it aside; an agent you close waits under Closed to be \
+                     reopened.",
+                ),
+        )
 }
 
 fn heading(look: &Look, label: &'static str, count: Option<usize>) -> Div {

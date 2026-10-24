@@ -72,10 +72,15 @@ impl Annotations {
         self.tabs.get(&id).is_some_and(|tab| tab.armed)
     }
 
-    /// Whether the notes panel shows beside the page.
+    /// Whether the notes panel shows beside the page, which it does while a
+    /// batch is pending so it can still be withdrawn.
     pub(crate) fn open(&self, id: TabId) -> bool {
         self.tabs.get(&id).is_some_and(|tab| {
-            tab.armed || tab.pending.is_some() || tab.editing.is_some() || !tab.notes.is_empty()
+            tab.armed
+                || tab.pending.is_some()
+                || tab.editing.is_some()
+                || !tab.notes.is_empty()
+                || tab.sending.is_pending()
         })
     }
 
@@ -86,9 +91,9 @@ impl Annotations {
     /// Notes not sent yet.
     #[cfg(test)]
     pub(super) fn queued(&self, id: TabId) -> usize {
-        self.tabs
-            .get(&id)
-            .map_or(0, |tab| tab.notes.iter().filter(|note| !note.sent).count())
+        self.tabs.get(&id).map_or(0, |tab| {
+            tab.notes.iter().filter(|note| note.sent.is_none()).count()
+        })
     }
 
     pub(crate) fn forget(&mut self, id: TabId) {
@@ -103,7 +108,7 @@ impl Annotations {
         self.tabs.get(&id).map_or_else(Vec::new, |tab| {
             tab.notes
                 .iter()
-                .map(|note| (note.comment.clone(), note.sent))
+                .map(|note| (note.comment.clone(), note.sent.is_some()))
                 .collect()
         })
     }
@@ -184,6 +189,15 @@ impl HerdrWindow {
         self.browser.pages.script(id, annotate::disarm_script());
         #[cfg(not(any(target_os = "macos", windows)))]
         let _ = id;
+    }
+
+    /// Starts or stops annotating the page the zoom keys reach, once it has
+    /// loaded something, for the `toggle_annotate` binding.
+    pub(crate) fn toggle_shown_annotating(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.zoomed_tab(cx).filter(|tab| tab.location.is_some()) {
+            Some(tab) => self.toggle_annotating(tab.id, window, cx),
+            None => self.show_flash(Flash::warning("No page to annotate"), cx),
+        }
     }
 
     pub(crate) fn toggle_annotating(
@@ -287,7 +301,9 @@ impl HerdrWindow {
         // A result whose comment the user is editing stays as it is, so the
         // comment never lands on a result it was not written for.
         let earlier = notes.notes.iter().enumerate().position(|(index, note)| {
-            !note.sent && matches!(note.anchor, Anchor::Sent { .. }) && notes.editing != Some(index)
+            note.sent.is_none()
+                && matches!(note.anchor, Anchor::Sent { .. })
+                && notes.editing != Some(index)
         });
         let note = Note::sent(summary, data);
         match earlier {
@@ -469,7 +485,7 @@ impl HerdrWindow {
             let notes = self.tab_notes(id);
             if let Some(note) = notes.notes.get_mut(index) {
                 note.comment = edited.comment;
-                note.sent = false;
+                note.sent = None;
             }
             notes.editing = None;
             input.update(cx, |input, cx| input.clear(cx));
@@ -511,12 +527,18 @@ impl HerdrWindow {
         cx.notify();
     }
 
-    /// Marks notes `indexes` sent, as Send delivers them.
-    fn mark_notes_sent(&mut self, id: TabId, indexes: &[usize], cx: &mut Context<Self>) {
+    /// Marks notes `indexes` sent by `send`, as Send delivers them.
+    fn mark_notes_sent(
+        &mut self,
+        id: TabId,
+        indexes: &[usize],
+        send: crate::agent_notes::SendId,
+        cx: &mut Context<Self>,
+    ) {
         let notes = self.tab_notes(id);
         for &index in indexes {
             if let Some(note) = notes.notes.get_mut(index) {
-                note.sent = true;
+                note.sent = Some(send);
             }
         }
         cx.notify();
@@ -525,7 +547,7 @@ impl HerdrWindow {
     /// Removes the notes the agent already has, ending that round.
     pub(super) fn clear_sent_notes(&mut self, id: TabId, cx: &mut Context<Self>) {
         let notes = self.tab_notes(id);
-        notes.notes.retain(|note| !note.sent);
+        notes.notes.retain(|note| note.sent.is_none());
         notes.editing = None;
         self.refresh_markers(id);
         cx.notify();

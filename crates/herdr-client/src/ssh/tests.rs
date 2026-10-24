@@ -179,6 +179,17 @@ fn origin_lookup_rejects_relative_or_control_git_dirs_before_ssh() {
     ));
 }
 
+/// Runs the real `ssh -G`, trying again when a busy machine times it out.
+fn resolve_with_retries(target: &str) -> Destination {
+    for _ in 1..3 {
+        match resolve_destination(target) {
+            Err(Error::SshTimeout) => continue,
+            result => return result.unwrap(),
+        }
+    }
+    resolve_destination(target).unwrap()
+}
+
 #[test]
 fn destinations_come_from_the_resolved_config_not_the_spelling() {
     let parsed =
@@ -196,8 +207,8 @@ fn destinations_come_from_the_resolved_config_not_the_spelling() {
     assert_eq!(parse_destination(b"user a\nhostnamex b\nport 22\n"), None);
     assert_eq!(parse_destination(b"user a\nhostname b\nport x\n"), None);
     // Spellings of one host agree through the real `ssh -G`.
-    let a = resolve_destination("penso@example.invalid").unwrap();
-    let b = resolve_destination("ssh://penso@EXAMPLE.invalid:22").unwrap();
+    let a = resolve_with_retries("penso@example.invalid");
+    let b = resolve_with_retries("ssh://penso@EXAMPLE.invalid:22");
     assert_eq!(a, b);
     assert!(matches!(
         resolve_destination("-oProxyCommand=x"),

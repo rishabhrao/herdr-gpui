@@ -9,8 +9,8 @@
 # directory to the user PATH so herdr-gpui works as a command, and creates a
 # Start menu shortcut to herdr-gpui-launcher.exe, the windowed launcher that
 # starts herdr-gpui.exe without a console window. It never installs, starts or
-# upgrades the Herdr daemon. Windows builds are experimental and never update
-# themselves: run this again to update. It also adds "Open in Herdr UI" to
+# upgrades the Herdr daemon. Signed copies update themselves from Check for
+# Updates in the app; running this again also updates. It also adds "Open in Herdr UI" to
 # folders in File Explorer and registers herdr-gpui:// links, for the current
 # user only.
 #

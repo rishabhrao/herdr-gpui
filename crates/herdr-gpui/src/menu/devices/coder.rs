@@ -152,7 +152,7 @@ impl HerdrWindow {
             .unwrap(),
             saved: vec!["w1".into()],
         };
-        let mut wizard = self.new_wizard(crate::coder::tests::settings(), Phase::Choose, cx);
+        let mut wizard = self.new_wizard(crate::coder::test_support::settings(), Phase::Choose, cx);
         wizard.account = Some(account);
         wizard.choice = Some(Choice::Template("t1".into()));
         wizard.presets =

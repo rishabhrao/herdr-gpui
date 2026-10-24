@@ -1,7 +1,7 @@
 //! The app's browser tabs: which page each one shows and the workspace it
 //! belongs to. Herdr has no browser panes, so these live only in this client;
 //! every window shows the same tabs for a workspace, each with its own page.
-use super::{Location, WebUrl};
+use super::{Editor, Location, WebUrl, zoom::Zoom};
 use crate::{reorder::Beside, state_file};
 use gpui::{App, Global};
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,25 @@ pub(crate) struct TabId(u64);
 impl TabId {
     pub(crate) fn test(id: u64) -> Self {
         Self(id)
+    }
+}
+
+impl TabId {
+    /// The `n`th page a chat shows in a message. Store tabs count up from
+    /// one, so these count down from the top and the two never meet.
+    #[cfg(any(target_os = "macos", windows, test))]
+    pub(crate) const fn panel(n: u64) -> Self {
+        Self(u64::MAX - n)
+    }
+
+    pub(crate) const fn number(self) -> u64 {
+        self.0
+    }
+
+    /// Whether this is a chat's page rather than a store tab.
+    #[cfg(any(target_os = "macos", windows, test))]
+    pub(crate) const fn is_panel(self) -> bool {
+        self.0 > u64::MAX / 2
     }
 }
 
@@ -65,24 +84,50 @@ impl Scope {
     }
 }
 
-/// What a tab is. Every tab is listed in the tab strips; a workspace's one
-/// VS Code tab (`Code`) waits for its server, carries its token, and is
-/// never reused by an agent.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// Editor tabs are singletons per provider and workspace. Their saved names
+/// remain flat strings for compatibility with earlier tab files.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Place {
     #[default]
     Group,
-    /// Development builds kept the VS Code tab in a side panel, or moved it
-    /// to the groups as `code_group`; both read as the tab it now is.
-    #[serde(alias = "code_group")]
-    Code,
+    Editor(Editor),
+}
+
+impl Serialize for Place {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Group => serializer.serialize_str("group"),
+            Self::Editor(editor) => editor.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Place {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        if name == "group" {
+            return Ok(Self::Group);
+        }
+        Editor::deserialize(serde::de::value::StrDeserializer::<D::Error>::new(&name))
+            .map(Self::Editor)
+    }
 }
 
 impl Place {
+    pub(crate) fn is_editor(self) -> bool {
+        self.editor().is_some()
+    }
+
+    pub(crate) fn editor(self) -> Option<Editor> {
+        match self {
+            Self::Group => None,
+            Self::Editor(editor) => Some(editor),
+        }
+    }
+
     /// Whether this is the workspace's VS Code tab.
     pub(crate) fn is_code(self) -> bool {
-        self == Self::Code
+        self.editor() == Some(Editor::VsCode)
     }
 }
 
@@ -102,6 +147,9 @@ pub(crate) struct Tab {
     /// Tabs saved before panels existed are all `Group` tabs.
     #[serde(default, skip_serializing_if = "is_group")]
     pub place: Place,
+    /// How large the page draws; tabs saved before zoom draw at 100%.
+    #[serde(default, skip_serializing_if = "Zoom::is_actual")]
+    pub zoom: Zoom,
 }
 
 fn is_group(place: &Place) -> bool {
@@ -117,8 +165,8 @@ impl Tab {
                 .origin
                 .as_ref()
                 .is_none_or(|pane| !pane.is_empty() && pane.len() <= 256)
-            // No agent opens a VS Code tab, so none has notes to send back.
-            && (!self.place.is_code() || self.origin.is_none())
+            // Editor tabs are not annotation destinations for terminal agents.
+            && (!self.place.is_editor() || self.origin.is_none())
     }
 }
 
@@ -262,9 +310,42 @@ impl Store {
 
     /// The workspace's VS Code tab, if it has one.
     pub(crate) fn code_tab(&self, scope: &Scope, workspace_id: &str) -> Option<&Tab> {
+        self.editor_tab(scope, workspace_id, Editor::VsCode)
+    }
+
+    pub(crate) fn px0_tab(&self, scope: &Scope, workspace_id: &str) -> Option<&Tab> {
+        self.editor_tab(scope, workspace_id, Editor::Px0)
+    }
+
+    pub(crate) fn editor_tab(
+        &self,
+        scope: &Scope,
+        workspace_id: &str,
+        editor: Editor,
+    ) -> Option<&Tab> {
         self.tabs.iter().find(|tab| {
-            tab.place.is_code() && &tab.scope == scope && tab.workspace_id == workspace_id
+            tab.place.editor() == Some(editor)
+                && &tab.scope == scope
+                && tab.workspace_id == workspace_id
         })
+    }
+
+    pub(crate) fn open_editor_tab(
+        &mut self,
+        scope: Scope,
+        workspace_id: &str,
+        editor: Editor,
+        location: Option<Location>,
+    ) -> Option<TabId> {
+        if let Some(tab) = self.editor_tab(&scope, workspace_id, editor) {
+            return Some(tab.id);
+        }
+        let waiting = location.is_none();
+        let id = self.push(scope, workspace_id, location, None, Place::Editor(editor))?;
+        if waiting {
+            self.visited(id, None, Some(editor.name()));
+        }
+        Some(id)
     }
 
     /// Opens a tab for the strips, or returns `None` when the app already
@@ -277,22 +358,6 @@ impl Store {
         origin: Option<String>,
     ) -> Option<TabId> {
         self.push(scope, workspace_id, location, origin, Place::Group)
-    }
-
-    /// The workspace's VS Code tab, opened on `location` if it has none yet:
-    /// `None` while its server's address is not known, which the tab gets
-    /// once it is. `None` when the app already holds the most tabs it keeps.
-    /// Only builds that show pages open one.
-    pub(crate) fn open_code_tab(
-        &mut self,
-        scope: Scope,
-        workspace_id: &str,
-        location: Option<Location>,
-    ) -> Option<TabId> {
-        if let Some(tab) = self.code_tab(&scope, workspace_id) {
-            return Some(tab.id);
-        }
-        self.push(scope, workspace_id, location, None, Place::Code)
     }
 
     fn push(
@@ -314,6 +379,7 @@ impl Store {
             title,
             origin,
             place,
+            zoom: Zoom::default(),
         })
     }
 
@@ -429,6 +495,19 @@ impl Store {
             self.save();
         }
         changed
+    }
+
+    /// Zooms a tab's page. Returns whether its zoom changed.
+    pub(crate) fn set_zoom(&mut self, id: TabId, zoom: Zoom) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) else {
+            return false;
+        };
+        if tab.zoom == zoom {
+            return false;
+        }
+        tab.zoom = zoom;
+        self.save();
+        true
     }
 
     /// Drops the tabs of workspaces the daemon closed.

@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-use super::{Location, Store, WebUrl, view::scope};
+use super::{Editor, Location, Store, WebUrl, view::scope};
 use crate::{
     HerdrWindow,
     sidebar::layout_tests::{fixture_window, full_draw, snapshot},
@@ -29,6 +29,9 @@ fn window(cx: &mut gpui::TestAppContext) -> (Entity<HerdrWindow>, &mut VisualTes
         view
     })
 }
+
+/// The `toggle_annotate` binding; only builds that show pages can arm it.
+mod annotate_command;
 
 /// Needs a build that shows pages: elsewhere a new tab opens nothing.
 #[cfg(any(target_os = "macos", windows))]
@@ -68,6 +71,11 @@ mod tab_strip;
 #[cfg(any(target_os = "macos", windows))]
 mod tab_steps;
 
+/// Move Tab Left and Right move a page among the pages. Needs a build that
+/// shows pages: elsewhere a new tab opens nothing.
+#[cfg(any(target_os = "macos", windows))]
+mod tab_moves;
+
 /// The VS Code tab's server checks. No native page is created, so this
 /// runs on every platform, except the checks only builds that show pages
 /// make.
@@ -75,6 +83,8 @@ mod code;
 
 /// VS Code as a tab of the groups, opened in the group in use.
 mod code_tab;
+mod editors;
+mod px0;
 
 /// A new VS Code server moves the VS Code tabs to it. Only builds that
 /// show pages follow a server at all.
@@ -103,6 +113,11 @@ mod overlays;
 
 /// What closing a workspace does to its browser tabs.
 mod workspace_close;
+
+/// The font size keys zoom a browser tab's page. Only builds that show
+/// pages open a browser tab.
+#[cfg(any(target_os = "macos", windows))]
+mod zoom;
 
 /// Terminal padding beside a page; only builds that show pages open one.
 #[cfg(any(target_os = "macos", windows))]

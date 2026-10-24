@@ -91,6 +91,12 @@ impl Peer {
     /// A peer whose welcome also advertises `methods`, so requests the
     /// fixture's welcome lacks reach the wire instead of being refused.
     pub(crate) fn advertising(methods: &[&str]) -> Self {
+        Self::welcoming(methods, &[])
+    }
+
+    /// A peer whose welcome also advertises `methods` and `capabilities`, such
+    /// as the surface interest a `client_shell.surface.set` request needs.
+    pub(crate) fn welcoming(methods: &[&str], capabilities: &[&str]) -> Self {
         let mut welcome: serde_json::Value = serde_json::from_str(include_str!(
             "../../../../herdr-protocol/tests/fixtures/endpoint-welcome-v1.json"
         ))
@@ -98,6 +104,7 @@ impl Peer {
         if let Some(advertised) = welcome["methods"].as_array_mut() {
             advertised.extend(methods.iter().map(|method| serde_json::json!(method)));
         }
+        welcome["capabilities"] = serde_json::json!(capabilities);
         let welcome = welcome.to_string();
         let (stream, mut server) = Stream::pair().unwrap();
         server

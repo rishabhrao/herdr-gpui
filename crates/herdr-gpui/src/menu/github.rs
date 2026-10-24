@@ -7,6 +7,7 @@ use gpui::{prelude::*, *};
 use herdr_client::ConnectTarget;
 
 mod accounts;
+mod installation;
 pub(crate) use accounts::AdditionalAccount;
 
 #[cfg(test)]
@@ -24,6 +25,8 @@ pub(super) enum Action {
     Add,
     SubmitToken,
     CancelToken,
+    /// Open GitHub where the App is installed or its permissions approved.
+    Approve,
     SignOut,
     Close,
 }
@@ -39,6 +42,7 @@ impl Action {
             Self::Add => "github-account-add-action",
             Self::SubmitToken => "github-token-submit",
             Self::CancelToken => "github-token-cancel",
+            Self::Approve => "github-approve",
             Self::SignOut => "github-sign-out",
             Self::Close => "github-header-close",
         }
@@ -49,7 +53,12 @@ impl HerdrWindow {
     /// The saved SSH device whose own account the GitHub page manages, when
     /// that device is selected. Local and explicit sockets use the main account.
     fn github_host(&self) -> Option<&str> {
-        let endpoint = &self.endpoints[self.selected_endpoint];
+        self.endpoint_github_host(self.selected_endpoint)
+    }
+
+    /// [`Self::github_host`] for any device, selected or not.
+    fn endpoint_github_host(&self, index: usize) -> Option<&str> {
+        let endpoint = self.endpoints.get(index)?;
         matches!(endpoint.connection.target, ConnectTarget::Ssh { .. })
             .then_some(endpoint.id.as_str())
             .filter(|id| self.menu.github_hosts.contains_key(*id))
@@ -84,20 +93,25 @@ impl HerdrWindow {
     pub(crate) fn start_github(&mut self) {
         let config = &self.config;
         if let Some(index) = self.selected_github_account_index() {
-            self.menu.github_accounts[index].auth.start(config);
+            self.menu.github_accounts[index].auth.start(&config.github);
             return;
         }
         let host = self.github_host().map(str::to_owned);
         let menu = &mut self.menu;
         host.and_then(|id| menu.github_hosts.get_mut(&id))
             .unwrap_or(&mut menu.github)
-            .start(config);
+            .start(&config.github);
     }
 
     /// The account pull requests on the selected device are read with: the
     /// device's own sign-in when it has one, otherwise the main account.
     pub(crate) fn pr_profile(&self) -> Option<&Profile> {
-        self.github_host()
+        self.endpoint_pr_profile(self.selected_endpoint)
+    }
+
+    /// [`Self::pr_profile`] for any device, selected or not.
+    pub(crate) fn endpoint_pr_profile(&self, index: usize) -> Option<&Profile> {
+        self.endpoint_github_host(index)
             .and_then(|id| self.menu.github_hosts.get(id)?.profile.as_ref())
             .or(self.menu.github.profile.as_ref())
     }
@@ -129,14 +143,14 @@ impl HerdrWindow {
                 continue;
             };
             let mut auth = Auth::for_account(account);
-            auth.initialize(&self.config);
+            auth.initialize(&self.config.github);
             hosts.insert(endpoint.id.clone(), auth);
         }
     }
 
     /// Start the GitHub CLI's sign-in for the main account.
     fn use_github_cli(&mut self) {
-        self.menu.github.use_github_cli(&self.config);
+        self.menu.github.use_github_cli(&self.config.github);
     }
 
     pub(crate) fn poll_github(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -152,6 +166,10 @@ impl HerdrWindow {
         {
             self.menu.github.probe_github_cli(std::time::Instant::now());
         }
+        if self.menu.page == Some(super::Page::GitHub) {
+            self.github_auth_mut()
+                .recheck_access(std::time::Instant::now());
+        }
         let connected = self.github_auth().connected();
         let mut changed = self.menu.github.poll();
         for auth in self.menu.github_hosts.values_mut() {
@@ -160,6 +178,13 @@ impl HerdrWindow {
         for account in &mut self.menu.github_accounts {
             changed |= account.auth.poll();
         }
+        let menu = &mut self.menu;
+        let avatars = std::iter::once(&menu.github)
+            .chain(menu.github_hosts.values())
+            .chain(menu.github_accounts.iter().map(|account| &account.auth))
+            .filter_map(|auth| auth.profile.as_ref())
+            .map(|profile| profile.avatar_url.as_str());
+        changed |= menu.github_avatars.poll(avatars);
         if changed {
             // An additional account stays shown, with the owners it reads.
             if !connected
@@ -169,6 +194,7 @@ impl HerdrWindow {
             {
                 self.dismiss_menu(window, cx);
             }
+            self.toast_github_attention(cx);
             cx.notify();
         }
     }
@@ -186,6 +212,9 @@ impl HerdrWindow {
                 actions.push(Action::GitHubCli);
             }
             actions.extend([Action::Start, Action::Token]);
+        }
+        if auth.connected() && self.github_attention().is_some_and(|a| !a.links.is_empty()) {
+            actions.push(Action::Approve);
         }
         // An additional account can be removed even before it signs in.
         if (auth.can_sign_out() || self.menu.github_account.is_some())
@@ -220,6 +249,7 @@ impl HerdrWindow {
             Action::Start => self.start_github(),
             Action::Token => self.open_github_token(window, cx),
             Action::Add => self.add_github_account(cx),
+            Action::Approve => self.open_github_attention(cx),
             Action::SubmitToken => self.submit_github_token(window, cx),
             Action::CancelToken => {
                 self.close_github_token();
@@ -296,6 +326,7 @@ impl HerdrWindow {
                     None
                 }
                 "t" => Some(Action::Token),
+                "r" => Some(Action::Approve),
                 "c" => {
                     if self.github_auth().busy() {
                         self.github_auth_mut().cancel();
@@ -332,16 +363,11 @@ impl HerdrWindow {
         cx.notify();
     }
 
-    fn github_button(
-        &self,
-        action: Action,
-        label: &'static str,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    fn github_button(&self, action: Action, label: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let theme = &self.theme;
         // The GitHub CLI's sign-in, when offered, is the one-click choice.
         let primary = match action {
-            Action::Open | Action::GitHubCli | Action::SubmitToken => true,
+            Action::Open | Action::GitHubCli | Action::SubmitToken | Action::Approve => true,
             Action::Start => !self.github_actions().contains(&Action::GitHubCli),
             Action::Copy
             | Action::Token
@@ -460,11 +486,10 @@ impl HerdrWindow {
                             // Round the image itself: GPUI 0.2.2 clips overflow
                             // to the box, not to its corner radii.
                             .debug_selector(|| "github-avatar".into())
-                            .child(match &profile.avatar {
-                                Some(image) => img(image.clone())
-                                    .size_full()
-                                    .rounded_full()
-                                    .into_any_element(),
+                            .child(match self.menu.github_avatars.get(&profile.avatar_url) {
+                                Some(image) => {
+                                    img(image).size_full().rounded_full().into_any_element()
+                                }
                                 None => crate::sidebar::github_mark(theme.muted)
                                     .size_full()
                                     .into_any_element(),
@@ -559,6 +584,9 @@ impl HerdrWindow {
                     .child(message),
             );
         }
+        if let Some(attention) = self.render_github_attention() {
+            body = body.child(attention);
+        }
         if let Some(note) = auth
             .profile
             .as_ref()
@@ -572,7 +600,7 @@ impl HerdrWindow {
                     .child(note),
             );
         }
-        if let Some(note) = auth.store().note(auth.connected()) {
+        if let Some(note) = crate::github::store_note(auth.store(), auth.connected()) {
             let (color, text) = match note {
                 crate::github::Note::Warning(text) => (theme.ink(theme.palette[1]), text),
                 crate::github::Note::Info(text) => (theme.muted, text),
@@ -596,6 +624,14 @@ impl HerdrWindow {
             .filter(|action| !matches!(action, Action::Copy | Action::Close))
         {
             has_footer = true;
+            if action == Action::Approve {
+                let label = self
+                    .github_attention()
+                    .and_then(|attention| attention.links.into_iter().next())
+                    .map_or_else(String::new, |(label, _)| format!("{label} (R)"));
+                footer = footer.child(self.github_button(action, &label, cx));
+                continue;
+            }
             let label = match action {
                 Action::Open => "Open GitHub (O)",
                 Action::GitHubCli => "Use GitHub CLI authentication (G)",
@@ -619,7 +655,7 @@ impl HerdrWindow {
                     "Stop using GitHub CLI (D)"
                 }
                 Action::SignOut => "Sign out (D)",
-                Action::Copy | Action::Close => continue,
+                Action::Copy | Action::Approve | Action::Close => continue,
             };
             footer = footer.child(self.github_button(action, label, cx));
         }

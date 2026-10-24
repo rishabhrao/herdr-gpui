@@ -13,7 +13,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SavedHost {
     pub id: String,
@@ -23,7 +23,7 @@ pub struct SavedHost {
     pub enabled: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Catalog {
     version: u32,
@@ -37,6 +37,38 @@ struct Catalog {
 /// This performs bounded filesystem I/O; call it from a background task.
 pub fn load_saved_hosts(development: bool) -> Result<Vec<SavedHost>> {
     load_path(&catalog_path(development, |name| env::var_os(name)))
+}
+
+/// Save a profile without provisioning or restarting its remote daemon. Returns
+/// the existing profile instead if the exact target/session is already saved.
+/// Callers resolve SSH aliases and check connectivity before calling this.
+/// Performs blocking filesystem I/O; call it from a background task.
+pub fn store_saved_host(development: bool, host: &SavedHost) -> Result<SavedHost> {
+    store_host(&catalog_path(development, |name| env::var_os(name)), host)
+}
+
+fn store_host(path: &Path, host: &SavedHost) -> Result<SavedHost> {
+    // Serialize this client's writers, including adds of different devices.
+    // Herdr's CLI does not participate in a shared catalog lock.
+    static WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = WRITER.lock().unwrap_or_else(|error| error.into_inner());
+    let mut catalog = load_catalog(path)?;
+    if let Some(existing) = catalog
+        .ssh
+        .iter()
+        .find(|saved| saved.target == host.target && saved.session == host.session)
+    {
+        return Ok(existing.clone());
+    }
+    catalog.ssh.push(host.clone());
+    let content = serde_json::to_vec_pretty(&catalog).map_err(|error| {
+        Error::storage(StorageOperation::Encode, path, Error::CatalogSchema(error))
+    })?;
+    // Reuse the reader's schema, ID, field, count and byte limits before writing.
+    parse_catalog(&content)
+        .map_err(|error| Error::storage(StorageOperation::Validate, path, error))?;
+    write_private(path, &content)?;
+    Ok(host.clone())
 }
 
 #[derive(Serialize, Deserialize)]

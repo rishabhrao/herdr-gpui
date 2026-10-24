@@ -11,6 +11,8 @@ mod render;
 mod scan;
 mod tunnel;
 
+pub(crate) use tunnel::Error as TunnelError;
+
 #[cfg(test)]
 mod tests;
 
@@ -114,9 +116,9 @@ fn session_name(api: &Path) -> Option<&str> {
 fn open(host: &Host) -> Result<Shell> {
     match host {
         Host::Local => local_shell(),
-        Host::Ssh(target) => Shell::connect(target),
+        Host::Ssh(target) => Shell::connect(target).map_err(Error::from),
         // A distribution is scanned as a Linux host, with its own `ss`.
-        Host::Wsl(distro) => Shell::connect_wsl(distro),
+        Host::Wsl(distro) => Shell::connect_wsl(distro).map_err(Error::from),
         #[cfg(feature = "azure")]
         Host::Azure { .. } => Err(Error::CloudHostUnsupported),
     }
@@ -131,7 +133,7 @@ fn local_shell() -> Result<Shell> {
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
-    Shell::start(command)
+    Ok(Shell::start(command)?)
 }
 
 /// Windows has neither `ss` nor `lsof`, and its own tools are not wired up.
@@ -145,8 +147,8 @@ fn scan(shell: &mut Shell) -> Result<Ports> {
     parse(&output.stdout)
 }
 
-fn failed(error: Error) -> Error {
-    Error::ListeningPorts(Box::new(error))
+fn failed(error: impl Into<Error>) -> Error {
+    Error::ListeningPorts(Box::new(error.into()))
 }
 
 struct Worker {

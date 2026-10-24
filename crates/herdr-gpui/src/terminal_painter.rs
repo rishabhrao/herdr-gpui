@@ -18,6 +18,7 @@ pub(crate) use self::grid::Ground;
 use self::grid::{background_extent, grid_corners, grid_rect, last_row_has_separator};
 use self::images::{ImageCache, ImageGeometry, below_text};
 pub(crate) use self::images::{ImageTarget, PlacedImages};
+pub(crate) use self::images::{fit_bgra, texture};
 use crate::config::Theme;
 use crate::terminal::*;
 use gpui::*;

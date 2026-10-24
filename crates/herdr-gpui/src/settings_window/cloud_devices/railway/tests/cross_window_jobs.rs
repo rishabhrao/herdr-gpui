@@ -34,7 +34,7 @@ fn another_windows_setup_blocks_removal_and_duplicate_setup_after_retargeting(
                                 _ => break,
                             }
                         }
-                        Err(crate::cloud::Error::Cancelled.into())
+                        Err(crate::Error::from(crate::cloud::Error::Cancelled))
                     },
                     cx,
                 )

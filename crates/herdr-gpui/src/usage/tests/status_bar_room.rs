@@ -60,14 +60,7 @@ fn compact_usage_and_icon_buttons_give_the_bar_back(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = fixture_window(window, cx);
         view.config.usage.show = true;
-        view.usage.host = Some(super::super::Host::Local);
-        view.usage.entries.insert(
-            super::super::Host::Local,
-            super::super::Entry {
-                readings: vec![antigravity()],
-                ..Default::default()
-            },
-        );
+        view.usage = super::super::Usage::showing(super::super::Host::Local, vec![antigravity()]);
         view
     });
     cx.simulate_resize(size(px(1280.), px(600.)));

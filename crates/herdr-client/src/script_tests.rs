@@ -3,6 +3,8 @@ use std::io::Cursor;
 
 #[path = "script_tests/command.rs"]
 mod command;
+#[path = "script_tests/dropped.rs"]
+mod dropped;
 
 const LIMITS: ScriptLimits = ScriptLimits {
     output: 1 << 20,

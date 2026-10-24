@@ -1,5 +1,5 @@
 [workspace]
-members  = ["crates/embed-resource", "crates/herdr-client", "crates/herdr-gpui", "crates/herdr-gpui-launcher", "crates/herdr-protocol", "crates/herdr-web", "crates/herdr-web-client"]
+members  = ["crates/embed-resource", "crates/herdr-acp", "crates/herdr-automate", "crates/herdr-automation", "crates/herdr-chat-protocol", "crates/herdr-client", "crates/herdr-commands", "crates/herdr-control-protocol", "crates/herdr-credentials", "crates/herdr-diagnostics", "crates/herdr-github", "crates/herdr-gpui", "crates/herdr-gpui-launcher", "crates/herdr-orchestrator", "crates/herdr-protocol", "crates/herdr-remote", "crates/herdr-updater", "crates/herdr-usage", "crates/herdr-vcs", "crates/herdr-web", "crates/herdr-web-client"]
 resolver = "2"
 
 [workspace.package]
@@ -22,6 +22,8 @@ unwrap_used = "deny"
 
 [workspace.dependencies]
 url = "2"
+# ACP wire types for herdr-acp; its own transport, so no async runtime.
+acp                  = { default-features = false, package = "agent-client-protocol-schema", version = "1.12" }
 anyhow               = "1"
 aes                  = "0.9.3"
 async-channel        = "2"
@@ -43,6 +45,8 @@ ed25519-dalek        = { default-features = false, features = ["std"], version =
 flate2               = "1"
 # Use the same strict macOS family lookup as GPUI, including legacy aliases.
 font-kit             = { package = "zed-font-kit", version = "=0.14.1-zed" }
+# Time zone names in automation schedules; the version the lockfile already has.
+jiff                 = "0.2.38"
 # Locates installed font files on Linux, as GPUI's own text system does.
 fontdb               = "0.24"
 foreign-types        = "0.5"
@@ -53,10 +57,26 @@ gpui                 = { package = "gpui-pre", version = "=0.3.6" }
 gpui_platform        = { package = "gpui-pre-platform", version = "=0.3.6" }
 # Draws the served app's frames in the browser; the version GPUI's web platform uses.
 gpui_wgpu            = { package = "gpui-pre-wgpu", version = "=0.3.6" }
+# Reads local repositories for the orchestrator without starting `git`:
+# discovery, config with its includes and URL rewrites, refs, and rev-parse.
+gix                  = { default-features = false, features = ["sha1"], version = "0.90" }
 # The web views behind browser tabs; `browser::page` lays them out in the window.
 wry                  = { package = "lb-wry", version = "=0.53.3" }
+# Reports only by default; the daemon turns on the Luau engine.
+herdr-automation     = { default-features = false, path = "crates/herdr-automation" }
+herdr-chat-protocol  = { path = "crates/herdr-chat-protocol" }
 herdr-client         = { path = "crates/herdr-client" }
+herdr-commands       = { path = "crates/herdr-commands" }
+herdr-control-protocol = { path = "crates/herdr-control-protocol" }
+herdr-credentials    = { path = "crates/herdr-credentials" }
+herdr-diagnostics    = { path = "crates/herdr-diagnostics" }
+herdr-github         = { path = "crates/herdr-github" }
+herdr-orchestrator   = { path = "crates/herdr-orchestrator" }
 herdr-protocol       = { path = "crates/herdr-protocol" }
+herdr-remote         = { default-features = false, path = "crates/herdr-remote" }
+herdr-updater        = { path = "crates/herdr-updater" }
+herdr-usage          = { path = "crates/herdr-usage" }
+herdr-vcs            = { path = "crates/herdr-vcs" }
 herdr-web            = { path = "crates/herdr-web" }
 # Request heads for the `serve` loopback server.
 httparse             = "1"
@@ -68,6 +88,11 @@ if-addrs             = "0.15"
 keepawake            = { default-features = false, version = "0.6.1" }
 js-sys               = "0.3"
 image                = { default-features = false, features = ["gif", "jpeg", "png", "webp"], version = "0.25.10" }
+# The sandboxed Luau interpreter behind automation scripts, built from source.
+mlua                 = { features = ["error-send", "luau"], version = "0.12.2" }
+# Mermaid fences in chat answers become diagrams: parse, lay out, and write
+# SVG in pure Rust; GPUI rasterizes the SVG. No CLI and no PNG writer.
+mermaid-rs-renderer  = { default-features = false, version = "0.3.1" }
 # Helix's fzf-style scorer behind the command palette.
 nucleo-matcher       = "0.3.1"
 # Bonjour browsing for SSH hosts in the Add Device dialog; it runs its own
@@ -89,6 +114,9 @@ objc2-web-kit        = { default-features = false, features = ["WKSnapshotConfig
 # Asks for Dock badge permission; the version GPUI's macOS platform already links.
 objc2-user-notifications ={ default-features = false, features = ["UNUserNotificationCenter", "block2", "std"], version = "0.3.2" }
 raw-window-handle    = "0.6"
+# herdr-acp's in-pane chat view.
+ratatui              = { default-features = false, features = ["crossterm"], version = "0.30" }
+crossterm            = "0.29"
 # TLS for the Azure sandbox exec stream, with the ring provider and roots
 # ureq already links.
 rustls               = { default-features = false, features = ["ring", "std", "tls12"], version = "0.23" }
@@ -106,6 +134,9 @@ sha1                 = "0.11.0"
 sha2                 = "0.11.0"
 # Reads embedded bitmap strikes to spot fonts GPUI's Linux rasterizer panics on.
 skrifa               = { default-features = false, features = ["std"], version = "0.48" }
+# Tests hold a port with a socket that is bound but never listens; mdns-sd
+# already locks this version.
+socket2              = "0.6.5"
 # Diff syntax colouring: bundled grammars, parsed with the pure-Rust regex
 # engine, no themes (colours come from the app's theme).
 syntect              = { default-features = false, features = ["default-syntaxes", "parsing", "regex-fancy"], version = "5.3" }
@@ -121,6 +152,7 @@ tracing              = "0.1"
 # The Azure sandbox exec stream; TLS comes from `rustls` above.
 tungstenite          = { default-features = false, features = ["handshake"], version = "0.30" }
 tracing-subscriber   = { default-features = false, features = ["registry", "std"], version = "0.3" }
+unicode-normalization = "0.1.26"
 unicode-properties   = { version = "0.1.4", default-features = false, features = ["emoji"] }
 unicode-segmentation = "1"
 unicode-width        = "0.2.2"
@@ -134,12 +166,20 @@ web-sys              = "0.3"
 # Window shell properties behind the taskbar relaunch identity; the version
 # GPUI's Windows platform already links.
 windows              = { features = ["Win32_Foundation", "Win32_Storage_EnhancedStorage", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem"], version = "0.62.2" }
-windows-registry     = "0.6.1"
+windows-registry     = "0.100.0"
+# The error type `windows-registry` returns; its own version, not `windows`'s.
+windows-result       = "0.100.0"
 windows-sys          = { features = ["Win32_Foundation", "Win32_System_Pipes"], version = "0.61.2" }
 # Embeds the Windows executable's icon and version information; a build
 # dependency, so it runs on the host.
 winresource          = "0.1.34"
 zeroize              = "=1.9.1"
+
+# Line tables keep file:line in backtraces and crash reports while cutting most
+# of the debug info a full build writes and links for herdr-gpui. Use
+# `CARGO_PROFILE_DEV_DEBUG=full` for a debugger session that needs locals.
+[profile.dev]
+debug = "line-tables-only"
 
 # GPUI's build script embeds its own Windows manifest through embed-resource,
 # which would clash with Herdr's (crates/herdr-gpui/windows.manifest); this

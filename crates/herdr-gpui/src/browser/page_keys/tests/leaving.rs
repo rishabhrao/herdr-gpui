@@ -97,3 +97,24 @@ fn keys_read_as_gpui_names_them() {
     };
     assert_eq!(read(function, "a", "a"), "fn-cmd-a");
 }
+
+/// Move Tab Left and Right have no default key; bound, they move the
+/// page's own tab, as a web browser's keys do.
+#[test]
+fn bound_move_tab_keys_leave_a_page() {
+    let one = |keystroke: &str| Binding::One(keystroke.to_owned());
+    let overrides = BTreeMap::from([
+        ("move_tab_previous".to_owned(), one("cmd-alt-left")),
+        ("move_tab_next".to_owned(), one("cmd-alt-right")),
+    ]);
+    bind(
+        &Keymap::with_overrides(&overrides, &PaneKeys::default(), &DaemonKeys::default()).unwrap(),
+    );
+    let option_command = Held {
+        option: true,
+        ..ARROW_COMMAND
+    };
+    assert!(leaves_page_for(option_command, RIGHT, RIGHT));
+    assert!(leaves_page_for(option_command, "\u{f702}", "\u{f702}"));
+    assert!(!leaves_page_for(ARROW_COMMAND, RIGHT, RIGHT));
+}

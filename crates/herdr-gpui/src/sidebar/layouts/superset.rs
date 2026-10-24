@@ -10,8 +10,8 @@ use super::{
         cell::{AgentRow, RowContext, RowLayout, RowState, WorkspaceRow},
         line_height,
         row::{
-            RowIcon, RowKind, RowLift, RowTree, TokenLook, configured_status_style, leading_status,
-            left_behind, removing_dot, token_column,
+            Elbow, RowIcon, RowKind, RowLift, RowTree, TokenLook, configured_status_style, guide,
+            leading_status, left_behind, removing_dot, token_column,
         },
         tokens::ResolvedToken,
     },
@@ -25,6 +25,27 @@ pub(in super::super) struct Superset;
 
 /// Width of the leading edge stripe on the focused row.
 const STRIPE: f32 = 2.;
+
+/// A child's guide gutter, as `(x, width)` from the sidebar's leading edge:
+/// the trunk drops from the leading edge of the parent's glyph, and the tick
+/// spans the indent to the child's glyph, as the tree's tick meets its dot.
+/// A tile fills its whole slot, so there the guide keeps to the slots' edges
+/// rather than crossing into the tile.
+fn gutter(cx: &RowContext<'_>) -> (f32, f32) {
+    let m = Metrics::new(cx);
+    let inset = if cx.indicators.icons == StatusIcons::Tiles {
+        0.
+    } else {
+        (m.icon - m.icon * GLYPH) / 2.
+    };
+    (
+        cx.look.content_x() + cx.nest + inset,
+        cx.look.density.card_indent(),
+    )
+}
+
+/// The glyph's share of its icon slot.
+const GLYPH: f32 = 0.7;
 
 /// Geometry shared by both kinds of row, scaled from the sidebar font so a
 /// larger font grows the icon slot with the text.
@@ -229,10 +250,11 @@ impl RowLayout for Superset {
                 cx.look.density.card_indent()
             };
         let pr = badge.as_ref().and_then(|badge| badge.pr.as_ref());
+        let changes = badge.as_ref().and_then(|badge| badge.counts.as_ref());
         let dirty = badge.as_ref().is_some_and(|badge| badge.dirty);
         let teleported = badge.as_ref().is_some_and(|badge| badge.teleported);
         let dirty_size = (line_height(cx.font) * 0.75).round().min(15.);
-        let size = m.icon * 0.7;
+        let size = m.icon * GLYPH;
         let icon_color = if state.selected {
             theme.foreground
         } else {
@@ -302,18 +324,37 @@ impl RowLayout for Superset {
             .when(teleported, |line| {
                 line.fixed(dirty_size, parts::teleported(label, dirty_size, theme))
             })
-            .when(dirty, |line| {
-                line.fixed(dirty_size, parts::dirty(label, dirty_size, theme))
-            })
-            .when_some(pr, |line, pr| {
-                let (width, counts) = parts::pr_counts(label, pr, m.glyph, counts);
+            // Local counts take the dirty mark's place, in a chip of its hue.
+            .when(
+                dirty && !changes.is_some_and(|changes| changes.local),
+                |line| line.fixed(dirty_size, parts::dirty(label, dirty_size, theme)),
+            )
+            .when_some(changes, |line, changes| {
+                if changes.local {
+                    let (glyph, icon) = (m.glyph, (dirty_size * 0.8).round());
+                    let chip = changes.chip(label, glyph, icon, counts, theme);
+                    return line
+                        .shrink(changes.chip_width(glyph, icon), chip.text_size(px(m.small)));
+                }
+                let (width, counts) = parts::counts(label, changes, m.glyph, counts);
                 line.shrink(width, counts.text_size(px(m.small)))
             })
             .when_some(fold, |line, fold| {
                 let width = m.icon * 0.6;
                 line.fixed(width, fold.element(theme).w(px(width)).text_size(px(14.)))
             });
-        shell(label, state, indent, line, cx)
+        // The slot is centred in the row, so the tick meets it halfway down.
+        shell(label, state, indent, line, cx).children(guide(
+            label,
+            tree,
+            gutter(cx),
+            Elbow::Middle,
+            cx,
+        ))
+    }
+
+    fn trunk_below(&self, key: &str, tree: RowTree, cx: &RowContext<'_>) -> Option<Div> {
+        super::super::row::trunk_below(key, tree, gutter(cx), cx)
     }
 
     fn agent(&self, agent: AgentRow<'_>, state: RowState, cx: &RowContext<'_>) -> Div {
@@ -342,14 +383,28 @@ impl RowLayout for Superset {
             });
             return shell(key, state, 0., line, cx);
         }
-        // Where the agent runs trails its name, never over half the row.
+        // The agent's pane, then where it runs, trail its name, each never over
+        // half the row.
         let line = line
-            .fill(
+            .lead(
                 div()
                     .debug_selector(|| format!("name-{key}"))
                     .text_color(rgb(color)),
                 agent.name,
+                glyph_at(cx.font, cx.font.size),
+                0.4,
             )
+            .when_some(agent.pane, |line, pane| {
+                line.label(
+                    div()
+                        .debug_selector(|| format!("pane-{key}"))
+                        .text_size(px(m.small))
+                        .text_color(rgb(theme.muted)),
+                    pane,
+                    m.glyph,
+                    0.5,
+                )
+            })
             .when_some(parts::agent_place(agent.place, cx.host), |line, place| {
                 line.label(
                     div()
@@ -362,14 +417,14 @@ impl RowLayout for Superset {
                 )
             })
             .when_some(agent.status_text.as_deref(), |line, text| {
-                line.label(
+                line.keep(
                     div()
                         .debug_selector(|| format!("status-{key}"))
                         .text_size(px(m.small))
                         .text_color(rgb(cx.indicators.color(agent.status))),
                     text,
                     m.glyph,
-                    0.5,
+                    0.3,
                 )
             });
         shell(key, state, 0., line, cx)

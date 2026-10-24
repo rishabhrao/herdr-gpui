@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the experimental Windows executable as Herdr-VERSION-TARGET.zip.
+"""Package the Windows executable as Herdr-VERSION-TARGET.zip.
 
 Pure standard library so the Windows runner needs no zip tool. The layout
 mirrors package-linux.sh: the executable plus the same license and notice files.

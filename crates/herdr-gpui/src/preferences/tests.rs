@@ -1,8 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
+use std::env;
 use std::time::{Duration, Instant};
-
-mod state_directory;
 
 struct TestDirectory(PathBuf);
 
@@ -50,6 +49,7 @@ fn roundtrip_and_reset_drain_after_drop() {
     for width in 1..=100 {
         preferences.save(Chrome {
             activity_panel: None,
+            activity_last_opened: Default::default(),
             sidebar_width: Some(width as f32),
             sidebar_split: Some(0.4),
             agent_sort: Some(AgentSort::Priority),
@@ -67,6 +67,7 @@ fn roundtrip_and_reset_drain_after_drop() {
         await_loaded(&mut preferences),
         Chrome {
             activity_panel: None,
+            activity_last_opened: Default::default(),
             sidebar_width: Some(100.0),
             sidebar_split: Some(0.4),
             agent_sort: Some(AgentSort::Priority),
@@ -91,6 +92,7 @@ fn only_a_toggled_sort_is_stored_and_older_files_migrate() {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let chrome = |agent_sort| Chrome {
         activity_panel: None,
+        activity_last_opened: Default::default(),
         sidebar_width: Some(240.0),
         sidebar_split: None,
         agent_sort,
@@ -165,6 +167,7 @@ fn drop_does_not_wait_for_blocked_worker_and_queued_saves_still_drain() {
     let queued = [
         Chrome {
             activity_panel: None,
+            activity_last_opened: Default::default(),
             sidebar_width: Some(160.),
             sidebar_split: None,
             agent_sort: Some(AgentSort::Grouped),
@@ -174,6 +177,7 @@ fn drop_does_not_wait_for_blocked_worker_and_queued_saves_still_drain() {
         },
         Chrome {
             activity_panel: None,
+            activity_last_opened: Default::default(),
             sidebar_width: Some(400.),
             sidebar_split: Some(0.6),
             agent_sort: Some(AgentSort::Priority),
@@ -232,6 +236,7 @@ fn malformed_and_invalid_widths_fall_back_to_default() {
                 &path,
                 Chrome {
                     activity_panel: None,
+                    activity_last_opened: Default::default(),
                     sidebar_width: Some(width),
                     sidebar_split: None,
                     agent_sort: None,
@@ -245,6 +250,7 @@ fn malformed_and_invalid_widths_fall_back_to_default() {
     }
     let chrome = Chrome {
         activity_panel: None,
+        activity_last_opened: Default::default(),
         sidebar_width: Some(237.5),
         sidebar_split: None,
         agent_sort: None,
@@ -263,6 +269,7 @@ fn invalid_sidebar_splits_preserve_other_preferences() {
     let path = directory.0.join("preferences.json");
     let expected = Chrome {
         activity_panel: None,
+        activity_last_opened: Default::default(),
         sidebar_width: Some(240.0),
         sidebar_split: None,
         agent_sort: Some(AgentSort::Priority),
@@ -309,6 +316,7 @@ fn sidebar_split_roundtrips_including_boundaries_and_reset() {
     for sidebar_split in [Some(0.1), Some(0.4), Some(0.9), None] {
         let chrome = Chrome {
             activity_panel: None,
+            activity_last_opened: Default::default(),
             sidebar_width: Some(240.0),
             sidebar_split,
             agent_sort: Some(AgentSort::Priority),
@@ -340,6 +348,7 @@ fn endpoint_paths_use_stable_fnv1a() {
     );
 }
 
+mod activity_last_opened;
 mod activity_panel;
 mod device_order;
 mod notes_width;

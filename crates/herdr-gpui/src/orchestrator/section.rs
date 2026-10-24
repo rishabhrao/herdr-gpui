@@ -42,6 +42,22 @@ impl HerdrWindow {
         cx.notify();
     }
 
+    /// Makes the sections' view before either section is shown, so the bar
+    /// counts open pull requests and issues from the start rather than from
+    /// the first click. Waits for a repository to list: until a host
+    /// connects there is nothing to sync.
+    pub(crate) fn prepare_activity_sections(&mut self, cx: &mut Context<Self>) {
+        let made = self
+            .activity
+            .section_view
+            .is_some_and(|id| self.orchestrators.contains_key(&id));
+        if made || !self.activity_bar_shown() || self.repo_specs().is_empty() {
+            return;
+        }
+        // The tick hands it the repositories and accounts right after.
+        self.activity.section_view = Some(self.sections_view(cx));
+    }
+
     /// Shows the focused workspace's issues.
     pub(crate) fn open_orchestrator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, workspace)) = self.browser_key() else {
@@ -176,6 +192,10 @@ pub(crate) fn list_of(section: ActivityPanel) -> Option<List> {
     match section {
         ActivityPanel::Issues => Some(List::Issues),
         ActivityPanel::PullRequests => Some(List::PullRequests),
-        ActivityPanel::Overview | ActivityPanel::Workspaces | ActivityPanel::Usage => None,
+        ActivityPanel::Overview
+        | ActivityPanel::Security
+        | ActivityPanel::Automations
+        | ActivityPanel::Workspaces
+        | ActivityPanel::Usage => None,
     }
 }

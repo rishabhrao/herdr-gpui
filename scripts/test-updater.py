@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """Test the real updater without compiling GPUI (Python 3.11+, Rust via rustup).
 
-The temporary package inherits workspace dependency options and exact direct
-versions from Cargo.lock. Cargo metadata prunes a COPY of that lock, then every
-resolved package/checksum is checked against the original before testing with
---locked. No repository lock or source is modified. Use --offline to prohibit
-Cargo downloads; otherwise only normal Cargo dependency downloads are needed.
-The repository toolchain must already be installed (CI runs rustup show first).
+The updater is its own crate, `herdr-updater`, so this builds and tests only
+that crate and its dependencies, from the workspace lock with --locked, and
+checks that GPUI is not among them. Its `harness` example is the fixture
+executable: the real update helper plus commands to sign fixtures and report a
+restart. Use --offline to prohibit Cargo downloads; otherwise only normal Cargo
+dependency downloads are needed. The repository toolchain must already be
+installed (CI runs rustup show first).
 
 Linux additionally exercises the real helper with offline, deterministically
 signed fixtures in a private HOME. Run as a non-root user for those tests.
 No daemon, desktop, network update endpoint, or production signing key is used.
-All generated source, binaries, lockfiles and fixture homes are temporary; this
-script does not publish artifacts. Rust source paths are remapped in binaries.
+Binaries and fixture homes are temporary; no repository file is modified and
+nothing is published. Rust source paths are remapped in binaries.
 """
 
 import argparse
@@ -23,7 +24,6 @@ import json
 import os
 from pathlib import Path
 import selectors
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -32,167 +32,10 @@ import time
 import tomllib
 
 
-DEPENDENCIES = (
-    "anyhow",
-    "rustix",
-    "chrono", "serde", "serde_json", "ureq", "ed25519-dalek", "sha2", "tempfile", "tar", "flate2",
-    "thiserror", "tracing",
-)
 # Public half of the deliberately public [42; 32] unit-test signing seed.
 PUBLIC_KEY = "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61"
 VERSION = "20260920.1"
-
-MAIN = r'''
-const APP_VERSION: &str = env!("HERDR_RELEASE_VERSION");
-pub use updater::UpdateError;
-
-// The updater starts children with `herdr_client::new_command`, which sets
-// CREATE_NO_WINDOW on Windows. This harness links no herdr-client, so it
-// answers to that name itself with a plain Command for its Unix hosts.
-extern crate self as herdr_client;
-#[allow(dead_code)]
-fn new_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
-    std::process::Command::new(program)
-}
-
-fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {
-    use anyhow::Context as _;
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if let Some(code) = updater::run_helper(&args) {
-        return Ok(code);
-    }
-    match args.first().and_then(|arg| arg.to_str()) {
-        Some("--harness-sign") if args.len() == 1 => {
-            use ed25519_dalek::{Signer, SigningKey};
-            use std::io::Read;
-            let mut bytes = Vec::new();
-            std::io::stdin().read_to_end(&mut bytes).context("read signing input")?;
-            let key = SigningKey::from_bytes(&[42; 32]);
-            println!("{}", serde_json::to_string(&key.sign(&bytes).to_bytes().to_vec())?);
-        }
-        Some("--harness-restarted") if args.len() == 3 => {
-            use std::os::unix::ffi::OsStrExt;
-            let report = serde_json::json!({
-                "argument": args[2].as_bytes(),
-                "cwd": std::env::current_dir().context("read restart working directory")?.as_os_str().as_bytes(),
-            });
-            std::fs::write(&args[1], serde_json::to_vec(&report)?).context("write restart report")?;
-        }
-        _ => return Ok(std::process::ExitCode::FAILURE),
-    }
-    Ok(std::process::ExitCode::SUCCESS)
-}
-
-#[test]
-fn embedded_fixture_key_and_version_match() {
-    let public: String = ed25519_dalek::SigningKey::from_bytes(&[42; 32])
-        .verifying_key().as_bytes().iter().map(|byte| format!("{byte:02x}")).collect();
-    assert_eq!(public, env!("HERDR_UPDATE_PUBLIC_KEY"));
-    assert_eq!(APP_VERSION, "20260920.1");
-}
-'''
-
-
-def toml_value(value):
-    """The workspace/lock subset needs only TOML scalars, arrays and inline tables."""
-    if isinstance(value, dict):
-        return "{ " + ", ".join(
-            f"{json.dumps(key)} = {toml_value(item)}" for key, item in value.items()
-        ) + " }"
-    if isinstance(value, list):
-        return "[" + ", ".join(map(toml_value, value)) + "]"
-    return json.dumps(value, ensure_ascii=False)
-
-
-def package_identity(package):
-    return tuple(package.get(key) for key in ("name", "version", "source", "checksum"))
-
-
-def generate(root, temporary):
-    workspace = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]
-    member = tomllib.loads((root / "crates/herdr-gpui/Cargo.toml").read_text())
-    lock = tomllib.loads((root / "Cargo.lock").read_text())
-    package = dict(workspace["package"], name=member["package"]["name"])
-    locked_root, = [item for item in lock["package"] if item["name"] == package["name"]]
-    dependencies = {}
-    references = []
-    for name in DEPENDENCIES:
-        inherited = (member["dependencies"][name] if name in member["dependencies"]
-                     else member["target"]["cfg(unix)"]["dependencies"][name])
-        if not inherited.get("workspace"):
-            raise ValueError(f"{name} must inherit its workspace dependency")
-        definition = workspace["dependencies"][name]
-        definition = {"version": definition} if isinstance(definition, str) else dict(definition)
-        reference, = [ref for ref in locked_root["dependencies"] if ref.split()[0] == name]
-        parts = reference.split()
-        locked, = [item for item in lock["package"] if item["name"] == name
-                   and (len(parts) == 1 or item["version"] == parts[1])]
-        if not locked.get("source", "").startswith("registry+"):
-            raise ValueError(f"Expected registry dependency: {name}")
-        definition["version"] = "=" + locked["version"]
-        for key, value in inherited.items():
-            if key == "features":
-                definition[key] = sorted(set(definition.get(key, []) + value))
-            elif key != "workspace":
-                definition[key] = value
-        dependencies[name] = definition
-        references.append(reference)
-    # The updater starts every child through herdr_client::new_command. Only
-    # that std-only module is compiled, from its own source file, in a local
-    # crate whose name and version match the workspace lock's herdr-client.
-    client = tomllib.loads((root / "crates/herdr-client/Cargo.toml").read_text())["package"]
-    client_package = {"name": client["name"], "version": workspace["package"]["version"],
-                      "edition": workspace["package"]["edition"], "publish": False}
-    (temporary / "herdr-client/src").mkdir(parents=True)
-    (temporary / "herdr-client/Cargo.toml").write_text(
-        "[package]\n" + "".join(f"{json.dumps(key)} = {toml_value(value)}\n"
-                                for key, value in client_package.items()))
-    process = root / "crates/herdr-client/src/process.rs"
-    (temporary / "herdr-client/src/lib.rs").write_text(
-        f"#[path = {json.dumps(str(process), ensure_ascii=False)}]\n"
-        "mod process;\npub use process::new_command;\n")
-    dependencies[client["name"]] = {"path": "herdr-client"}
-
-    manifest = "[workspace]\nresolver = " + toml_value(workspace["resolver"]) + "\n"
-    for section, values in [("package", package), ("dependencies", dependencies)]:
-        manifest += f"\n[{section}]\n"
-        manifest += "".join(f"{json.dumps(key)} = {toml_value(value)}\n"
-                            for key, value in values.items())
-    (temporary / "Cargo.toml").write_text(manifest)
-    original_identities = {package_identity(item) for item in lock["package"]}
-    locked_root["dependencies"] = references
-    projected = f"version = {lock['version']}\n"
-    for item in lock["package"]:
-        projected += "\n[[package]]\n"
-        projected += "".join(f"{key} = {toml_value(value)}\n" for key, value in item.items())
-    (temporary / "Cargo.lock").write_text(projected)
-    shutil.copyfile(root / "rust-toolchain.toml", temporary / "rust-toolchain.toml")
-    (temporary / "src").mkdir()
-    source = root / "crates/herdr-gpui/src/updater.rs"
-    # An absolute #[path] to updater.rs searches its children beside that file,
-    # not in updater/. A symlinked mod.rs preserves Rust's submodule lookup while
-    # compiling the original files, without copying or rewriting their contents.
-    modules = temporary / "src/updater"
-    modules.mkdir()
-    (modules / "mod.rs").symlink_to(source)
-    # Include updater/error.rs directly with its siblings; the updater owns its
-    # Result alias and does not need the GPUI/config-dependent crate error module.
-    for child in source.with_suffix("").iterdir():
-        (modules / child.name).symlink_to(child, target_is_directory=child.is_dir())
-    # The updater names the app's identifiers through constants.rs, which holds
-    # only plain constants and so compiles here unchanged.
-    constants = root / "crates/herdr-gpui/src/constants.rs"
-    # Unused UI entry points are expected in this updater-only binary.
-    # The updater reads build identities such as the app ID from constants.rs,
-    # plain values with no GPUI dependency, compiled here as the app does.
-    constants = root / "crates/herdr-gpui/src/constants.rs"
-    (temporary / "src/main.rs").write_text(
-        f"#[allow(dead_code)]\n#[path = {json.dumps(str(modules / 'mod.rs'), ensure_ascii=False)}]\n"
-        "mod updater;\n"
-        f"#[allow(dead_code)]\n#[path = {json.dumps(str(constants), ensure_ascii=False)}]\n"
-        "mod constants;\n" + MAIN
-    )
-    return original_identities, package["name"]
+PACKAGE = "herdr-updater"
 
 
 def linux_helper_tests(binary, parent):
@@ -313,42 +156,37 @@ def main():
     channel = tomllib.loads((root / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
     with tempfile.TemporaryDirectory(prefix="herdr-updater-tests-") as directory:
         temporary = Path(directory).resolve()
-        identities, name = generate(root, temporary)
         environment = dict(os.environ)
         environment.pop("RUSTFLAGS", None)
         environment.update({
             "HERDR_RELEASE_VERSION": VERSION, "HERDR_UPDATE_PUBLIC_KEY": PUBLIC_KEY,
             "CARGO_TARGET_DIR": str(temporary / "target"),
-            "CARGO_ENCODED_RUSTFLAGS": "\x1f".join([
-                f"--remap-path-prefix={root}=/herdr-source",
-                f"--remap-path-prefix={temporary}=/updater-harness",
-            ]),
+            "CARGO_ENCODED_RUSTFLAGS": f"--remap-path-prefix={root}=/herdr-source",
         })
         cargo = ["rustup", "run", channel, "cargo"]
         offline = ["--offline"] if args.offline else []
 
         def run(arguments, **kwargs):
-            return subprocess.run(cargo + arguments + offline, cwd=temporary,
+            return subprocess.run(cargo + arguments + ["--locked"] + offline, cwd=root,
                                   env=environment, check=True, **kwargs)
 
         print(f"Updater-only harness: Rust {channel}, {sys.platform}", flush=True)
-        # Reconcile the reduced feature graph in the temporary lock only. Unlike
-        # generate-lockfile, metadata retains existing transitive resolutions.
-        run(["metadata", "--format-version=1"], stdout=subprocess.DEVNULL)
-        resolved = tomllib.loads((temporary / "Cargo.lock").read_text())
-        unexpected = {package_identity(item) for item in resolved["package"]} - identities
-        if unexpected:
-            raise RuntimeError(f"Harness resolution escaped workspace lock: {sorted(unexpected)}")
-        assert not any(item["name"] == "gpui" for item in resolved["package"])
-        run(["build", "--locked"])
-        binary = temporary / "target/debug" / name
+        tree = run(["tree", "-p", PACKAGE, "--edges", "normal,build", "--prefix", "none",
+                    "--target", "all"], capture_output=True, text=True).stdout
+        names = {line.split()[0] for line in tree.splitlines() if line.strip()}
+        assert not any(name.startswith("gpui") for name in names), "herdr-updater depends on GPUI"
+        run(["build", "-p", PACKAGE, "--example", "harness"])
+        binary = temporary / "target/debug/examples/harness"
+        identity = json.loads(subprocess.run([binary, "--harness-identity"], capture_output=True,
+                                             timeout=10, check=True).stdout)
+        assert identity == {"version": VERSION, "key": PUBLIC_KEY, "fixture_key": PUBLIC_KEY}, identity
         invalid = subprocess.run([binary, "--herdr-apply-update"], timeout=10, check=False)
         assert invalid.returncode == 1, "Malformed helper invocation must fail closed"
         if sys.platform == "linux":
             linux_helper_tests(binary, temporary)
         else:
             print("Linux helper handshake is Linux-only; running shared installer unit tests.", flush=True)
-        run(["test", "--locked", "--all-targets"])
+        run(["test", "-p", PACKAGE, "--all-targets"])
     return 0
 
 

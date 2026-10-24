@@ -269,3 +269,4 @@ fn save_failures_keep_only_the_final_diagnostic_line() {
 mod server_restart;
 #[cfg(unix)]
 mod terminal_setup;
+mod version_warning;

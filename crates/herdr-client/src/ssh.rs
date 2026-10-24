@@ -47,11 +47,16 @@ pub(super) use crate::script::shell_quote as quote;
 // Keep paths in shell variables: discovered executable names are never eval'd.
 pub(super) const CANDIDATES: &str = r#"candidate=$(command -v herdr 2>/dev/null || :)
 case "$candidate" in /*/mise/shims/herdr) candidate=;; /*) ;; *) candidate=;; esac
-for path in "$candidate" "$HOME/.local/bin/herdr" /opt/homebrew/bin/herdr /usr/local/bin/herdr /home/linuxbrew/.linuxbrew/bin/herdr "$HOME/.nix-profile/bin/herdr" "/etc/profiles/per-user/$USER/bin/herdr" /nix/var/nix/profiles/default/bin/herdr /run/current-system/sw/bin/herdr; do"#;
+linuxbrew=
+case "$(PATH=/usr/bin:/bin uname -s)" in Linux) linuxbrew=/home/linuxbrew/.linuxbrew/bin/herdr;; esac
+for path in "$candidate" "$HOME/.local/bin/herdr" /opt/homebrew/bin/herdr /usr/local/bin/herdr "$linuxbrew" "$HOME/.nix-profile/bin/herdr" "/etc/profiles/per-user/$USER/bin/herdr" /nix/var/nix/profiles/default/bin/herdr /run/current-system/sw/bin/herdr; do"#;
 
 const PROBE_CANDIDATE: &str = "herdr-probe:candidate";
 const PROBE_DONE: &str = "herdr-probe:done";
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+/// `ssh -G` only reads configuration, but a cold start on a busy Windows
+/// machine (antivirus scanning `ssh.exe`) has taken over five seconds.
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(15);
 const PROBE_OUTPUT_LIMIT: u64 = 64 * 1024;
 
 fn bridge_command(session: &str) -> String {
@@ -294,7 +299,7 @@ pub fn resolve_destination(target: &str) -> Result<Destination> {
     validate_target(target)?;
     let mut command = crate::environment::command("ssh");
     command.args(["-G", "--", target]);
-    let (status, output) = run(&mut command, Duration::from_secs(5), || false)?;
+    let (status, output) = run(&mut command, RESOLVE_TIMEOUT, || false)?;
     if !status.success() {
         tracing::warn!(category = "resolve", %status, "ssh -G failed");
         return Err(Error::RemoteCommand(status));

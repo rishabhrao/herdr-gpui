@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     handle::{Command, PendingRequest},
-    session::MAX_INTERLEAVED_INPUT_BYTES,
+    session::{Barrier, MAX_INTERLEAVED_INPUT_BYTES},
 };
 use std::io::Cursor;
 
@@ -139,6 +139,7 @@ fn partial_permission_uses_target_provenance_and_latest_focused_snapshot() {
     input.image = None;
     session.pending = Some(Pending {
         id: "request".into(),
+        method: Method::PaneFocus,
         bytes: vec![],
         started: Instant::now(),
     });
@@ -246,6 +247,32 @@ fn a_retained_popup_keeps_underlying_pane_input_fenced() {
         pixel_height: 0,
     }));
     assert!(!session.permits_partial_input(&input, &reader));
+}
+
+#[test]
+fn an_outstanding_pipelined_activation_blocks_partial_input_like_a_request() {
+    for refused in [false, true] {
+        let mut session = settled();
+        let reader = partial(ServerMessage::PaneSurface(next_surface()));
+        let input = command(pane_input(vec![key()]));
+        assert!(session.permits_partial_input(&input, &reader));
+        // Focus answered first; its activation is still unanswered or awaits resend.
+        session.barrier = Some(Barrier {
+            pending: Pending {
+                id: "activation".into(),
+                method: Method::ClientShellSurfaceSet,
+                bytes: Vec::new(),
+                started: Instant::now(),
+            },
+            request: Vec::new(),
+            held: None,
+            refused,
+        });
+        assert!(session.pending.is_none());
+        assert!(!session.permits_partial_input(&input, &reader));
+        session.barrier = None;
+        assert!(session.permits_partial_input(&input, &reader));
+    }
 }
 
 #[cfg(unix)]

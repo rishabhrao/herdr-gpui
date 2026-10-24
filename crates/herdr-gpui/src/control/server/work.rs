@@ -11,6 +11,8 @@ mod notes;
 #[cfg(test)]
 mod tests;
 
+pub(super) use flows::bring_forward;
+
 use super::{Watches, in_free_window, in_window, not_found, socket, target};
 use crate::{
     HerdrWindow,

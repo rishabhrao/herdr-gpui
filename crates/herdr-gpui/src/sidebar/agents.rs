@@ -154,6 +154,35 @@ pub(super) fn agent_names(agent: &ClientShellAgent) -> [Option<&str>; 4] {
     ]
 }
 
+/// The name an agent's row shows for its pane: the label set with Rename,
+/// otherwise the title an unnamed pane already carries. Both are untrusted
+/// daemon and terminal text, so the name is safe, bounded text, and none when
+/// it is blank or only repeats the agent's `name`.
+pub(super) fn pane_name(
+    agent: &ClientShellAgent,
+    snapshot: &ClientShellSnapshot,
+    name: &str,
+) -> Option<String> {
+    let renamed = snapshot
+        .panes
+        .iter()
+        .find(|pane| pane.pane_id == agent.pane_id)
+        .and_then(|pane| safe_caption(pane.label.as_deref()));
+    renamed
+        .or_else(|| safe_caption(agent.title.as_deref()))
+        .filter(|pane| pane != name.trim())
+}
+
+/// Pane names stay far longer than any row can show, so the bound only stops
+/// a runaway title from being scanned and laid out in full.
+pub(super) const PANE_CAPTION_LIMIT: usize = 160;
+
+fn safe_caption(text: Option<&str>) -> Option<String> {
+    let text = crate::notifications::safe_text(text?, PANE_CAPTION_LIMIT);
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
 /// Where an agent runs: its workspace, and its tab when that earns a place,
 /// which upstream decides by the workspace having several tabs or the user
 /// naming it. `None` once the agent's workspace has gone.
@@ -179,24 +208,31 @@ pub(super) fn agent_place<'a>(
     Some((workspace.label.as_str(), tab))
 }
 
-/// Upstream's default agent rows: host, workspace and tab on the first line,
-/// the agent itself on the second. A pane whose workspace has gone leaves the
-/// agent to name the row.
+/// Upstream's default agent rows: host, workspace, tab, and pane name on the
+/// first line, the agent itself on the second. A pane whose workspace has gone
+/// leaves the agent to name the row, with the pane name beside it.
 pub(super) fn agent_labels<'a>(
     name: &'a str,
     place: Option<(&'a str, Option<&'a str>)>,
     host: Option<&'a str>,
+    pane: Option<&'a str>,
 ) -> (Vec<(&'a str, bool)>, &'a str) {
     let Some((workspace, tab)) = place else {
-        return (vec![(name, true)], "");
+        let segments = [Some((name, true)), pane.map(|pane| (pane, false))];
+        return (segments.into_iter().flatten().collect(), "");
     };
     // Only the workspace carries the row's weight: upstream paints the host and
-    // tab around it in its secondary color.
-    let segments = [(host, false), (Some(workspace), true), (tab, false)]
-        .into_iter()
-        .filter_map(|(text, primary)| Some((text?, primary)))
-        .filter(|(text, _)| !text.is_empty())
-        .collect();
+    // tab around it in its secondary color. The pane name joins them there.
+    let segments = [
+        (host, false),
+        (Some(workspace), true),
+        (tab, false),
+        (pane, false),
+    ]
+    .into_iter()
+    .filter_map(|(text, primary)| Some((text?, primary)))
+    .filter(|(text, _)| !text.is_empty())
+    .collect();
     (segments, name)
 }
 

@@ -68,6 +68,7 @@ pub(crate) struct Browser {
     pub(super) failed: HashMap<TabId, SharedString>,
     /// Whether the VS Code server answers, asked before its pages open.
     pub(super) code_server: super::code::CodeServer,
+    pub(super) px0: super::px0::Pages,
     /// The workspaces of the last snapshot and the boot they came from: one
     /// missing from the next snapshot of the same boot was closed.
     workspaces: Option<(Scope, String, HashSet<String>)>,
@@ -121,6 +122,7 @@ impl Browser {
             group_motion: Default::default(),
             failed: HashMap::new(),
             code_server: Default::default(),
+            px0: Default::default(),
             workspaces: None,
             herdr_tabs: None,
             #[cfg(any(target_os = "macos", windows))]
@@ -318,7 +320,8 @@ impl HerdrWindow {
                     self.browser
                         .pages
                         .ids()
-                        .filter(|id| store.get(*id).is_none()),
+                        // A chat's panel page has no tab; its chat owns it.
+                        .filter(|id| store.get(*id).is_none() && !id.is_panel()),
                 )
                 .collect();
             if !gone.is_empty() {
@@ -331,6 +334,7 @@ impl HerdrWindow {
         self.settle_groups(window, cx);
         self.advance_close_run(window, cx);
         self.ensure_code_page(window, cx);
+        self.ensure_px0_page(window, cx);
         self.poll_deliveries(cx);
         self.poll_reveal(window, cx);
         self.poll_reviews(cx);

@@ -11,81 +11,102 @@ workspace = true
 
 [dependencies]
 url.workspace = true
-aes.workspace                  = true
 ammonia.workspace              = true
 anyhow.workspace               = true
-cbc.workspace                  = true
-base64                         = { optional = true, workspace = true }
+base64.workspace               = true
 chrono.workspace               = true
 config_loader.workspace        = true
-ed25519-dalek.workspace        = true
 flate2.workspace               = true
 getrandom.workspace            = true
 gpui.workspace                 = true
 # Unlike gpui 0.2.2, the platform crate enables nothing by default: without
 # font-kit (macOS) or a Linux backend, text silently goes to a no-op system.
 gpui_platform                  = { features = ["font-kit", "runtime_shaders", "wayland", "x11"], workspace = true }
+gix.workspace                  = true
+# Only the reports `herdr-automate --json` prints: the workspace entry turns
+# default features off, so no Luau is built here.
+herdr-automation.workspace     = true
+herdr-chat-protocol.workspace  = true
 herdr-client.workspace         = true
+herdr-commands.workspace       = true
+herdr-control-protocol.workspace = true
+herdr-credentials.workspace    = true
+herdr-diagnostics.workspace    = true
+herdr-github.workspace         = true
+herdr-orchestrator.workspace   = true
+herdr-remote.workspace         = true
+herdr-updater.workspace        = true
+herdr-usage.workspace          = true
+herdr-vcs.workspace            = true
 herdr-web.workspace            = true
 if-addrs.workspace             = true
 image                          = { features = ["bmp", "tiff"], workspace = true }
 keepawake.workspace            = true
 mdns-sd.workspace              = true
+mermaid-rs-renderer.workspace  = true
 nucleo-matcher.workspace       = true
-pbkdf2.workspace               = true
 percent-encoding.workspace     = true
 pulldown-cmark.workspace       = true
 rodio.workspace                = true
-rusqlite.workspace             = true
-rustls                         = { optional = true, workspace = true }
 secrecy.workspace              = true
 serde.workspace                = true
 serde_ignored.workspace        = true
 serde_json.workspace           = true
-sha1.workspace                 = true
 sha2.workspace                 = true
 skrifa.workspace               = true
 sysinfo.workspace              = true
 syntect.workspace              = true
-tar.workspace                  = true
 tempfile.workspace             = true
 thiserror.workspace            = true
 toml.workspace                 = true
 toml_edit.workspace            = true
 tracing.workspace              = true
 tracing-subscriber.workspace   = true
-tungstenite                    = { optional = true, workspace = true }
 unicode-properties.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace        = true
 ureq.workspace                 = true
 uuid.workspace                 = true
-webpki-roots                   = { optional = true, workspace = true }
-zeroize.workspace              = true
 
 [build-dependencies]
 winresource.workspace = true
 
 [dev-dependencies]
 gpui = { features = ["test-support"], workspace = true }
+herdr-client = { features = ["test-support"], workspace = true }
+herdr-commands = { features = ["test-support"], workspace = true }
+herdr-remote = { features = ["test-support"], workspace = true }
+herdr-control-protocol = { features = ["test-support"], workspace = true }
+herdr-diagnostics = { features = ["test-support"], workspace = true }
+herdr-github = { features = ["test-support"], workspace = true }
+herdr-orchestrator = { features = ["test-support"], workspace = true }
+herdr-usage = { features = ["test-support"], workspace = true }
+herdr-vcs = { features = ["test-support"], workspace = true }
+socket2.workspace = true
 test-case.workspace = true
 
 [features]
-default = ["azure", "boat", "coder", "daytona", "railway"]
+default = ["azure", "boat", "coder", "container", "daytona", "opensandbox", "railway", "sprites"]
 # Machines from cloud providers as devices: the shared device list, background
 # jobs, and connector. Turned on by each provider below; not useful alone.
-cloud = ["herdr-client/cloud"]
+cloud = ["herdr-client/cloud", "herdr-remote/cloud", "herdr-usage/cloud", "herdr-vcs/cloud"]
 # Azure VMs and Container Apps sandboxes as devices, with generic credentials
 # or local Azure CLI. Sandboxes are reached over the data plane's exec stream.
-azure = ["cloud", "herdr-client/azure", "dep:base64", "dep:rustls", "dep:tungstenite", "dep:webpki-roots"]
+azure = ["cloud", "herdr-client/azure", "herdr-remote/azure", "herdr-usage/azure", "herdr-vcs/azure"]
 # Boat sandboxes as devices, with an API key and per-machine SSH key setup.
-boat = ["cloud", "herdr-client/boat"]
+boat = ["cloud", "herdr-client/boat", "herdr-remote/boat"]
 # Coder workspaces as devices, with OAuth2 sign-in.
-coder = ["cloud", "herdr-client/coder", "dep:base64"]
+coder = ["cloud", "herdr-client/coder", "herdr-remote/coder"]
+# Containers on this computer's Docker or Podman engine as devices.
+container = ["cloud", "herdr-client/container", "herdr-remote/container"]
 # Daytona sandboxes as devices, with an API key and its SSH gateway.
-daytona = ["cloud", "herdr-client/daytona"]
+daytona = ["cloud", "herdr-client/daytona", "herdr-remote/daytona"]
 # Railway free VMs as devices, reached over SSH with a saved key identity.
-railway = ["cloud", "herdr-client/railway"]
+# Sandboxes on a self-hosted OpenSandbox server as devices, through this app as their exec relay.
+opensandbox = ["cloud", "herdr-client/opensandbox", "herdr-remote/opensandbox"]
+railway = ["cloud", "herdr-client/railway", "herdr-remote/railway"]
+# Fly Sprites as devices, with an API token and this app as their exec relay.
+sprites = ["cloud", "herdr-client/sprites", "herdr-remote/sprites"]
 qa-menu = []
 # Development only: `--mockup` shows UI variants from HERDR_MOCKUP_FILE side by
 # side in a native window. Never enabled in release builds. GPUI's test support
@@ -93,6 +114,7 @@ qa-menu = []
 # permission.
 mockup = ["gpui_platform/test-support"]
 integration-test = [
+  "herdr-github/test-support",
   "objc2-app-kit/NSPasteboardItem",
   "dep:cocoa",
   "dep:core-graphics",
@@ -109,22 +131,16 @@ rustix.workspace = true
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 wry.workspace = true
 
-# The control pipe: `interprocess` creates it with a DACL, and `windows-sys`
-# reads the user and the pipe owner it is checked against. `windows-sys` also
-# sets the window attributes and reads the system settings GPUI leaves to the
-# app, keeps saved sign-ins in Credential Manager (`github::credential_manager`),
-# and opens avatar cache entries without following reparse points. It also
-# checks an update installer's Authenticode signature (`updater::windows`),
-# registers with Restart Manager (`restart_manager`), writes crash minidumps
-# (`crash::windows`), and sends the
+# `windows-sys` sets the window attributes and reads the
+# system settings GPUI leaves to the app, and opens avatar cache entries without following reparse points. It also
+# registers with Restart Manager (`restart_manager`), and sends the
 # performance fixture its window messages.
 # `clipboard-win` reads the clipboard on a background thread (see
 # `window/clipboard`). `windows` has the shell's COM and WinRT interfaces (the
 # taskbar, the jump list, and toasts); `windows-registry` reads the link
-# handler.
+# handler and the startup entry, failing with `windows-result` errors.
 [target.'cfg(windows)'.dependencies]
 clipboard-win.workspace     = true
-interprocess.workspace      = true
 raw-window-handle.workspace = true
 windows = { features = [
   "Data_Xml_Dom",
@@ -134,25 +150,16 @@ windows = { features = [
   "Win32_UI_WindowsAndMessaging",
 ], workspace = true }
 windows-registry.workspace = true
+windows-result.workspace   = true
 windows-sys = { features = [
   "Wdk_System_SystemServices",
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
-  "Win32_Security_Authorization",
-  "Win32_Security_Credentials",
-  "Win32_Security_Cryptography",
-  "Win32_Security_Cryptography_Catalog",
-  "Win32_Security_Cryptography_Sip",
-  "Win32_Security_WinTrust",
   "Win32_Storage_FileSystem",
   "Win32_System_Console",
-  "Win32_System_Diagnostics_Debug",
-  "Win32_System_Kernel",
-  "Win32_System_Memory",
   "Win32_System_Recovery",
   "Win32_System_Registry",
   "Win32_System_SystemInformation",
-  "Win32_System_Threading",
   "Win32_UI_Accessibility",
   "Win32_UI_WindowsAndMessaging",
 ], workspace = true }
@@ -179,7 +186,6 @@ objc2.workspace              = true
 objc2-app-kit.workspace      = true
 objc2-foundation.workspace   = true
 raw-window-handle            = { optional = true, workspace = true }
-security-framework.workspace = true
 
 [[test]]
 name              = "live_gui"

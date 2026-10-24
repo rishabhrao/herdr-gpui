@@ -5,6 +5,10 @@
 
 mod checkpoints;
 mod chrome;
+#[cfg(feature = "cloud")]
+mod cloud_create;
+#[cfg(feature = "cloud")]
+mod cloud_destroy;
 mod colors;
 mod devices;
 mod fan_out;
@@ -63,6 +67,18 @@ pub(crate) use devices::{SettingsHint, enter as enter_key};
 use page::WorkspaceMenuAction;
 use state::Submission;
 use workspace::WorkspaceTarget;
+
+/// A build without cloud providers never asks to create or destroy one.
+#[cfg(not(feature = "cloud"))]
+impl crate::HerdrWindow {
+    fn cloud_batch_open(&self) -> bool {
+        false
+    }
+
+    fn cloud_batch_page(&self, _: &mut gpui::Context<Self>) -> Option<gpui::Div> {
+        None
+    }
+}
 
 /// Shared trailing action geometry for pickers and workspace context menus.
 fn action_icon(

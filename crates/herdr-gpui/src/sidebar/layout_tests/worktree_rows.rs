@@ -40,7 +40,7 @@ fn worktree_rows_wear_their_cached_pull_request(cx: &mut gpui::TestAppContext) {
                 value.state = crate::pull_request::State::from(state.to_owned());
                 value.additions = additions;
                 value.deletions = deletions;
-                view.menu.pr_cache.seed(
+                view.seed_pr(
                     crate::pull_request::Input {
                         checkout: None,
                         repo_key: Some(key.into()),
@@ -63,7 +63,8 @@ fn worktree_rows_wear_their_cached_pull_request(cx: &mut gpui::TestAppContext) {
     let name = cx.debug_bounds("name-sidebar-child").unwrap();
     // The badge takes its column from the label, inside the row.
     assert!(badge.right() <= row.right());
-    assert!(name.right() <= badge.left());
+    // The name yields the badge's first line; the counts sit under it.
+    assert!(name.right() <= cx.debug_bounds("badge-line-sidebar-child").unwrap().left());
     assert!(name.size.width < bare.size.width);
     // The tree gutter sits under the parent's label and stops at the child's
     // own dot: lines never reach the text on either side.
@@ -115,7 +116,7 @@ fn worktree_rows_mark_uncommitted_work(cx: &mut gpui::TestAppContext) {
             };
             // A checkout with a pull request and uncommitted work, and one that
             // only has uncommitted work.
-            view.menu.pr_cache.seed(
+            view.seed_pr(
                 input("worktree/sidebar-child"),
                 crate::pull_request::fixture().unwrap(),
                 now,
@@ -144,7 +145,7 @@ fn worktree_rows_mark_uncommitted_work(cx: &mut gpui::TestAppContext) {
     // The mark leads the badge column, still flush against the row's edge.
     assert!(badge.left() <= dot.left() && dot.right() <= badge.right());
     assert_eq!(badge.right(), row.right() - px(12.));
-    assert!(cx.debug_bounds("name-sidebar-child").unwrap().right() <= badge.left());
+    assert!(cx.debug_bounds("name-sidebar-child").unwrap().right() <= dot.left());
     assert!(clean_label.size.width > cx.debug_bounds("name-sidebar-child").unwrap().size.width);
     // A dirty checkout without a pull request still earns the column.
     let head = cx.debug_bounds("pr-agent-launcher").unwrap();

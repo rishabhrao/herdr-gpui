@@ -62,6 +62,9 @@ impl HerdrWindow {
     pub(crate) fn update_git(&mut self) -> bool {
         let now = std::time::Instant::now();
         let mut changed = self.git.track(self.git_input(), self.active, now);
+        self.git.set_counted(
+            self.config.sidebar_style.change_counts == crate::config::ChangeCounts::Local,
+        );
         self.git
             .track_listed(self.listed_git_inputs(), self.active, now);
         changed |= self.git.poll(now);
@@ -98,7 +101,10 @@ impl HerdrWindow {
     }
 
     /// The checkout the chrome acts on: the focused workspace's, when it is one
-    /// this client may run Git in.
+    /// this client may run Git in. The daemon only attaches worktree metadata
+    /// to a worktree made through Herdr, so a space merely opened in a
+    /// repository is named by its directory, which the worker resolves and
+    /// verifies as the pull request lookup does; see `workspace_input`.
     pub(crate) fn git_input(&self) -> Option<crate::pull_request::Input> {
         if !self.local_git_endpoint() {
             return None;
@@ -116,11 +122,7 @@ impl HerdrWindow {
                     .iter()
                     .find(|workspace| workspace.focused)
             })?;
-        crate::pull_request::repository_input(
-            workspace.worktree.as_ref(),
-            workspace.branch.as_deref(),
-        )
-        .ok()
+        crate::pull_request::workspace_input(workspace, &crate::pull_request::Origin::Local).ok()
     }
 
     pub(crate) fn open_git_menu(
@@ -155,15 +157,17 @@ impl HerdrWindow {
     pub(crate) fn git_pull_request(
         &self,
     ) -> Option<std::cell::Ref<'_, crate::pull_request::PullRequest>> {
+        // The Git probe only tracks this machine's checkouts, read with its
+        // main account.
         let input = self.git.tracked()?;
+        let view = crate::pull_request::View {
+            origin: crate::pull_request::Origin::Local,
+            login: self.main_tokens()?.key(),
+        };
         self.menu
             .github
             .connected()
-            .then(|| {
-                self.menu
-                    .pr_cache
-                    .peek(input.repo_key.as_deref()?, &input.branch)
-            })
+            .then(|| self.menu.pr_cache.peek_input(&view, input))
             .flatten()
     }
 
@@ -401,7 +405,7 @@ impl HerdrWindow {
                     .gap(px(8.))
                     .child(
                         div()
-                            .text_color(rgb(pr.color(theme)))
+                            .text_color(rgb(crate::pull_request::color(&pr, theme)))
                             .child(format!("#{}", pr.number)),
                     )
                     .child(
@@ -410,7 +414,7 @@ impl HerdrWindow {
                             .py(px(2.))
                             .rounded(px(crate::config::corners::CONTROL))
                             .bg(rgb(theme.active))
-                            .text_color(rgb(pr.color(theme)))
+                            .text_color(rgb(crate::pull_request::color(&pr, theme)))
                             .child(pr.lifecycle()),
                     )
                     .child(div().flex_1())

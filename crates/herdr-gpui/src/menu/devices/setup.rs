@@ -78,6 +78,12 @@ impl Claim {
             releases: false,
         })
     }
+
+    /// The user `ssh` logs in as, which the local configuration supplies when
+    /// the target names none.
+    pub(super) fn user(&self) -> &str {
+        &self.destination.user
+    }
 }
 
 impl Drop for Claim {
@@ -407,14 +413,77 @@ pub(super) struct TerminalSetup {
 /// compatible Herdr: the CLI starts a stopped server itself. Blocks on SSH, so
 /// call it from the background executor. Stdin is closed, so any approval the
 /// CLI would need fails instead of waiting for input nobody can see.
-pub(super) fn save(request: &Request, claim: &Claim) -> Result<()> {
-    save_with(
+pub(super) fn save(request: &Request, claim: &Claim) -> Result<SaveOutcome> {
+    let result = save_with(
         crate::daemon::executable(),
         request,
         claim,
         load_catalog,
         resolve,
+    );
+    finish_save(
+        result,
+        || request.probe(),
+        || {
+            verify_unsaved(request, claim)?;
+            let host = SavedHost {
+                id: uuid::Uuid::new_v4().simple().to_string(),
+                label: request.label.clone(),
+                target: request.target.clone(),
+                session: request.session.clone(),
+                enabled: true,
+            };
+            let saved = herdr_client::store_saved_host(false, &host)?;
+            if saved.id != host.id {
+                return Err(Error::DeviceExists(saved.label));
+            }
+            Ok(())
+        },
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SaveOutcome {
+    // keep-sorted start
+    ExistingServer,
+    Ready,
+    // keep-sorted end
+}
+
+impl SaveOutcome {
+    pub(super) fn warning(self) -> Option<&'static str> {
+        match self {
+            Self::Ready => None,
+            Self::ExistingServer => Some(
+                "Device added with the existing Herdr server. Version or startup differences may affect recovery after SSH disconnects.",
+            ),
+        }
+    }
+}
+
+fn finish_save(
+    result: Result<()>,
+    probe: impl FnOnce() -> Result<HostProbe>,
+    store: impl FnOnce() -> Result<()>,
+) -> Result<SaveOutcome> {
+    match result {
+        Ok(()) => Ok(SaveOutcome::Ready),
+        Err(Error::DeviceServerRestart) => {
+            // The CLI's provisioning requirements are stricter than this
+            // client's endpoint protocol. Recheck after its failed attempt:
+            // only a still-running, compatible host can use the local save.
+            if probe()? != HostProbe::Running {
+                return Err(Error::DeviceServerRestart);
+            }
+            store()?;
+            tracing::warn!(
+                category = "device_setup",
+                "Device saved with its existing remote server"
+            );
+            Ok(SaveOutcome::ExistingServer)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// The catalog is checked right before `machine add` and again after it. A

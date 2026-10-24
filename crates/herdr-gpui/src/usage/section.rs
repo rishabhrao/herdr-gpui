@@ -90,7 +90,7 @@ impl HerdrWindow {
             if !self.config.usage.show {
                 break;
             }
-            body = body.child(self.usage_host(index, &endpoint.label, &host, &ui, cx));
+            body = body.child(self.usage_host(index, &endpoint.label, &host, &ui));
         }
         div()
             .id("usage-section")
@@ -116,14 +116,7 @@ impl HerdrWindow {
             .into_any_element()
     }
 
-    fn usage_host(
-        &self,
-        index: usize,
-        label: &str,
-        host: &Host,
-        ui: &Ui,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn usage_host(&self, index: usize, label: &str, host: &Host, ui: &Ui) -> Div {
         let theme = &self.theme;
         let small = ui.small();
         let selected = index == self.selected_endpoint;
@@ -201,7 +194,7 @@ impl HerdrWindow {
                 );
             }
             if let Some(report) = reading.report.as_ref() {
-                card = card.child(service.render(report, ui, cx));
+                card = card.child(super::details::render(report, ui));
             }
             cards = cards.child(card);
         }

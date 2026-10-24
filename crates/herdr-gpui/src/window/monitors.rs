@@ -109,7 +109,7 @@ impl HerdrWindow {
             let (true, true, Some(host), Some(snapshot)) = (
                 enabled,
                 endpoint.enabled && live.status.is_connected(),
-                crate::checkpoint::host_for(&endpoint.connection.target, live),
+                crate::checkpoint::host_for(&endpoint.connection.target, live.local_daemon_peer),
                 live.latest_snapshot(),
             ) else {
                 continue;

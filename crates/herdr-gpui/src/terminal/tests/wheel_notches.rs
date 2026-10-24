@@ -4,6 +4,7 @@ fn hit(target: InputTarget) -> WheelTarget {
     WheelTarget {
         target,
         mouse_reporting: false,
+        stepwise: false,
         bounds: Bounds::default(),
         position: ClientMousePosition::Cell { column: 2, row: 3 },
         geometry: None,

@@ -381,8 +381,8 @@ pub(crate) struct Note {
     pub image: Option<Arc<gpui::Image>>,
     /// The screenshot still on its way for this note.
     pub capture: Option<u64>,
-    /// Whether the note went to the agent and was not edited since.
-    pub sent: bool,
+    /// The send that delivered the note, unless it was edited since.
+    pub sent: Option<crate::agent_notes::SendId>,
 }
 
 impl Note {
@@ -393,7 +393,7 @@ impl Note {
             comment: String::new(),
             image: None,
             capture: None,
-            sent: false,
+            sent: None,
         }
     }
 
@@ -404,7 +404,7 @@ impl Note {
             comment,
             image: None,
             capture: None,
-            sent: false,
+            sent: None,
         })
     }
 }

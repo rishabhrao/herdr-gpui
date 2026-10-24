@@ -196,7 +196,7 @@ fn removal_waits_for_a_running_setup(cx: &mut TestAppContext) {
                         while !stop() {
                             std::thread::sleep(std::time::Duration::from_millis(5));
                         }
-                        Err(crate::cloud::Error::Cancelled.into())
+                        Err(crate::Error::from(crate::cloud::Error::Cancelled))
                     },
                     cx,
                 )

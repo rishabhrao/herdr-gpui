@@ -66,8 +66,13 @@ fn result<'a>(response: &'a Value, kind: &str) -> Result<&'a Value, ResponseErro
     Ok(result)
 }
 
-fn parse_list(response: &Value) -> Result<Vec<Integration>, ResponseError> {
-    let rows = result(response, "integration_list")?["integrations"]
+fn parse_list(response: &Value, method: Method) -> Result<Vec<Integration>, ResponseError> {
+    let kind = match method {
+        Method::IntegrationList => "integration_list",
+        Method::IntegrationListV2 => "integration_list_v2",
+        _ => return Err(ResponseError::Invalid),
+    };
+    let rows = result(response, kind)?["integrations"]
         .as_array()
         .ok_or(ResponseError::Invalid)?;
     if rows.len() > MAX_ROWS {
@@ -76,8 +81,11 @@ fn parse_list(response: &Value) -> Result<Vec<Integration>, ResponseError> {
     let mut integrations = Vec::<Integration>::with_capacity(rows.len());
     for row in rows {
         let target = text(&row["target"], 64)?;
-        if !target.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-            || integrations.iter().any(|item| item.target == target)
+        if !target.bytes().all(|b| {
+            b.is_ascii_lowercase()
+                || b == b'_'
+                || (method == Method::IntegrationListV2 && b == b'-')
+        }) || integrations.iter().any(|item| item.target == target)
         {
             return Err(ResponseError::Invalid);
         }
@@ -98,8 +106,17 @@ fn parse_list(response: &Value) -> Result<Vec<Integration>, ResponseError> {
     Ok(integrations)
 }
 
-fn parse_install(response: &Value, target: &str) -> Result<Vec<String>, ResponseError> {
-    let result = result(response, "integration_install")?;
+fn parse_install(
+    response: &Value,
+    target: &str,
+    method: Method,
+) -> Result<Vec<String>, ResponseError> {
+    let kind = match method {
+        Method::IntegrationInstall => "integration_install",
+        Method::IntegrationInstallV2 => "integration_install_v2",
+        _ => return Err(ResponseError::Invalid),
+    };
+    let result = result(response, kind)?;
     if text(&result["target"], 64)? != target {
         return Err(ResponseError::Invalid);
     }
@@ -138,8 +155,8 @@ pub(crate) struct Integrations {
 
 #[derive(Clone)]
 enum Operation {
-    List,
-    Install(String),
+    List(Method),
+    Install { target: String, method: Method },
 }
 
 impl Integrations {
@@ -226,17 +243,23 @@ impl HerdrWindow {
                 boot: snapshot.boot_id.clone(),
                 inbox: endpoint.connection.integrations.clone(),
             };
+            let method = scope
+                .inbox
+                .try_lock()
+                .map_err(|_| crate::Error::ConnectionBusy)?
+                .list
+                .ok_or(herdr_client::Error::UnsupportedMethod)?;
             let id = endpoint.connection.request_integration(
                 &scope.boot,
-                Method::IntegrationList,
+                method,
                 serde_json::json!({}),
             )?;
-            Ok::<_, crate::Error>((scope, id))
+            Ok::<_, crate::Error>((scope, id, method))
         })();
         match request {
-            Ok((scope, id)) => {
+            Ok((scope, id, method)) => {
                 self.integrations.scope = Some(scope);
-                self.integrations.pending = Some((id, Operation::List));
+                self.integrations.pending = Some((id, Operation::List(method)));
                 self.integrations.busy = true;
             }
             Err(error) => self.integrations.error = Some(error.to_string()),
@@ -266,15 +289,28 @@ impl HerdrWindow {
         }
         self.integrations.error = None;
         self.integrations.messages.clear();
+        let method = match scope.inbox.try_lock() {
+            Ok(inbox) => inbox.install,
+            Err(_) => {
+                self.integrations.error = Some(crate::Error::ConnectionBusy.to_string());
+                cx.notify();
+                return;
+            }
+        };
+        let Some(method) = method else {
+            self.integrations.error = Some(herdr_client::Error::UnsupportedMethod.to_string());
+            cx.notify();
+            return;
+        };
         match self.endpoints[self.selected_endpoint]
             .connection
             .request_integration(
                 &scope.boot,
-                Method::IntegrationInstall,
-                serde_json::json!({"target": target}),
+                method,
+                serde_json::json!({"target": target.clone()}),
             ) {
             Ok(id) => {
-                self.integrations.pending = Some((id, Operation::Install(target)));
+                self.integrations.pending = Some((id, Operation::Install { target, method }));
                 self.integrations.busy = true;
             }
             Err(error) => self.integrations.error = Some(error.to_string()),
@@ -309,17 +345,19 @@ impl HerdrWindow {
         match response {
             Err(error) => self.integrations.error = Some(error.to_string()),
             Ok(response) => match operation {
-                Operation::List => match parse_list(&response) {
+                Operation::List(method) => match parse_list(&response, method) {
                     Ok(rows) => self.integrations.rows = rows,
                     Err(error) => self.integrations.error = Some(error.to_string()),
                 },
-                Operation::Install(target) => match parse_install(&response, &target) {
-                    Ok(messages) => {
-                        self.load_integrations(cx);
-                        self.integrations.messages = messages;
+                Operation::Install { target, method } => {
+                    match parse_install(&response, &target, method) {
+                        Ok(messages) => {
+                            self.load_integrations(cx);
+                            self.integrations.messages = messages;
+                        }
+                        Err(error) => self.integrations.error = Some(error.to_string()),
                     }
-                    Err(error) => self.integrations.error = Some(error.to_string()),
-                },
+                }
             },
         }
         cx.notify();
@@ -342,7 +380,12 @@ impl HerdrWindow {
             })
             .unwrap_or("No selected host");
         let can_install = !state.busy
-            && current.is_some_and(|scope| scope.inbox.try_lock().is_ok_and(|inbox| inbox.install));
+            && current.is_some_and(|scope| {
+                scope
+                    .inbox
+                    .try_lock()
+                    .is_ok_and(|inbox| inbox.install.is_some())
+            });
         let epoch = self.selection_epoch;
         let mut body = div().id("integrations-body").min_h_0().overflow_y_scroll()
             .track_scroll(&state.scroll).p(px(16.))
@@ -471,7 +514,7 @@ mod tests {
             {"target":"beta","label":"Beta","command":"b","available":true,"state":"current"},
             {"target":"alpha","label":"ALPHA","command":"a","available":true,"state":"current"}
         ]}});
-        let rows = parse_list(&response).unwrap();
+        let rows = parse_list(&response, Method::IntegrationList).unwrap();
         assert_eq!(
             rows.iter()
                 .map(|row| row.target.as_str())
@@ -499,7 +542,7 @@ mod tests {
             ("not_installed", State::NotInstalled),
         ] {
             response["result"]["integrations"][0]["state"] = json!(wire);
-            let rows = parse_list(&response).unwrap();
+            let rows = parse_list(&response, Method::IntegrationList).unwrap();
             assert_eq!(rows[0].state, state);
             assert_eq!(rows[0].target, "antigravity_cli");
         }
@@ -516,30 +559,45 @@ mod tests {
         ] {
             let mut response = list();
             response["result"]["integrations"][0][field] = value;
-            assert!(parse_list(&response).is_err());
+            assert!(parse_list(&response, Method::IntegrationList).is_err());
         }
         let mut response = list();
         let row = response["result"]["integrations"][0].clone();
         response["result"]["integrations"] = json!([row.clone(), row.clone()]);
-        assert!(matches!(parse_list(&response), Err(ResponseError::Invalid)));
+        assert!(matches!(
+            parse_list(&response, Method::IntegrationList),
+            Err(ResponseError::Invalid)
+        ));
         response["result"]["integrations"] = json!(vec![row; MAX_ROWS + 1]);
-        assert!(matches!(parse_list(&response), Err(ResponseError::Limit)));
-        assert!(parse_list(&json!({"result": {"integrations": []}})).is_err());
+        assert!(matches!(
+            parse_list(&response, Method::IntegrationList),
+            Err(ResponseError::Limit)
+        ));
+        assert!(
+            parse_list(
+                &json!({"result": {"integrations": []}}),
+                Method::IntegrationList
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn install_requires_matching_target_and_bounded_messages() {
         let mut response = json!({"result":{"type":"integration_install","target":"claude","details":{"messages":["Installed"]}}});
-        assert_eq!(parse_install(&response, "claude").unwrap(), ["Installed"]);
-        assert!(parse_install(&response, "codex").is_err());
+        assert_eq!(
+            parse_install(&response, "claude", Method::IntegrationInstall).unwrap(),
+            ["Installed"]
+        );
+        assert!(parse_install(&response, "codex", Method::IntegrationInstall).is_err());
         response["result"]["details"]["messages"] = json!(vec!["x"; MAX_MESSAGES + 1]);
         assert!(matches!(
-            parse_install(&response, "claude"),
+            parse_install(&response, "claude", Method::IntegrationInstall),
             Err(ResponseError::Limit)
         ));
         response["result"]["details"]["messages"] = json!(["x".repeat(MAX_TEXT + 1)]);
         assert!(matches!(
-            parse_install(&response, "claude"),
+            parse_install(&response, "claude", Method::IntegrationInstall),
             Err(ResponseError::Limit)
         ));
     }
@@ -549,10 +607,59 @@ mod tests {
         let response =
             json!({"error":{"code":"integration_install_failed","message":"Permission denied"}});
         assert!(matches!(
-            parse_list(&response),
+            parse_list(&response, Method::IntegrationList),
             Err(ResponseError::Daemon { .. })
         ));
         let response = json!({"error":{"code":"failure","message":"x".repeat(MAX_TEXT + 1)}});
-        assert!(matches!(parse_list(&response), Err(ResponseError::Limit)));
+        assert!(matches!(
+            parse_list(&response, Method::IntegrationList),
+            Err(ResponseError::Limit)
+        ));
+    }
+
+    #[test]
+    fn v2_list_parses_omo_target_and_searches_by_label_or_target() {
+        let response = json!({"result":{"type":"integration_list_v2","integrations":[{
+            "target":"omo","label":"Omo Coding Agent","command":"omo","available":true,"state":"not_installed"
+        }]}});
+        let rows = parse_list(&response, Method::IntegrationListV2).unwrap();
+        assert_eq!(rows[0].target, "omo");
+        assert!(rows[0].matches("omo"));
+        assert!(rows[0].matches("coding"));
+        assert!(!rows[0].matches("claude"));
+    }
+
+    #[test]
+    fn v2_accepts_legacy_cli_target_spelling_without_widening_v1() {
+        let mut response = json!({"result":{"type":"integration_list_v2","integrations":[{
+            "target":"antigravity-cli","label":"Antigravity","command":"agy","available":true,"state":"current"
+        }]}});
+        let rows = parse_list(&response, Method::IntegrationListV2).unwrap();
+        assert_eq!(rows[0].target, "antigravity-cli");
+        response["result"]["type"] = json!("integration_list");
+        assert!(parse_list(&response, Method::IntegrationList).is_err());
+    }
+
+    #[test]
+    fn v2_omo_target_survives_explicit_install_and_reloaded_list() {
+        let response = json!({"result":{"type":"integration_install_v2","target":"omo",
+            "details":{"messages":["Installed"]}}});
+        let operation = Operation::Install {
+            target: "omo".into(),
+            method: Method::IntegrationInstallV2,
+        };
+        let Operation::Install { target, method } = operation else {
+            unreachable!()
+        };
+        assert_eq!(
+            parse_install(&response, &target, method).unwrap(),
+            ["Installed"]
+        );
+        assert_eq!(target, "omo");
+        let reloaded = json!({"result":{"type":"integration_list_v2","integrations":[{
+            "target":"omo","label":"Omo","command":"omo","available":true,"state":"current"
+        }]}});
+        let rows = parse_list(&reloaded, Method::IntegrationListV2).unwrap();
+        assert_eq!(rows[0].target, target);
     }
 }

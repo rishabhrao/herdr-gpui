@@ -49,8 +49,8 @@ open a normal issue for those rather than a private advisory.
 
 ## Verifying a Release
 
-Each of the twenty-three base artifacts (universal DMG; experimental x86_64 and ARM64
-manual Linux archives with their `.deb`, `.rpm` and Arch packages; experimental
+Each of the twenty-three base artifacts (universal DMG; x86_64 and ARM64
+manual Linux archives with their `.deb`, `.rpm` and Arch packages;
 x86_64 and ARM64 Windows zips and installers; CycloneDX SBOM; three updater archives;
 updater manifest JSON and its raw Ed25519 signature; Linux package manifest JSON and
 its raw Ed25519 signature; Windows installer manifest JSON and its raw Ed25519

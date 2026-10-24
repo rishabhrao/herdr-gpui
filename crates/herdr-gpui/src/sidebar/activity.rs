@@ -3,9 +3,13 @@
 //! it was; every other section takes the window's body, keeping the bar,
 //! title bar, and status bar: Overview what needs the user on every host
 //! (`crate::overview`), Orchestrator, Pull requests, and Issues the focused
-//! workspace's orchestrator on that list (see `orchestrator::section`), and
-//! Usage the plan limits of every host (`crate::usage::section`).
-//! `[sidebar] activity_bar = false` turns the bar off. With the bar on, the
+//! workspace's orchestrator on that list (see `orchestrator::section`),
+//! Security the Dependabot alerts of every repository (`crate::security`),
+//! listed only once GitHub reports them on for one, Automations the
+//! `herdr-automate` scripts and runs of every host (`crate::automations`),
+//! and Usage the plan limits of every host (`crate::usage::section`).
+//! `[sidebar] activity_bar = false` turns the bar off, and `[sidebar]
+//! automations = false` leaves Automations off it. With the bar on, the
 //! sidebar toggle sits at the end of the Workspaces title, and collapsing the
 //! sidebar keeps the bar, with the compact rail and the toggle beside it.
 
@@ -15,9 +19,10 @@ use crate::{
     Command, HerdrWindow,
     orchestrator::{List, OrchestratorView, ViewId},
 };
+use chrono::{DateTime, Utc};
 use gpui::{prelude::*, *};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+pub use herdr_control_protocol::ActivityPanel;
+use std::{collections::HashMap, sync::Arc};
 
 mod counts;
 
@@ -30,6 +35,9 @@ const BUTTON: f32 = 32.;
 /// A drawer tab on a phone: a thumb's target, not a pointer's.
 const DRAWER_TAB: f32 = 44.;
 const ICON: f32 = 17.;
+/// The count bubble's right edge past the icon's: to 2.5px short of the
+/// bar's edge, inside its 1px border, whatever the count's width.
+const BUBBLE_END: f32 = -((BAR_WIDTH - ICON) / 2. - 2.5);
 const TITLE_HEIGHT: f32 = 32.;
 /// Room after the toggle at the title's end, so its glyph lines up with the
 /// rows' trailing badges below.
@@ -37,61 +45,27 @@ const TITLE_END: f32 = 4.;
 /// One breath of a busy icon's pulse.
 const BUSY_PULSE: std::time::Duration = std::time::Duration::from_millis(1600);
 
-/// What the window shows, picked on the bar. The bar lists them in
-/// declaration order, so this order is what users see.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ActivityPanel {
-    #[default]
-    Workspaces,
-    Overview,
-    PullRequests,
-    Issues,
-    Usage,
+fn label(panel: ActivityPanel) -> &'static str {
+    match panel {
+        ActivityPanel::Overview => "Overview",
+        ActivityPanel::Workspaces => "Workspaces",
+        ActivityPanel::PullRequests => "Pull requests",
+        ActivityPanel::Issues => "Issues",
+        ActivityPanel::Security => "Security",
+        ActivityPanel::Automations => "Automations",
+        ActivityPanel::Usage => "Usage",
+    }
 }
 
-impl ActivityPanel {
-    pub(crate) const ALL: &[Self] = &[
-        Self::Workspaces,
-        Self::Overview,
-        Self::PullRequests,
-        Self::Issues,
-        Self::Usage,
-    ];
-
-    /// The name the CLI and the preferences file use.
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Overview => "overview",
-            Self::Workspaces => "workspaces",
-            Self::PullRequests => "pull-requests",
-            Self::Issues => "issues",
-            Self::Usage => "usage",
-        }
-    }
-
-    pub(crate) fn parse(name: &str) -> Option<Self> {
-        Self::ALL.iter().copied().find(|panel| panel.name() == name)
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Overview => "Overview",
-            Self::Workspaces => "Workspaces",
-            Self::PullRequests => "Pull requests",
-            Self::Issues => "Issues",
-            Self::Usage => "Usage",
-        }
-    }
-
-    fn icon(self) -> &'static str {
-        match self {
-            Self::Overview => "icons/pulse.svg",
-            Self::Workspaces => "icons/terminal.svg",
-            Self::PullRequests => "icons/pull-request.svg",
-            Self::Issues => "icons/issue.svg",
-            Self::Usage => "icons/chart.svg",
-        }
+fn icon(panel: ActivityPanel) -> &'static str {
+    match panel {
+        ActivityPanel::Overview => "icons/pulse.svg",
+        ActivityPanel::Workspaces => "icons/terminal.svg",
+        ActivityPanel::PullRequests => "icons/pull-request.svg",
+        ActivityPanel::Issues => "icons/issue.svg",
+        ActivityPanel::Security => "icons/shield.svg",
+        ActivityPanel::Automations => "icons/automations.svg",
+        ActivityPanel::Usage => "icons/chart.svg",
     }
 }
 
@@ -102,6 +76,9 @@ pub(crate) struct Activity {
     pub(crate) panel: ActivityPanel,
     /// Picked in this window, so a stored section arriving later yields to it.
     picked: bool,
+    /// When each section was last open, so its count shows in the accent
+    /// only for what changed since.
+    last_opened: HashMap<ActivityPanel, DateTime<Utc>>,
     /// The orchestrator view the shown section draws.
     pub(crate) section_view: Option<ViewId>,
     /// The project the next section shown narrows to, as a menu or the
@@ -123,15 +100,44 @@ pub(crate) struct Activity {
 }
 
 impl Activity {
-    /// Shows `panel`, as picked by the user; whether it changed.
+    /// Shows `panel`, as picked by the user; whether it changed. The section
+    /// left and the one shown are both stamped as open now, since what the
+    /// user looked at while it was shown counts as seen.
     pub(crate) fn pick(&mut self, panel: ActivityPanel) -> bool {
         if panel == self.panel {
             return false;
         }
+        let now = Utc::now();
+        self.opened(self.panel, now);
+        self.opened(panel, now);
         self.panel = panel;
         self.picked = true;
         self.section_list = None;
         true
+    }
+
+    /// Records `panel` as open at `at`, never moving a stamp back.
+    fn opened(&mut self, panel: ActivityPanel, at: DateTime<Utc>) {
+        let stamp = self.last_opened.entry(panel).or_insert(at);
+        *stamp = (*stamp).max(at);
+    }
+
+    /// When each section was last open, to store.
+    pub(crate) fn last_opened(&self) -> &HashMap<ActivityPanel, DateTime<Utc>> {
+        &self.last_opened
+    }
+
+    /// Whether `panel`'s count holds something the user has not seen: the
+    /// section was never opened, or an item changed after it last was.
+    /// The section on show is being looked at, so it is never unseen.
+    pub(super) fn unseen(&self, panel: ActivityPanel, latest: Option<DateTime<Utc>>) -> bool {
+        if panel == self.panel {
+            return false;
+        }
+        match self.last_opened.get(&panel) {
+            None => true,
+            Some(opened) => latest.is_some_and(|latest| latest > *opened),
+        }
     }
 
     /// The section to store: only one the user picked.
@@ -139,12 +145,23 @@ impl Activity {
         self.picked.then_some(self.panel)
     }
 
-    /// Applies the stored section unless one was picked before it loaded.
-    pub(crate) fn restore(&mut self, stored: Option<ActivityPanel>) {
+    /// Applies the stored section unless one was picked before it loaded,
+    /// and the stored visits, keeping any later one made since. Whether the
+    /// visits now differ from the stored ones: a save queued before they
+    /// loaded wrote this run's alone, so the merge must be saved again.
+    pub(crate) fn restore(
+        &mut self,
+        stored: Option<ActivityPanel>,
+        last_opened: &HashMap<ActivityPanel, DateTime<Utc>>,
+    ) -> bool {
         if let Some(panel) = stored.filter(|_| !self.picked) {
             self.panel = panel;
             self.picked = true;
         }
+        for (&panel, &at) in last_opened {
+            self.opened(panel, at);
+        }
+        self.last_opened != *last_opened
     }
 
     /// Records the views' lists; whether they changed since last time.
@@ -182,6 +199,23 @@ impl HerdrWindow {
         self.config.sidebar_style.activity_bar
     }
 
+    /// Whether the bar lists `panel`. A section turned off in the settings
+    /// is not listed, and a window left on it shows Workspaces.
+    pub(crate) fn activity_panel_listed(&self, panel: ActivityPanel) -> bool {
+        match panel {
+            ActivityPanel::Automations => self.config.sidebar_style.automations,
+            _ => true,
+        }
+    }
+
+    /// The section the bar marks: the one picked, or Workspaces when that
+    /// one is no longer listed.
+    fn activity_panel(&self) -> ActivityPanel {
+        Some(self.activity.panel)
+            .filter(|panel| self.activity_panel_listed(*panel))
+            .unwrap_or_default()
+    }
+
     /// Whether the bar leads the left column, whatever the sidebar's state:
     /// on, and not set aside by zen mode. The sidebar toggle then lives in
     /// the column rather than the title bar.
@@ -209,7 +243,7 @@ impl HerdrWindow {
     /// Workspaces is shown. Zen mode keeps the terminals.
     pub(crate) fn activity_section(&self) -> Option<ActivityPanel> {
         self.activity_on()
-            .then_some(self.activity.panel)
+            .then(|| self.activity_panel())
             .filter(|panel| *panel != ActivityPanel::Workspaces)
     }
 
@@ -250,7 +284,7 @@ impl HerdrWindow {
             return;
         }
         if panel == ActivityPanel::Workspaces
-            && self.activity.panel == panel
+            && self.activity_panel() == panel
             && self.sidebar_visible
         {
             self.toggle_sidebar();
@@ -268,6 +302,9 @@ impl HerdrWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.activity_panel_listed(panel) {
+            return;
+        }
         if panel == ActivityPanel::Workspaces && !self.sidebar_visible {
             self.toggle_sidebar();
         }
@@ -278,7 +315,12 @@ impl HerdrWindow {
         }
         self.sync_activity_section(cx);
         match self.activity_section() {
-            Some(ActivityPanel::Overview | ActivityPanel::Usage) => {
+            Some(
+                ActivityPanel::Overview
+                | ActivityPanel::Security
+                | ActivityPanel::Automations
+                | ActivityPanel::Usage,
+            ) => {
                 let focus = self
                     .activity
                     .section_focus
@@ -293,10 +335,16 @@ impl HerdrWindow {
     }
 
     /// The shown section across the window's body, or `None` in Workspaces.
-    pub(crate) fn render_activity_section(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn render_activity_section(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let section = match self.activity_section()? {
             ActivityPanel::Workspaces => return None,
             ActivityPanel::Overview => self.render_overview(cx),
+            ActivityPanel::Security => self.render_security_section(window, cx),
+            ActivityPanel::Automations => self.render_automations_section(cx),
             ActivityPanel::Usage => self.render_usage_section(cx),
             ActivityPanel::PullRequests | ActivityPanel::Issues => {
                 return self.render_orchestrator_section();
@@ -387,22 +435,34 @@ impl HerdrWindow {
             .bg(self.fill().panel(theme.sidebar_background()))
             .border_r_1()
             .border_color(rgb(theme.active));
+        let shown = self.activity_panel();
         for &panel in ActivityPanel::ALL {
-            let state = if panel == self.activity.panel {
+            if !self.activity_panel_listed(panel) {
+                continue;
+            }
+            let state = if panel == shown {
                 BarState::Selected
             } else {
                 BarState::Idle
             };
             // Overview's icon pulses while agents work, as the sidebar's
-            // working dots do.
-            let busy = panel == ActivityPanel::Overview && self.overview_working() > 0;
+            // working dots do, and Automations' while a run goes on.
+            let busy = match panel {
+                ActivityPanel::Overview => self.overview_working() > 0,
+                ActivityPanel::Automations => self.automations.running() > 0,
+                _ => false,
+            };
+            let bubble = counts.of(panel).map(|count| Bubble {
+                count,
+                unseen: self.activity.unseen(panel, counts.latest(panel)),
+            });
             let button = self
                 .bar_button(
                     panel_selector(panel),
-                    panel.icon(),
-                    panel.label(),
+                    icon(panel),
+                    label(panel),
                     (state, busy),
-                    counts.of(panel),
+                    bubble,
                 )
                 .role(Role::Tab)
                 .aria_selected(state == BarState::Selected)
@@ -432,7 +492,7 @@ impl HerdrWindow {
         icon: &'static str,
         label: &'static str,
         (state, busy): (BarState, bool),
-        count: Option<usize>,
+        bubble: Option<Bubble>,
     ) -> Stateful<Div> {
         let theme = &self.theme;
         let (foreground, surface, hover) = (theme.foreground, theme.surface, theme.active);
@@ -455,21 +515,30 @@ impl HerdrWindow {
         } else {
             icon.into_any_element()
         };
+        let bubble = bubble.filter(|bubble| bubble.count > 0);
         let glyph = div()
             .debug_selector(move || format!("{id}-glyph"))
             .relative()
             .child(icon)
-            .when_some(count.filter(|count| *count > 0), |glyph, count| {
+            .when_some(bubble, |glyph, bubble| {
+                // Held by its right edge, inside the bar's border, so a wider
+                // count such as `99+` grows over the icon rather than past the
+                // bar into the column beside it.
                 glyph.child(
                     div()
+                        .debug_selector(move || format!("{id}-bubble"))
                         .absolute()
                         .top(px(-8.))
-                        .left(px(10.))
-                        .child(self.count_bubble(count)),
+                        .right(px(BUBBLE_END))
+                        .child(self.count_bubble(bubble)),
                 )
             });
-        let spoken = match count.filter(|count| *count > 0) {
-            Some(count) => SharedString::from(format!("{label}, {count}")),
+        let spoken = match bubble {
+            Some(Bubble {
+                count,
+                unseen: true,
+            }) => SharedString::from(format!("{label}, {count}, new activity")),
+            Some(Bubble { count, .. }) => SharedString::from(format!("{label}, {count}")),
             None => SharedString::from(label),
         };
         div()
@@ -536,20 +605,32 @@ impl HerdrWindow {
             .border_b_1()
             .border_color(rgb(theme.active))
             .bg(self.fill().panel(theme.sidebar_background()));
+        let shown = self.activity_panel();
         for &panel in ActivityPanel::ALL {
-            let state = if panel == self.activity.panel {
+            if !self.activity_panel_listed(panel) {
+                continue;
+            }
+            let state = if panel == shown {
                 BarState::Selected
             } else {
                 BarState::Idle
             };
-            let busy = panel == ActivityPanel::Overview && self.overview_working() > 0;
+            let busy = match panel {
+                ActivityPanel::Overview => self.overview_working() > 0,
+                ActivityPanel::Automations => self.automations.running() > 0,
+                _ => false,
+            };
+            let bubble = counts.of(panel).map(|count| Bubble {
+                count,
+                unseen: self.activity.unseen(panel, counts.latest(panel)),
+            });
             tabs = tabs.child(
                 self.bar_button(
                     panel_selector(panel),
-                    panel.icon(),
-                    panel.label(),
+                    icon(panel),
+                    label(panel),
                     (state, busy),
-                    counts.of(panel),
+                    bubble,
                 )
                 .size(px(DRAWER_TAB))
                 .role(Role::Tab)
@@ -589,13 +670,15 @@ impl HerdrWindow {
             )
     }
 
-    fn count_bubble(&self, count: usize) -> Div {
+    /// A count in the accent while it holds something unseen, else muted.
+    fn count_bubble(&self, Bubble { count, unseen }: Bubble) -> Div {
         let theme = &self.theme;
         let text = if count > 99 {
             "99+".to_owned()
         } else {
             count.to_string()
         };
+        let fill = if unseen { theme.primary() } else { theme.muted };
         div()
             .min_w(px(14.))
             .h(px(14.))
@@ -604,12 +687,11 @@ impl HerdrWindow {
             .items_center()
             .justify_center()
             .rounded_full()
-            .border_1()
-            .border_color(rgb(theme.sidebar_background()))
-            .bg(rgb(theme.primary()))
-            .text_color(rgb(theme.text_on(theme.primary())))
+            .bg(rgb(fill))
+            .text_color(rgb(theme.text_on(fill)))
             .text_size(px(9.))
             .line_height(px(12.))
+            .whitespace_nowrap()
             .child(text)
     }
 
@@ -641,7 +723,7 @@ impl HerdrWindow {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .child(panel.label().to_uppercase()),
+                        .child(label(panel).to_uppercase()),
                 )
             })
             .child(self.sidebar_toggle(cx))
@@ -654,12 +736,22 @@ enum BarState {
     Idle,
 }
 
+/// A section's count on the bar, and whether it holds anything changed since
+/// the section was last open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Bubble {
+    count: usize,
+    unseen: bool,
+}
+
 fn panel_selector(panel: ActivityPanel) -> &'static str {
     match panel {
         ActivityPanel::Overview => "activity-overview",
         ActivityPanel::Workspaces => "activity-workspaces",
         ActivityPanel::PullRequests => "activity-pull-requests",
         ActivityPanel::Issues => "activity-issues",
+        ActivityPanel::Security => "activity-security",
+        ActivityPanel::Automations => "activity-automations",
         ActivityPanel::Usage => "activity-usage",
     }
 }

@@ -28,21 +28,40 @@ pub(crate) struct ConnectionBridge {
 /// One integration operation, independent of the modal dialog response slot.
 #[derive(Default)]
 pub(crate) struct IntegrationInbox {
-    pub list: bool,
-    pub install: bool,
+    pub list: Option<Method>,
+    pub install: Option<Method>,
     pub pending: Option<(String, Option<crate::Result<serde_json::Value>>)>,
+}
+
+fn integration_methods(methods: &[String]) -> (Option<Method>, Option<Method>) {
+    let list_v2 = Method::IntegrationListV2.advertised_in(methods);
+    let install_v2 = Method::IntegrationInstallV2.advertised_in(methods);
+    if list_v2 && install_v2 {
+        (
+            Some(Method::IntegrationListV2),
+            Some(Method::IntegrationInstallV2),
+        )
+    } else {
+        (
+            Method::IntegrationList
+                .advertised_in(methods)
+                .then_some(Method::IntegrationList),
+            Method::IntegrationInstall
+                .advertised_in(methods)
+                .then_some(Method::IntegrationInstall),
+        )
+    }
 }
 
 impl IntegrationInbox {
     fn apply(&mut self, event: ClientEvent) -> Option<ClientEvent> {
         match &event {
             ClientEvent::Connected(welcome) => {
-                self.list = Method::IntegrationList.advertised_in(&welcome.methods);
-                self.install = Method::IntegrationInstall.advertised_in(&welcome.methods);
+                (self.list, self.install) = integration_methods(&welcome.methods);
             }
             ClientEvent::Disconnected { .. } => {
-                self.list = false;
-                self.install = false;
+                self.list = None;
+                self.install = None;
                 if let Some((_, result)) = &mut self.pending {
                     *result = Some(Err(crate::Error::NotConnected));
                 }
@@ -423,8 +442,10 @@ impl ConnectionBridge {
             return Err(crate::Error::ConnectionBusy);
         }
         let supported = match method {
-            Method::IntegrationList => inbox.list,
-            Method::IntegrationInstall => inbox.install,
+            Method::IntegrationList | Method::IntegrationListV2 => inbox.list == Some(method),
+            Method::IntegrationInstall | Method::IntegrationInstallV2 => {
+                inbox.install == Some(method)
+            }
             _ => false,
         };
         if !supported {
@@ -479,9 +500,19 @@ impl ConnectionBridge {
         target: &InputTarget,
         event: ClientPaneInputEvent,
     ) -> Result<(), herdr_client::SendError> {
+        Self::send_inputs(handle, boot_id, target, [event])
+    }
+
+    /// Sends `events` to `target` as one message, in order.
+    pub fn send_inputs(
+        handle: &ClientHandle,
+        boot_id: &str,
+        target: &InputTarget,
+        events: impl IntoIterator<Item = ClientPaneInputEvent>,
+    ) -> Result<(), herdr_client::SendError> {
         match target {
-            InputTarget::Pane(id) => handle.send_input(boot_id, id, [event]),
-            InputTarget::Popup(id) => handle.send_popup_input(boot_id, id, [event]),
+            InputTarget::Pane(id) => handle.send_input(boot_id, id, events),
+            InputTarget::Popup(id) => handle.send_popup_input(boot_id, id, events),
         }
     }
 }

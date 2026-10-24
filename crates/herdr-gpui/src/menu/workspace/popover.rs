@@ -137,7 +137,9 @@ impl HerdrWindow {
                     .child(
                         div()
                             .debug_selector(|| "workspace-menu-name".into())
-                            .truncate()
+                            // Long names wrap: the header is the one place the
+                            // full name shows when the sidebar row cuts it off.
+                            .whitespace_normal()
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(crate::sidebar::label_text(&target.label)),
                     )

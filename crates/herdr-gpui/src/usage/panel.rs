@@ -186,7 +186,9 @@ impl HerdrWindow {
                 .child(self.usage_access(provider, access, cx));
         }
         if let Some(report) = reading.and_then(|r| r.report.as_ref()) {
-            view = view.child(rule()).child(service.render(report, &ui, cx));
+            view = view
+                .child(rule())
+                .child(super::details::render(report, &ui));
         } else if access.is_none() && !service.meta().settings.is_empty() {
             // Nothing to show yet: say what would sign it in.
             view = view.child(rule()).child(setup(service, &ui));
@@ -277,7 +279,7 @@ impl HerdrWindow {
                     .when(!chosen, |tab| tab.hover(|s| s.bg(rgb(theme.active))))
                     .child(
                         svg()
-                            .path(provider.icon())
+                            .path(super::icons::path(provider))
                             .size(px(16.))
                             .text_color(rgb(text)),
                     )

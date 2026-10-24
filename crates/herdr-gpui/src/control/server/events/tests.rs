@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
 
+mod cloud_batch;
+
 #[test]
 fn readers_get_what_came_after_their_sequence_number() {
     let mut log = Log::default();

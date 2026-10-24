@@ -7,9 +7,7 @@
 //! an SSH host has no path to this machine's socket.
 
 mod client;
-mod protocol;
 mod server;
-mod socket;
 
 use crate::HerdrWindow;
 use crate::browser::Location;
@@ -20,14 +18,18 @@ pub(crate) use client::send_focus;
 pub(crate) use client::send_notes;
 pub(crate) use client::{run, send_link, status as exit_status};
 use gpui::App;
+pub(crate) use herdr_control_protocol::Error as ControlError;
+use herdr_control_protocol::{protocol, socket};
 use protocol::Caller;
 pub use protocol::ErrorCode;
 pub(crate) use protocol::NotesTo;
 pub(crate) use protocol::Response;
+pub(crate) use protocol::cloud as batch;
 pub use protocol::{
     app::{FontSize, Size, Switch},
     events::{Cursor, EventKind},
     settings::Sound,
+    tabs::ZoomChange,
     work::Script,
 };
 use std::path::{Path, PathBuf};
@@ -50,7 +52,7 @@ pub(crate) fn reload_command() -> String {
 /// named pipe on Windows.
 fn socket_path() -> crate::Result<PathBuf> {
     let state = crate::preferences::state_dir().ok_or(crate::Error::MissingStateRoot)?;
-    socket::address(&state)
+    Ok(socket::address(&state)?)
 }
 
 /// What a request asks the windows to find: a workspace, optionally of one

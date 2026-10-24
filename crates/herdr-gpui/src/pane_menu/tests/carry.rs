@@ -1,4 +1,7 @@
 use super::*;
+
+#[path = "carry_session.rs"]
+mod carry_session;
 use crate::teleport::carry::Choice;
 use crate::{endpoint::Endpoint, state::ConnectionStatus};
 use herdr_client::{ConnectTarget, protocol::AgentStatus};
@@ -23,7 +26,7 @@ fn picker_rows(view: &HerdrWindow) -> usize {
 
 /// The picker lists, after this device's places, every other device that
 /// can be scripted and has the pane's repository open; a pane outside any
-/// repository stays on this device.
+/// repository lists those devices for a session-only move.
 #[gpui::test]
 fn devices_with_the_repository_follow_this_devices_places(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|window, cx| {
@@ -89,7 +92,19 @@ fn devices_with_the_repository_follow_this_devices_places(cx: &mut TestAppContex
             outside.workspaces[0].worktree = None;
             v.live.snapshot = Some(Arc::new(outside));
             v.open_pane_menu("inactive", Point::default(), window, cx);
-            assert!(v.menu.pane.as_ref().unwrap().target.devices.is_empty());
+            let devices = &v.menu.pane.as_ref().unwrap().target.devices;
+            assert!(
+                devices
+                    .iter()
+                    .all(|device| device.choice == Choice::SessionOnly)
+            );
+            assert_eq!(
+                devices
+                    .iter()
+                    .map(|device| device.endpoint_id.as_str())
+                    .collect::<Vec<_>>(),
+                ["ssh:there", "ssh:elsewhere"]
+            );
         });
     });
 }

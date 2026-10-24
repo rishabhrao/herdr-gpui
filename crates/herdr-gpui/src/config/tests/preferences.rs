@@ -182,6 +182,15 @@ fn rejects_invalid_settings() {
 
 #[test]
 fn features_are_opt_in_per_flag() -> anyhow::Result<()> {
+    assert!(
+        !Config::default().features.acp_chats,
+        "ACP chats are opt-in"
+    );
+    assert!(
+        Config::parse("[features]\nacp_chats = true")?
+            .features
+            .acp_chats
+    );
     assert!(!Config::parse("[features]")?.features.sidebar_hover_menu);
     let config = Config::parse("[features]\nsidebar_hover_menu = true")?;
     assert!(config.features.sidebar_hover_menu);

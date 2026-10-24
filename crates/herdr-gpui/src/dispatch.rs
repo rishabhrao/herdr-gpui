@@ -18,10 +18,44 @@ mod tests;
 
 pub(crate) use {
     history::History,
-    job::Job,
+    job::{Job, Then},
     picker::{Picker, Slot},
     setup::Setup,
 };
+
+/// A provider that makes a new machine for a dispatch; none without cloud
+/// providers, so the choice cannot be made.
+#[cfg(feature = "cloud")]
+pub(crate) type Sandbox = crate::cloud::CloudProvider;
+#[cfg(not(feature = "cloud"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Sandbox {}
+
+/// Where a dialog's new worktree or workspace goes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Destination<'a> {
+    /// The host the window shows, through its own daemon.
+    Here,
+    /// Another host, through Teleport's scripts.
+    Host(&'a Candidate),
+    /// A new machine the provider makes first, then as `Host`.
+    Sandbox(Sandbox),
+}
+
+/// [`Destination`] owned, for a submitted dialog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Target {
+    Host(String),
+    Sandbox(Sandbox),
+}
+
+/// The words for a new machine from `sandbox`, such as "a new container".
+pub(crate) fn sandbox_words(sandbox: Sandbox) -> String {
+    #[cfg(feature = "cloud")]
+    return format!("a new {}", crate::cloud::noun(sandbox));
+    #[cfg(not(feature = "cloud"))]
+    match sandbox {}
+}
 
 /// A host's load, from its latest system-load sample.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

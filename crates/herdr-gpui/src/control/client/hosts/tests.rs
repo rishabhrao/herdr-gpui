@@ -1,5 +1,8 @@
 #![allow(clippy::unwrap_used)]
 use super::text;
+
+mod automation;
+mod security;
 use crate::control::protocol::{
     app::HostInfo,
     hosts::{

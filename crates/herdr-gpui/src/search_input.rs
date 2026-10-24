@@ -182,6 +182,25 @@ impl SearchInput {
         &self.edit.text
     }
 
+    /// Replaces the text with the cursor at byte `cursor`, moved back to a
+    /// character boundary, and nothing selected.
+    pub(crate) fn set_text_at(&mut self, text: &str, cursor: usize, cx: &mut Context<Self>) {
+        let text = single_line(text);
+        let mut cursor = cursor.min(text.len());
+        while !text.is_char_boundary(cursor) {
+            cursor -= 1;
+        }
+        let changed = self.edit.text != text;
+        self.edit = Editing {
+            anchor: cursor,
+            cursor,
+            text,
+            ..Editing::default()
+        };
+        self.selecting = false;
+        self.did_edit(changed, cx);
+    }
+
     pub(super) fn set_text_selected(&mut self, text: &str, cx: &mut Context<Self>) {
         let text = single_line(text);
         let changed = self.edit.text != text;

@@ -1,11 +1,24 @@
 //! Informational and usage-error paths must not reach GPUI or require a desktop/daemon.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::disallowed_methods)]
 
+#[cfg(target_os = "macos")]
+#[path = "cli/clipboard.rs"]
+mod clipboard;
+
 use std::{
-    process::{Command, Output, Stdio},
+    process::{Child, Command, Output, Stdio},
+    sync::Once,
     thread,
     time::{Duration, Instant},
 };
+
+/// How long one command may take once the executable has started before.
+const COMMAND_LIMIT: Duration = Duration::from_secs(10);
+/// The first launch of a fresh build waits for the system to check it and,
+/// for an Intel build on an Apple silicon runner, for Rosetta to translate
+/// it; that cost belongs to no test's command.
+const FIRST_LAUNCH_LIMIT: Duration = Duration::from_secs(120);
+static FIRST_LAUNCH: Once = Once::new();
 
 fn cli(args: &[&str]) -> Output {
     cli_in(args, None)
@@ -14,6 +27,7 @@ fn cli(args: &[&str]) -> Output {
 /// Runs with `state` as the only state directory, and without the variables
 /// a Herdr pane would set, so no running app or daemon is ever reached.
 fn cli_in(args: &[&str], state: Option<&std::path::Path>) -> Output {
+    warm_up();
     let mut command = Command::new(env!("CARGO_BIN_EXE_herdr-gpui"));
     if let Some(state) = state {
         command
@@ -23,14 +37,32 @@ fn cli_in(args: &[&str], state: Option<&std::path::Path>) -> Output {
             .env_remove("HERDR_WORKSPACE_ID")
             .env_remove("HERDR_PANE_ID");
     }
-    let mut child = command
+    let child = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("launch the Cargo-built GUI binary");
-    let deadline = Instant::now() + Duration::from_secs(10);
+    wait(child, args, COMMAND_LIMIT)
+}
+
+/// Launches the executable once, so later deadlines time only commands.
+fn warm_up() {
+    FIRST_LAUNCH.call_once(|| {
+        let child = Command::new(env!("CARGO_BIN_EXE_herdr-gpui"))
+            .arg("--help")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("launch the Cargo-built GUI binary");
+        wait(child, &["--help"], FIRST_LAUNCH_LIMIT);
+    });
+}
+
+fn wait(mut child: Child, args: &[&str], limit: Duration) -> Output {
+    let deadline = Instant::now() + limit;
     loop {
         if child.try_wait().unwrap().is_some() {
             return child.wait_with_output().unwrap();

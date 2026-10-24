@@ -16,6 +16,8 @@
 //! The layer paints after everything in the window body, so what a host
 //! draws over its own rows, such as the sidebar's pinned host header, marks
 //! itself with [`covering`] and the layer keeps marks out from under it.
+//! Nor can the layer inherit a host's hover styles, so a host that hides a
+//! mark under the pointer wraps the hovered area in [`hidden_under_pointer`].
 
 use gpui::{prelude::*, *};
 use std::{
@@ -33,6 +35,8 @@ struct Slot {
     bounds: Bounds<Pixels>,
     mask: ContentMask<Pixels>,
     fade: f32,
+    /// The area of [`hidden_under_pointer`] it sits in, if any.
+    hider: Option<HitboxId>,
     build: Build,
 }
 
@@ -46,6 +50,8 @@ pub(crate) struct Marks {
     /// Whether the layer is still to prepaint this frame. A slot recorded
     /// after it would show only on the next frame, under whatever covered it.
     open: Cell<bool>,
+    /// The [`hidden_under_pointer`] area being prepainted, if any.
+    hider: Cell<Option<HitboxId>>,
 }
 
 impl Marks {
@@ -156,7 +162,7 @@ impl Render for MarkLayer {
 
 struct LayerElement {
     marks: Rc<Marks>,
-    drawn: Vec<(ContentMask<Pixels>, AnyElement)>,
+    drawn: Vec<(ContentMask<Pixels>, Option<HitboxId>, AnyElement)>,
 }
 
 impl IntoElement for LayerElement {
@@ -211,13 +217,13 @@ impl Element for LayerElement {
             .iter()
             .map(|slot| {
                 let mask = self.marks.uncovered(slot.host, slot.mask);
-                (slot.bounds, mask, slot.fade, slot.build.clone())
+                (slot.bounds, mask, slot.fade, slot.hider, slot.build.clone())
             })
             .collect();
         self.drawn = slots
             .into_iter()
             .enumerate()
-            .map(|(index, (bounds, mask, fade, build))| {
+            .map(|(index, (bounds, mask, fade, hider, build))| {
                 // Centered in the reserved box, as the slot around it
                 // centers a mark drawn smaller than its size.
                 let mut mark = div()
@@ -239,7 +245,7 @@ impl Element for LayerElement {
                         );
                     });
                 });
-                (mask, mark)
+                (mask, hider, mark)
             })
             .collect();
     }
@@ -254,7 +260,12 @@ impl Element for LayerElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        for (index, (mask, mark)) in self.drawn.iter_mut().enumerate() {
+        for (index, (mask, hider, mark)) in self.drawn.iter_mut().enumerate() {
+            // Hover is known only now: GPUI hit-tests a frame between its
+            // prepaint and its paint.
+            if hider.is_some_and(|hider| hider.is_hovered(window)) {
+                continue;
+            }
             window.with_element_namespace(index, |window| {
                 window.with_content_mask(Some(*mask), |window| mark.paint(window, cx));
             });
@@ -317,6 +328,82 @@ impl Element for Covering {
             }
         }
         self.0.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.0.paint(window, cx);
+    }
+}
+
+/// `element`, whose layered marks are not drawn while the pointer is over
+/// it, as a hover style hiding them would do in place: a mark in the layer
+/// never sees its host's hover opacity.
+pub(crate) fn hidden_under_pointer(element: impl IntoElement) -> impl IntoElement {
+    HiddenUnderPointer(element.into_any_element())
+}
+
+struct HiddenUnderPointer(AnyElement);
+
+impl IntoElement for HiddenUnderPointer {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for HiddenUnderPointer {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.0.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(marks) = Marks::of(window, cx).filter(|marks| marks.hosts(window.current_view()))
+        else {
+            self.0.prepaint(window, cx);
+            return;
+        };
+        // A hitbox of its own, inserted before what it holds, so the pointer
+        // over anything inside counts and a popup over it does not, exactly
+        // as GPUI decides hover styles.
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        let outer = marks.hider.replace(Some(hitbox.id));
+        self.0.prepaint(window, cx);
+        marks.hider.set(outer);
     }
 
     fn paint(
@@ -421,6 +508,7 @@ impl Element for Layered {
                 bounds,
                 mask: window.content_mask(),
                 fade: self.fade,
+                hider: marks.hider.get(),
                 build: self.build.clone(),
             });
             return;

@@ -23,9 +23,7 @@ fn open(
         view.update(cx, |view, cx| {
             view.git = crate::git::Git::fixture(input(), Default::default());
             view.menu.github = crate::github::Auth::connected_fixture();
-            view.menu
-                .pr_cache
-                .seed(input(), pr, std::time::Instant::now());
+            view.seed_pr(input(), pr, std::time::Instant::now());
             view.pr_actions.track(
                 view.git_open_pull_request()
                     .and_then(|pr| crate::pr_actions::Target::try_from(&*pr).ok()),
@@ -75,9 +73,7 @@ fn an_open_pull_request_offers_review_comment_and_merge(cx: &mut TestAppContext)
         change(&mut pr);
         cx.update(|_, cx| {
             view.update(cx, |view, _| {
-                view.menu
-                    .pr_cache
-                    .seed(input(), pr, std::time::Instant::now());
+                view.seed_pr(input(), pr, std::time::Instant::now());
                 let labels = labels(view);
                 assert!(labels.contains(&"Comment...".to_owned()));
                 assert!(!labels.contains(&"Merge...".to_owned()));
@@ -89,9 +85,7 @@ fn an_open_pull_request_offers_review_comment_and_merge(cx: &mut TestAppContext)
     pr.id.clear();
     cx.update(|_, cx| {
         view.update(cx, |view, _| {
-            view.menu
-                .pr_cache
-                .seed(input(), pr, std::time::Instant::now());
+            view.seed_pr(input(), pr, std::time::Instant::now());
             view.update_pr_actions(std::time::Instant::now());
             // Commit, push, and opening the pull request.
             assert_eq!(labels(view).len(), 3);
@@ -156,9 +150,7 @@ fn a_branch_that_moved_after_the_dialog_opened_is_not_merged(cx: &mut TestAppCon
             view.activate_git_row(Row::Merge, window, cx);
             let mut pushed = crate::pull_request::fixture().unwrap();
             pushed.head_ref_oid = "f".repeat(40);
-            view.menu
-                .pr_cache
-                .seed(input(), pushed, std::time::Instant::now());
+            view.seed_pr(input(), pushed, std::time::Instant::now());
             view.update_pr_actions(std::time::Instant::now());
             view.submit_pr_merge(cx);
             assert!(view.pr_actions.running().is_none());

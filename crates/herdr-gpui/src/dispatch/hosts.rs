@@ -2,7 +2,7 @@
 //! could go to from the endpoints, describing the chosen one to Teleport's
 //! scripts, and following a dispatched job to its new workspace.
 
-use super::{Candidate, History, Load, Picker, Repository, Setup};
+use super::{Candidate, History, Load, Picker, Repository, Sandbox, Setup};
 use crate::{
     HerdrWindow,
     menu::Page,
@@ -97,6 +97,32 @@ impl HerdrWindow {
             .collect()
     }
 
+    /// Providers that can make a new machine for a dispatch from the shown
+    /// host: only when that host can be scripted, as for other hosts, and
+    /// only once the user has a device from the provider, so the dialog
+    /// offers nothing they never set up.
+    pub(crate) fn dispatch_sandboxes(&self) -> Vec<Sandbox> {
+        let current = &self.endpoints[self.selected_endpoint];
+        if !SCRIPTABLE_CLIENT || host_for(&current.connection.target).is_err() {
+            return Vec::new();
+        }
+        #[cfg(feature = "cloud")]
+        if crate::cloud::unavailable().is_none() {
+            let used = |provider| {
+                self.endpoints.iter().any(|endpoint| {
+                    matches!(&endpoint.connection.target,
+                        herdr_client::ConnectTarget::Cloud { provider: from, .. } if *from == provider)
+                })
+            };
+            return crate::cloud::CloudProvider::ALL
+                .iter()
+                .copied()
+                .filter(|&provider| crate::cloud::provision(provider).is_some() && used(provider))
+                .collect();
+        }
+        Vec::new()
+    }
+
     /// The repository a dispatch branches from, on the shown host.
     pub(crate) fn dispatch_origin(
         &self,
@@ -143,6 +169,27 @@ impl HerdrWindow {
                 .is_some_and(|fan_out| fan_out.composing())
     }
 
+    /// A machine a dispatch made: it runs the setup script a device made in
+    /// Settings would, once a window shows it.
+    #[cfg(feature = "cloud")]
+    fn provisioned_for_dispatch(
+        &mut self,
+        saved: crate::cloud::SavedDevice,
+        cx: &mut Context<Self>,
+    ) {
+        let Ok(Some(script)) = self.config.cloud.script(saved.provider) else {
+            return;
+        };
+        let pending = crate::cloud_setup::Pending::new(
+            saved.endpoint_id(),
+            saved.label,
+            saved.provider,
+            script,
+            Instant::now(),
+        );
+        self.queue_cloud_setup(pending, cx);
+    }
+
     /// Keep open pickers current, and follow a finished job.
     pub(crate) fn poll_dispatch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let now = Instant::now();
@@ -179,6 +226,15 @@ impl HerdrWindow {
             return;
         };
         let (changed, finished) = job.poll();
+        #[cfg(feature = "cloud")]
+        let provisioned = job.take_provisioned();
+        #[cfg(feature = "cloud")]
+        if let Some(saved) = provisioned {
+            self.provisioned_for_dispatch(saved, cx);
+        }
+        let Some(job) = &mut self.dispatch_job else {
+            return;
+        };
         let Some(result) = finished else {
             if changed && dialog {
                 cx.notify();
@@ -226,11 +282,17 @@ impl HerdrWindow {
 }
 
 impl Picker {
-    /// A picker for a dialog opened on `current`, filled at once.
-    pub(crate) fn opened(current: &str, candidates: Vec<Candidate>) -> Option<Self> {
+    /// A picker for a dialog opened on `current`, filled at once, also
+    /// offering a new machine from each of `sandboxes`.
+    pub(crate) fn opened(
+        current: &str,
+        candidates: Vec<Candidate>,
+        sandboxes: Vec<Sandbox>,
+    ) -> Option<Self> {
         let now = Instant::now();
         let mut picker = Self::new(current, now);
         picker.update(candidates, now);
+        picker.offer_sandboxes(sandboxes);
         picker.offers_choice().then_some(picker)
     }
 }

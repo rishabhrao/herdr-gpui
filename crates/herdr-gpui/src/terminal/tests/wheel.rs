@@ -4,6 +4,7 @@ fn hit(target: InputTarget, mouse_reporting: bool) -> WheelTarget {
     WheelTarget {
         target,
         mouse_reporting,
+        stepwise: mouse_reporting,
         bounds: Bounds::default(),
         position: ClientMousePosition::Cell { column: 2, row: 3 },
         geometry: None,
@@ -147,7 +148,7 @@ fn horizontal_wheel_accumulates_columns_by_cell_width_for_mouse_reporting_target
 }
 
 #[test]
-fn wheel_steps_become_one_event_per_axis_vertical_first() {
+fn wheel_steps_become_one_report_per_step_for_an_application_vertical_first() {
     let target = hit(InputTarget::Pane("pane".into()), true);
     let shift = Modifiers {
         shift: true,
@@ -174,14 +175,15 @@ fn wheel_steps_become_one_event_per_axis_vertical_first() {
             .collect::<Vec<_>>()
     };
     assert!(events(0, 0).is_empty());
-    assert_eq!(events(2, 0), [(ClientMouseKind::ScrollUp, 2)]);
-    assert_eq!(events(0, 3), [(ClientMouseKind::ScrollLeft, 3)]);
-    assert_eq!(events(0, -128), [(ClientMouseKind::ScrollRight, 128)]);
+    assert_eq!(events(2, 0), [(ClientMouseKind::ScrollUp, 1); 2]);
+    assert_eq!(events(0, 3), [(ClientMouseKind::ScrollLeft, 1); 3]);
+    assert_eq!(events(0, -128), [(ClientMouseKind::ScrollRight, 1); 128]);
     assert_eq!(
         events(-1, -2),
         [
             (ClientMouseKind::ScrollDown, 1),
-            (ClientMouseKind::ScrollRight, 2)
+            (ClientMouseKind::ScrollRight, 1),
+            (ClientMouseKind::ScrollRight, 1)
         ]
     );
 }

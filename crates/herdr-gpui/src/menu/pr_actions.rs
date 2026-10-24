@@ -47,7 +47,7 @@ impl HerdrWindow {
         let result = self
             .pr_token()
             .ok_or(crate::Error::GitHubAuthentication)
-            .and_then(|token| self.pr_actions.load_comments(token));
+            .and_then(|token| self.pr_actions.load_comments(token).map_err(Into::into));
         if let Err(error) = result {
             self.menu.error = Some(error.to_string());
         }
@@ -88,7 +88,11 @@ impl HerdrWindow {
         let result = self
             .pr_token()
             .ok_or(crate::Error::GitHubAuthentication)
-            .and_then(|token| self.pr_actions.start(Action::Comment(body), &[], token));
+            .and_then(|token| {
+                self.pr_actions
+                    .start(Action::Comment(body), &[], token)
+                    .map_err(Into::into)
+            });
         match result {
             Ok(()) => {
                 self.menu.error = None;
@@ -115,8 +119,9 @@ impl HerdrWindow {
                 .map(|pr| pr.merge_methods.clone())
                 .unwrap_or_default();
             let token = self.pr_token().ok_or(crate::Error::GitHubAuthentication)?;
-            self.pr_actions
-                .start(Action::Merge(method), &allowed, token)
+            Ok(self
+                .pr_actions
+                .start(Action::Merge(method), &allowed, token)?)
         })();
         match result {
             Ok(()) => {

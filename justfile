@@ -6,6 +6,9 @@ run *args:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" != Darwin ]; then
+        # The app starts chats with the herdr-acp, and finds the automation
+        # daemon, beside its own executable.
+        cargo build --locked --release -p herdr-acp -p herdr-automate
         exec cargo run --locked --release -p herdr-gpui --features qa-menu -- {{args}}
     fi
     {{just_executable()}} bundle release qa-menu
@@ -38,6 +41,7 @@ run-debug *args:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" != Darwin ]; then
+        cargo build --locked -p herdr-acp -p herdr-automate
         exec cargo run --locked -p herdr-gpui -- {{args}}
     fi
     {{just_executable()}} bundle debug
@@ -60,6 +64,12 @@ test:
     cargo test --locked --workspace
     cargo test --locked --workspace --all-features
 
+# The same suites under cargo-nextest, a process per test (see .config/nextest.toml).
+# Doctests do not run here; `just test` remains the CI gate.
+nextest *args:
+    cargo nextest run --locked --workspace {{args}}
+    cargo nextest run --locked --workspace --all-features {{args}}
+
 # Explicit opt-in: launches and cleans up its own isolated daemon only.
 test-live binary:
     HERDR_TEST_BINARY="{{binary}}" cargo test --locked -p herdr-client --test live -- --ignored --nocapture
@@ -71,12 +81,12 @@ test-gui binary:
 # Explicit opt-in: reads the real code signature and Homebrew records of an
 # installed app. Never discovers an installation on its own.
 test-update bundle:
-    HERDR_TEST_BUNDLE="{{bundle}}" cargo test --locked -p herdr-gpui updater::install::tests::signing::installed_bundle -- --ignored --nocapture
-    HERDR_TEST_BUNDLE="{{bundle}}" cargo test --locked -p herdr-gpui updater::brew::tests::the_real_cask -- --ignored --nocapture
+    HERDR_TEST_BUNDLE="{{bundle}}" cargo test --locked -p herdr-updater install::tests::signing::installed_bundle -- --ignored --nocapture
+    HERDR_TEST_BUNDLE="{{bundle}}" cargo test --locked -p herdr-updater brew::tests::the_real_cask -- --ignored --nocapture
 
 # Really upgrades the installed app through Homebrew; restart it afterwards.
 test-brew-upgrade bundle expected:
-    HERDR_TEST_BUNDLE="{{bundle}}" HERDR_TEST_BREW_EXPECTED="{{expected}}" HERDR_TEST_BREW_UPGRADE=1 cargo test --locked -p herdr-gpui updater::brew::tests::homebrew_really_installs -- --ignored --nocapture
+    HERDR_TEST_BUNDLE="{{bundle}}" HERDR_TEST_BREW_EXPECTED="{{expected}}" HERDR_TEST_BREW_UPGRADE=1 cargo test --locked -p herdr-updater brew::tests::homebrew_really_installs -- --ignored --nocapture
 
 # Repeat the Linux suite under CPU pressure in a container, where scheduling
 # races reproduce that a fast machine hides. Needs Docker; nothing else.
@@ -113,12 +123,14 @@ mockup file="" feedback="" capture="":
     exec target/debug/herdr-gpui "${args[@]}"
 
 build-release:
-    cargo build --locked --release -p herdr-gpui
+    cargo build --locked --release -p herdr-gpui -p herdr-acp -p herdr-automate
 
 # Compile and install the release executable into Cargo's bin directory.
 [unix]
 install:
     cargo install --locked --force --path crates/herdr-gpui --bin herdr-gpui
+    cargo install --locked --force --path crates/herdr-acp
+    cargo install --locked --force --path crates/herdr-automate
 
 # Only installation bypasses the POSIX shell used by the other recipes.
 [windows]
@@ -126,7 +138,9 @@ install:
 install:
     #!cmd.exe /c
     cargo install --locked --force --path crates/herdr-gpui --bin herdr-gpui || exit /b 1
-    cargo install --locked --force --path crates/herdr-gpui-launcher
+    cargo install --locked --force --path crates/herdr-gpui-launcher || exit /b 1
+    cargo install --locked --force --path crates/herdr-acp || exit /b 1
+    cargo install --locked --force --path crates/herdr-automate
 
 # Regenerate circular Linux artwork on any platform (Python standard library).
 icons-linux:
@@ -142,7 +156,8 @@ icons-windows:
 icons: icons-linux icons-windows
     swift scripts/generate-icons.swift
 
-# Local, unsigned GUI-only bundle. Never installs or packages a daemon.
+# Local, unsigned bundle with the automation daemon's binary beside the app.
+# Never installs or starts a daemon.
 bundle profile="release" features="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -154,8 +169,19 @@ bundle profile="release" features="":
     esac
     app=target/{{profile}}/Herdr.app
     cargo build --locked $flags --target-dir target -p herdr-gpui --features "{{features}}"
+    cargo build --locked $flags --target-dir target -p herdr-acp -p herdr-automate
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+    # Replace the executables rather than rewrite them in place: macOS keeps
+    # a signed file's old signature with its inode, so reading the rewritten
+    # pages kills the reader, and a chat still running the old herdr-acp
+    # keeps its own copy.
+    rm -f "$app/Contents/MacOS/Herdr" "$app/Contents/MacOS/herdr-acp" "$app/Contents/MacOS/herdr-automate"
     cp target/{{profile}}/herdr-gpui "$app/Contents/MacOS/Herdr"
+    # The automation daemon, found beside the app's executable.
+    cp target/{{profile}}/herdr-automate "$app/Contents/MacOS/herdr-automate"
+    codesign --force --sign - "$app/Contents/MacOS/herdr-automate"
+    # Chats the app starts run the herdr-acp beside its executable.
+    cp target/{{profile}}/herdr-acp "$app/Contents/MacOS/herdr-acp"
     cp assets/macos/Info.plist "$app/Contents/Info.plist"
     # LaunchServices and the Dock cache icons by bundle ID, so every worktree
     # build sharing the release ID competed with the installed app's icon.

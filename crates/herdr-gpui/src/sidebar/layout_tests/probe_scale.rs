@@ -7,7 +7,7 @@ use super::*;
 fn child_probe_allows_less_than_one_device_pixel_of_snapping() {
     use crate::config::{Density, LayoutMode};
     let mode = LayoutMode::from(Density::Normal);
-    let bounds = Bounds::new(point(px(44.), px(100.)), size(px(161.), px(16.)));
+    let bounds = Bounds::new(point(px(44.), px(100.)), size(px(179.), px(16.)));
     let mut probe = PaintedText {
         bounds,
         mask: bounds,
@@ -16,10 +16,10 @@ fn child_probe_allows_less_than_one_device_pixel_of_snapping() {
         width: px(94.),
         clipped: false,
     };
-    probe.bounds.size.width = px(241. / 1.5);
+    probe.bounds.size.width = px(268. / 1.5);
     probe.mask = probe.bounds;
     probe.verify_child("sidebar-child", mode, 0., 1.5).unwrap();
-    probe.bounds.size.width = px(160.);
+    probe.bounds.size.width = px(178.);
     probe.mask = probe.bounds;
     assert!(
         probe

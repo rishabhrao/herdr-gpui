@@ -176,7 +176,7 @@ impl HerdrWindow {
             .when(open, |segment| segment.bg(rgb(theme.active)))
             .child(
                 svg()
-                    .path(provider.icon())
+                    .path(super::icons::path(provider))
                     .size(px(12.))
                     .flex_none()
                     .text_color(rgb(theme.foreground)),

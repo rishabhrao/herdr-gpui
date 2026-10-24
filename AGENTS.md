@@ -23,9 +23,23 @@ Closing or detaching the GUI must leave the daemon and its terminals running.
 | Location | Responsibility |
 | --- | --- |
 | `crates/herdr-protocol` | Generation-1 wire types, framing, validation, and atomic surface patches |
+| `crates/herdr-acp` | `herdr-acp` binary run inside a Herdr pane: the only ACP client of an agent, its in-pane chat view, the attach socket Herdr UI connects to, and Herdr status reports |
+| `crates/herdr-chat-protocol` | Attach wire between `herdr-acp` and its clients: transcript model, the shared change reducer, framing, and endpoint discovery; no ACP or GPUI types |
 | `crates/herdr-client` | Discovery, socket worker, session transitions, ordered commands, and client-local activity projection |
 | `crates/herdr-gpui` | Native UI, connection bridge, presentation state, semantic input, geometry, and painting |
+| `crates/herdr-control-protocol` | The control socket between `herdr-gpui <command>` and the running app: request and response types, bounds, and the Unix socket or named pipe; no GPUI |
+| `crates/herdr-commands` | The command catalog: each command's name, default shortcuts per platform, and the daemon request it becomes against a snapshot; no GPUI (the app binds the keys and runs window commands) |
+| `crates/herdr-usage` | Plan usage of AI services on a host: the providers, their probes and sign-ins, the registry, and the read worker; no GPUI (the app draws the status bar and panel) |
+| `crates/herdr-credentials` | Where saved sign-ins live: the store policy, the macOS Keychain, Linux Secret Service, Windows Credential Manager, and the private `0600` file; GitHub and the cloud providers keep their secrets here; no GPUI |
+| `crates/herdr-github` | GitHub sign-in (device flow, pasted tokens, the GitHub CLI, additional accounts), its REST and GraphQL transport, the `[github]` config table, the read-only pull request prefetch, and explicit pull request actions; no GPUI (the app keeps the account avatars, the shared PR store, and badge colors) |
+| `crates/herdr-vcs` | Git on the checkouts the app shows: working-tree status, commit, push, and pull request creation, checkpoints kept as Git refs on each host, and the code search index; no GPUI (the app runs the workers from its views) |
+| `crates/herdr-orchestrator` | The orchestrator's backend: issue and pull request records, the per-repository SQLite database, the GitHub, GitLab, and Beads readers, agent dispatch, and the worker; also the app's cache database and private-file setup; no GPUI (the app draws the sections and pages) |
+| `crates/herdr-remote` | Machines beyond this computer's daemon: the cloud providers (one feature each), their config tables and saved devices, running scripts on any host, and Teleport's core; no GPUI (the app runs its jobs and draws its views) |
+| `crates/herdr-updater` | The in-app update service: release checks, signed manifests, staging, the install helpers, and the release identity (`APP_ID`, `APP_VERSION`); no GPUI |
+| `crates/herdr-diagnostics` | The app's log file and crash reports: the bounded capture of the crates the app names, the writer thread and rotation, the reader the log window tails, the panic hook, and Windows minidumps; no GPUI |
 | `crates/herdr-gpui-launcher` | Windows-only windowed launcher that starts `herdr-gpui.exe` without a console window; std plus `MessageBoxW` for start failures |
+| `crates/herdr-automation` | Automation scripts (`docs/automations.md`): the sandboxed Luau state, the step catalog, schedules, caps, and the plan a person approves; no GPUI or runtime |
+| `crates/herdr-automate` | The automation daemon and its command line: schedules approved scripts per host, runs their steps through the `herdr` CLI, keeps state in SQLite, and answers `--json` reports for Herdr UI |
 | `crates/embed-resource` | No-op stand-in for GPUI's `embed-resource` build dependency, patched in so GPUI embeds no Windows manifest beside `crates/herdr-gpui/windows.manifest`; not a production crate |
 | `crates/test-support/sandbox.rs` | Shared isolated process setup for opt-in integration tests; not a production crate |
 | `crates/test-support/pe.rs` | Windows executable (PE) reader for tests that check subsystem and resources; not a production crate |
@@ -94,13 +108,17 @@ agents in Herdr panes can use what only this client shows or keeps
 - When a feature adds something an agent or script could reasonably ask for
   (open or focus a view, read state the app holds, change a setting, wait for
   an event), add a command in the same change: the request in
-  `control/protocol`, its handler in `control/server`, parsing and output in
-  `control/client`, its `--help` text, and tests for each.
+  `herdr-control-protocol`'s `protocol`, its handler in `control/server`,
+  parsing and output in `control/client`, its `--help` text, and tests for
+  each.
 - Do not add a command that repeats Herdr's own `herdr` CLI (workspaces,
   terminal tabs, panes, agents, scrollback), that the app cannot really do,
   or that skips a confirmation. Destructive or outward actions open the
-  app's own dialog, pointed at the caller's checkout, and the user confirms
-  there.
+  app's own dialog, pointed at the caller's checkout or the machines named,
+  and the user confirms there; a batch of them is confirmed once. The one
+  exception is `cloud exec`, a command on a cloud machine the user saved,
+  which is the agent's own work and asks nothing, as the agent's shell does
+  not.
 - Keep the shared contract: `--json` and `--window` on every command, the
   exit-code table in `docs/cli.md`, bounded requests and responses, and
   targeting that refuses rather than acting in another session's window.

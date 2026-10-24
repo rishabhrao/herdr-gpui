@@ -1,6 +1,10 @@
 //! Connection-lifetime state and the worker loop that drives it: handshake and
-//! codec negotiation, boot-fenced snapshot/surface projection, the single
-//! in-flight API lease, and health checks. Nothing here replays or reconnects.
+//! codec negotiation, boot-fenced snapshot/surface projection, the API request
+//! lease with its pipelined focus activation, and health checks. Nothing here
+//! reconnects; only an activation the daemon refused unprocessed is resent.
+
+mod barrier;
+pub(crate) use barrier::Barrier;
 
 use crate::{
     Error, Result,
@@ -31,6 +35,7 @@ use std::{
 
 pub(crate) struct Pending {
     pub(crate) id: String,
+    pub(crate) method: Method,
     pub(crate) bytes: Vec<u8>,
     pub(crate) started: Instant,
 }
@@ -135,6 +140,8 @@ pub(crate) struct Session {
     pub(crate) surface: Option<Arc<PaneSurfaceFrame>>,
     pub(crate) images: ImageStore,
     pub(crate) pending: Option<Pending>,
+    pub(crate) barrier: Option<Barrier>,
+    pub(crate) pipeline_barriers: bool,
 }
 
 impl Session {
@@ -150,6 +157,8 @@ impl Session {
             surface: None,
             images: ImageStore::default(),
             pending: None,
+            barrier: None,
+            pipeline_barriers: false,
         }
     }
 
@@ -157,8 +166,13 @@ impl Session {
         self.snapshot.is_none().then(|| self.started + TIMEOUT)
     }
 
+    /// A pipelined activation keeps its own deadline beside the focus request.
     fn request_deadline(&self) -> Option<Instant> {
-        self.pending.as_ref().map(|p| p.started + COMMAND_TIMEOUT)
+        self.pending
+            .iter()
+            .chain(self.barrier.iter().map(|b| &b.pending))
+            .map(|p| p.started + COMMAND_TIMEOUT)
+            .min()
     }
 
     /// The earliest instant `check_timeouts` fails the connection.
@@ -219,6 +233,7 @@ impl Session {
     pub(crate) fn permits_partial_input(&self, command: &Command, reader: &FrameReader) -> bool {
         if cfg!(windows)
             || self.pending.is_some()
+            || self.barrier.is_some()
             || command.request.is_some()
             || command.image.is_some()
             || command.bytes.len() > MAX_INTERLEAVED_INPUT_BYTES
@@ -386,6 +401,24 @@ pub(crate) fn run_connection(
         }
         // Bound the batch so continuous input cannot starve reads.
         for _ in 0..16 {
+            // Never splice the resend into, or block it behind, a started or
+            // attempted outbound frame.
+            if reader.started.is_none()
+                && !queued
+                    .as_ref()
+                    .is_some_and(|c| c.started() || c.input_attempted())
+                && let Some(barrier) = session.take_refused_barrier()
+            {
+                if stop.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                stream.write_all(&barrier.request)?;
+                session.pending = Some(Pending {
+                    started: Instant::now(),
+                    ..barrier.pending
+                });
+                continue;
+            }
             let Some(mut command) = queued.take().or_else(|| commands.try_recv().ok()) else {
                 break;
             };
@@ -422,7 +455,11 @@ pub(crate) fn run_connection(
             }
             // The daemon has one API command lease per connection. Keep FIFO order,
             // including input behind a waiting request, without draining the bound.
-            if command.request.is_some() && session.pending.is_some() {
+            // Only a surface activation behind synchronous focus is exempt.
+            if command.request.is_some()
+                && (session.pending.is_some() || session.barrier.is_some())
+                && !session.pipelines(&command)
+            {
                 queued = Some(command);
                 break;
             }
@@ -476,11 +513,22 @@ pub(crate) fn run_connection(
             stream.write_all(&command.bytes)?;
             if let Some(request) = command.request {
                 tracing::trace!(category = "api", "request sent");
-                session.pending = Some(Pending {
+                let pending = Pending {
                     id: request.id,
+                    method: request.method,
                     bytes: Vec::new(),
                     started: Instant::now(),
-                });
+                };
+                if session.pending.is_some() {
+                    session.barrier = Some(Barrier {
+                        pending,
+                        request: command.bytes,
+                        held: None,
+                        refused: false,
+                    });
+                } else {
+                    session.pending = Some(pending);
+                }
             }
         }
         let image = queued
@@ -502,8 +550,10 @@ pub(crate) fn run_connection(
         // an image, or a partial frame waits for what unfences it. A fenced
         // command is always `queued`, so input permitted during a partial frame
         // and cut off by the bound does not wait for the frame's tail.
+        // Nor may a refused activation that an image or frame deferred.
         let timeout = if (queued.is_none() && !commands.is_empty())
             || (!partial_out && session.health.is_some() && liveness.load(Ordering::Acquire))
+            || (!partial_out && reader.started.is_none() && session.resend_ready())
         {
             Duration::ZERO
         } else {
@@ -573,6 +623,8 @@ impl Session {
             surface,
             images,
             pending,
+            barrier,
+            pipeline_barriers,
             ..
         } = self;
         if welcome.is_none() {
@@ -624,6 +676,7 @@ impl Session {
             *encodings = SurfaceEncodings::from(&w);
             emit(ClientEvent::Connected(w.clone()))?;
             tracing::info!(?encodings, "endpoint handshake accepted");
+            *pipeline_barriers = barrier::verified_ordering(&w.server_version);
             *welcome = Some(w);
             return Ok(());
         }
@@ -714,17 +767,34 @@ impl Session {
                 if snapshot.as_ref().is_none_or(|s| s.boot_id != boot_id) {
                     return Err(Error::ResponseBoot);
                 }
-                let total = pending.as_ref().map_or(0, |p| p.bytes.len());
+                let total = pending
+                    .iter()
+                    .chain(barrier.iter().map(|b| &b.pending))
+                    .map(|p| p.bytes.len())
+                    .sum::<usize>();
                 if data.len() > MAX_RESPONSE_BYTES.saturating_sub(total) {
                     return Err(Error::ResponseLimit);
                 }
-                let p = pending
-                    .as_mut()
-                    .filter(|p| p.id == request_id)
-                    .ok_or(Error::UnsolicitedResponse)?;
+                let to_barrier = barrier.as_ref().is_some_and(|b| b.awaits(&request_id));
+                let p = if to_barrier {
+                    barrier.as_mut().map(|b| &mut b.pending)
+                } else {
+                    pending.as_mut().filter(|p| p.id == request_id)
+                }
+                .ok_or(Error::UnsolicitedResponse)?;
                 p.bytes.extend(data);
                 if final_chunk {
-                    let p = pending.take().ok_or(Error::UnsolicitedResponse)?;
+                    let p = if to_barrier {
+                        let p = &mut barrier.as_mut().ok_or(Error::UnsolicitedResponse)?.pending;
+                        Pending {
+                            id: p.id.clone(),
+                            method: p.method,
+                            bytes: std::mem::take(&mut p.bytes),
+                            started: p.started,
+                        }
+                    } else {
+                        pending.take().ok_or(Error::UnsolicitedResponse)?
+                    };
                     let response: Value = serde_json::from_slice(&p.bytes)?;
                     if response.get("id").and_then(Value::as_str) != Some(&request_id) {
                         return Err(Error::ResponseId);
@@ -739,10 +809,38 @@ impl Session {
                     } else {
                         tracing::trace!(elapsed_ms, api_error, "API request completed");
                     }
+                    if let Some(b) = barrier.as_mut().filter(|_| to_barrier) {
+                        if barrier::endpoint_busy(&response) {
+                            tracing::debug!(
+                                category = "api",
+                                "surface activation resent after focus"
+                            );
+                            *pipeline_barriers = false;
+                            b.refused = true;
+                            return Ok(());
+                        }
+                        if pending.is_some() {
+                            // Its bytes stay counted until delivery, so the two
+                            // responses share one assembly bound.
+                            b.pending.bytes = p.bytes;
+                            b.held = Some(response);
+                            return Ok(());
+                        }
+                        *barrier = None;
+                    }
                     emit(ClientEvent::Response {
                         request_id,
                         response,
                     })?;
+                    if pending.is_none()
+                        && let Some(held) = barrier.as_mut().and_then(|b| b.held.take())
+                    {
+                        let id = barrier.take().map(|b| b.pending.id).unwrap_or_default();
+                        emit(ClientEvent::Response {
+                            request_id: id,
+                            response: held,
+                        })?;
+                    }
                 }
             }
             ServerMessage::ServerShutdown { reason } => {

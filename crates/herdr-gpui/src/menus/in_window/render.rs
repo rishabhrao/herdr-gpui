@@ -14,7 +14,7 @@ impl HerdrWindow {
     fn compact_application_bar(&self, window: &Window) -> bool {
         // Reserve space for all three window buttons and their padding before
         // deciding whether the headings fit beside them.
-        let controls = if matches!(window.window_decorations(), Decorations::Client { .. }) {
+        let controls = if crate::titlebar::show_controls(self.config.show_window_controls, window) {
             112.
         } else {
             0.
@@ -62,7 +62,7 @@ impl HerdrWindow {
         }
         let font = &self.config.ui;
         let theme = &self.theme;
-        let height = if matches!(window.window_decorations(), Decorations::Client { .. }) {
+        let height = if crate::titlebar::show_controls(self.config.show_window_controls, window) {
             (font.line_height() + 8.).max(crate::titlebar::HEIGHT)
         } else {
             font.line_height() + 8.
@@ -202,10 +202,17 @@ impl HerdrWindow {
                     }),
             )
             .child(div().flex_1().h_full().min_w(px(24.)))
-            .children(crate::titlebar::controls(window, theme, |window, _| {
-                window.remove_window();
-            }));
-        crate::titlebar::movable(bar, window)
+            .children(crate::titlebar::controls(
+                self.config.show_window_controls,
+                window,
+                theme,
+                |window, _| {
+                    window.remove_window();
+                },
+            ));
+        // Pass controls_enabled so users who hide the WM's title bar can still
+        // drag the window from the menu bar.
+        crate::titlebar::movable_with_controls(bar, window, self.config.show_window_controls)
     }
 
     /// A menu item's shortcut in keymap spelling, the way the palette and the

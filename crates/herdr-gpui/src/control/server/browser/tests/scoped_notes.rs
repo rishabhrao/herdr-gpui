@@ -9,7 +9,7 @@ fn queued_feedback(
     request: &FeedbackRequest,
 ) -> (
     socket::Incoming,
-    std::thread::JoinHandle<crate::Result<Response>>,
+    std::thread::JoinHandle<herdr_control_protocol::Result<Response>>,
 ) {
     let path = server.path().to_owned();
     let request = request.clone();

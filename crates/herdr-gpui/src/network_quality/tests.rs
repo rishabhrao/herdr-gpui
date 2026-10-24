@@ -37,11 +37,19 @@ fn a_listening_port_answers() {
 
 #[test]
 fn a_closed_port_is_lost() {
-    // Bound then dropped, so nothing listens there.
-    let target: SocketAddr = TcpListener::bind("127.0.0.1:0")
-        .expect("bind")
+    // A socket bound to the port but never listening refuses connections
+    // and keeps the port its own: a listener elsewhere, in this suite or
+    // another process, cannot be given it, as it can a port that only an
+    // open connection uses.
+    let held =
+        socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).expect("socket");
+    held.bind(&SocketAddr::from(([127, 0, 0, 1], 0)).into())
+        .expect("bind");
+    let target = held
         .local_addr()
-        .expect("address");
+        .expect("address")
+        .as_socket()
+        .expect("an IP address");
     // Windows retries a refused connect for about two seconds before
     // reporting it, so the kind may be a refusal or a timeout; either way
     // the probe is lost.

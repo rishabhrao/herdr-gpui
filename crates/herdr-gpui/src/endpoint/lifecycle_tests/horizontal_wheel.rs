@@ -77,17 +77,25 @@ fn connected_horizontal_wheel_reaches_only_mouse_reporting_panes_and_popups(
         modifiers: 1,
         lines,
     };
-    for (pane_id, event) in [
-        ("w1:p1", scroll(ClientMouseKind::ScrollRight, 2, 3, 2)),
-        ("w1:p1", scroll(ClientMouseKind::ScrollLeft, 2, 3, 1)),
-        ("w1:p2", scroll(ClientMouseKind::ScrollUp, 4, 5, 3)),
-        ("w1:p1", ClientPaneInputEvent::TextCommit("panes".into())),
+    // A reporting pane gets one report per step; the plain pane's scrollback
+    // moves by the whole count.
+    for (pane_id, events) in [
+        (
+            "w1:p1",
+            vec![scroll(ClientMouseKind::ScrollRight, 2, 3, 1); 2],
+        ),
+        ("w1:p1", vec![scroll(ClientMouseKind::ScrollLeft, 2, 3, 1)]),
+        ("w1:p2", vec![scroll(ClientMouseKind::ScrollUp, 4, 5, 3)]),
+        (
+            "w1:p1",
+            vec![ClientPaneInputEvent::TextCommit("panes".into())],
+        ),
     ] {
         assert_eq!(
             server.receive(),
             ClientMessage::ClientShellPaneInput {
                 pane_id: pane_id.into(),
-                events: vec![event],
+                events,
             }
         );
     }

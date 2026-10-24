@@ -123,8 +123,8 @@ fn integration_responses_do_not_overwrite_dialog_responses() {
 #[test]
 fn integration_rejections_are_correlated_and_disconnect_revokes_capabilities() {
     let mut inbox = IntegrationInbox {
-        list: true,
-        install: true,
+        list: Some(Method::IntegrationList),
+        install: Some(Method::IntegrationInstall),
         pending: Some(("install".into(), None)),
     };
     assert!(
@@ -156,7 +156,7 @@ fn integration_rejections_are_correlated_and_disconnect_revokes_capabilities() {
             })
             .is_some()
     );
-    assert!(!inbox.list && !inbox.install);
+    assert!(inbox.list.is_none() && inbox.install.is_none());
     assert!(matches!(
         inbox.pending.unwrap().1,
         Some(Err(crate::Error::NotConnected))
@@ -167,7 +167,7 @@ fn integration_rejections_are_correlated_and_disconnect_revokes_capabilities() {
 fn integration_mailbox_is_fenced_on_detach() {
     let mut bridge = bridge();
     let old = bridge.integrations.clone();
-    old.lock().unwrap().list = true;
+    old.lock().unwrap().list = Some(Method::IntegrationList);
     old.lock().unwrap().pending = Some(("old".into(), None));
     bridge.detach(false);
     old.lock().unwrap().apply(ClientEvent::Response {
@@ -176,7 +176,48 @@ fn integration_mailbox_is_fenced_on_detach() {
     });
     assert!(!Arc::ptr_eq(&old, &bridge.integrations));
     let inbox = bridge.integrations.lock().unwrap();
-    assert!(!inbox.list && !inbox.install && inbox.pending.is_none());
+    assert!(inbox.list.is_none() && inbox.install.is_none() && inbox.pending.is_none());
+}
+
+#[test]
+fn integration_methods_prefer_v2_only_when_both_capabilities_are_advertised() {
+    let methods = [
+        "integration.list.v2".into(),
+        "integration.install.v2".into(),
+        "integration.list".into(),
+        "integration.install".into(),
+    ];
+    assert_eq!(
+        integration_methods(&methods),
+        (
+            Some(Method::IntegrationListV2),
+            Some(Method::IntegrationInstallV2)
+        )
+    );
+}
+
+#[test]
+fn integration_methods_fall_back_to_v1_when_either_v2_capability_is_missing() {
+    for methods in [
+        vec![
+            "integration.list.v2".into(),
+            "integration.list".into(),
+            "integration.install".into(),
+        ],
+        vec![
+            "integration.install.v2".into(),
+            "integration.list".into(),
+            "integration.install".into(),
+        ],
+    ] {
+        assert_eq!(
+            integration_methods(&methods),
+            (
+                Some(Method::IntegrationList),
+                Some(Method::IntegrationInstall)
+            )
+        );
+    }
 }
 
 #[test]

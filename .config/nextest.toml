@@ -1,0 +1,17 @@
+# cargo-nextest runs each test in its own process, so one test's globals,
+# environment, or GPUI state cannot leak into another. `just nextest` uses it;
+# `just test` stays on `cargo test`, which also runs doctests.
+#
+# No retries in any profile: AGENTS.md asks for flaky tests to be fixed, not
+# hidden.
+
+[profile.default]
+failure-output = "immediate-final"
+retries        = 0
+
+[profile.ci]
+failure-output = "immediate-final"
+retries        = 0
+# Name a hung test after two minutes instead of waiting for the job timeout.
+slow-timeout = { period = "60s", terminate-after = 2 }
+junit.path   = "junit.xml"

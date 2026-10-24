@@ -118,15 +118,6 @@ pub(crate) fn fork_branch(number: u64) -> String {
     format!("pr/{number}")
 }
 
-/// The pull request number a [`fork_branch`] name carries, if it is one.
-pub(crate) fn fork_branch_number(branch: &str) -> Option<u64> {
-    let digits = branch.strip_prefix("pr/")?;
-    if digits.starts_with('0') || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    digits.parse().ok()
-}
-
 /// GitHub's branch name for an issue: the number, then a slug of the title,
 /// following GitHub's own "create a branch" naming.
 pub(crate) fn issue_branch(number: u64, title: &str) -> String {

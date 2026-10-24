@@ -229,11 +229,8 @@ fn agent_list(look: &Look, device: &Device, slot: Slot, cx: &mut Context<HerdrWi
             .hover(|style| style.bg(rgb(theme.active)))
             .child(look.dot(agent.status))
             .child(
-                svg()
-                    .flex_none()
-                    .size(px(13.))
-                    .path(crate::icons::AgentIcon::from_identity(agent.identity.as_deref()).path())
-                    .text_color(rgb(theme.foreground)),
+                crate::icons::AgentIcon::from_identity(agent.identity.as_deref())
+                    .element(13., theme.foreground),
             )
             .child(
                 div()

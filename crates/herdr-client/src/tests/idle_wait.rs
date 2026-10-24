@@ -67,6 +67,7 @@ fn each_owner_reports_the_deadline_its_check_enforces() {
     let mut session = ready_session();
     session.pending = Some(Pending {
         id: "1".into(),
+        method: Method::PaneFocus,
         bytes: Vec::new(),
         started: now,
     });

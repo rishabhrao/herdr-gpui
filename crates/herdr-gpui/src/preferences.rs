@@ -1,6 +1,7 @@
 use crate::{HerdrWindow, config::Config};
+use chrono::{DateTime, Utc};
 use gpui::*;
-use std::env;
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -116,6 +117,9 @@ impl AgentSort {
 pub struct Chrome {
     /// The activity bar's panel; `None` before one was picked.
     pub activity_panel: Option<crate::sidebar::ActivityPanel>,
+    /// When each activity bar section was last open, so its count shows in
+    /// the accent only for what changed since.
+    pub activity_last_opened: HashMap<crate::sidebar::ActivityPanel, DateTime<Utc>>,
     pub sidebar_width: Option<f32>,
     pub sidebar_split: Option<f32>,
     /// The sort the user picked with the panel toggle, like upstream's
@@ -229,32 +233,7 @@ impl Drop for Preferences {
     }
 }
 
-/// The GPUI client's own state directory, shared by preferences and logs.
-pub(crate) fn state_dir() -> Option<PathBuf> {
-    state_dir_with(|name| env::var_os(name))
-}
-
-fn state_dir_with(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
-    let var = |name| var(name).filter(|value| !value.is_empty());
-    let root = var("XDG_STATE_HOME").map(PathBuf::from).or_else(|| {
-        // Existing Windows installations with HOME already store preferences
-        // here. Keep selecting the same directory after an upgrade.
-        if let Some(home) = var("HOME") {
-            return Some(PathBuf::from(home).join(".local").join("state"));
-        }
-        #[cfg(windows)]
-        {
-            if let Some(local) = var("LOCALAPPDATA") {
-                return Some(PathBuf::from(local));
-            }
-            if let Some(profile) = var("USERPROFILE") {
-                return Some(PathBuf::from(profile).join("AppData").join("Local"));
-            }
-        }
-        None
-    });
-    root.map(|root| root.join("herdr").join("gpui"))
-}
+pub(crate) use herdr_client::local_path::state_dir;
 
 fn endpoint_path(dir: &Path, socket: &Path) -> PathBuf {
     let mut hash = 0xcbf29ce484222325_u64;
@@ -308,6 +287,7 @@ fn read_chrome(path: &Path) -> crate::Result<Chrome> {
             .get("activity_panel")
             .and_then(serde_json::Value::as_str)
             .and_then(crate::sidebar::ActivityPanel::parse),
+        activity_last_opened: last_opened(object.get("activity_last_opened_at")),
         sidebar_width,
         sidebar_split,
         agent_sort,
@@ -315,6 +295,23 @@ fn read_chrome(path: &Path) -> crate::Result<Chrome> {
         review_files_width: panel_width("review_files_width_px"),
         device_order: device_order(object.get("device_order")),
     })
+}
+
+/// When each section was last open. An unknown section or unreadable time is
+/// forgotten rather than failing the whole file; there are few sections.
+fn last_opened(
+    value: Option<&serde_json::Value>,
+) -> HashMap<crate::sidebar::ActivityPanel, DateTime<Utc>> {
+    value
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(name, at)| {
+            let panel = crate::sidebar::ActivityPanel::parse(name)?;
+            let at = DateTime::parse_from_rfc3339(at.as_str()?).ok()?;
+            Some((panel, at.with_timezone(&Utc)))
+        })
+        .collect()
 }
 
 /// The stored device order. Anything but a list of IDs is forgotten rather
@@ -360,10 +357,16 @@ fn write_chrome(path: &Path, chrome: Chrome) -> crate::Result<()> {
         }
     };
     let result = (|| -> crate::Result<()> {
+        let last_opened: serde_json::Map<String, serde_json::Value> = chrome
+            .activity_last_opened
+            .iter()
+            .map(|(panel, at)| (panel.name().to_owned(), at.to_rfc3339().into()))
+            .collect();
         serde_json::to_writer(
             &mut file,
             &serde_json::json!({
                 "activity_panel": chrome.activity_panel.map(crate::sidebar::ActivityPanel::name),
+                "activity_last_opened_at": last_opened,
                 "sidebar_width_px": width,
                 "sidebar_split": chrome.sidebar_split.filter(|split| {
                     split.is_finite() && (0.1..=0.9).contains(split)

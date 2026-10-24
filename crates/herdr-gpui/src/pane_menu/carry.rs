@@ -1,5 +1,6 @@
 //! Moving a pane to another device. The move picker lists every connected
-//! device with the pane's repository open; choosing one reviews the move
+//! device with the pane's repository open, or every device for session-only
+//! moves; choosing one reviews the move
 //! there, the review waits for Enter, and the move then runs on its own
 //! thread (see `crate::teleport::carry`). Closing the menu abandons a review
 //! but never a move under way, which reports as a flash.
@@ -16,6 +17,7 @@ use crate::{
     },
     window::Flash,
 };
+pub(super) use availability::{Availability, PaneState};
 use gpui::{prelude::*, *};
 use herdr_client::protocol::{AgentStatus, ClientShellSnapshot};
 use std::sync::{
@@ -23,6 +25,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc,
 };
+
+mod availability;
 
 /// A place on another device the menu's pane can move to: a new worktree,
 /// or one of the device's spaces of the pane's repository.
@@ -67,14 +71,14 @@ pub(super) fn busy(snapshot: &ClientShellSnapshot, id: &str) -> bool {
 }
 
 enum Event {
-    Reviewed(carry::Result<Box<Review>>),
+    Reviewed(carry::Result<Review>),
     Step(Step),
     Moved(carry::Result<Carried>),
 }
 
 enum Stage {
     Reviewing,
-    Ready(Box<Review>),
+    Ready(Review),
     Moving(Option<Step>),
     Failed(String),
 }
@@ -113,7 +117,7 @@ impl Carry {
         let label = destination.place.label.clone();
         let source = origin.clone();
         let (cancelled, events) = spawn(move |sender, cancelled| {
-            let reviewed = carry::review(&source, &destination, &choice, cancelled).map(Box::new);
+            let reviewed = carry::review(&source, &destination, &choice, cancelled);
             let _ = sender.send(Event::Reviewed(reviewed));
         });
         Self {
@@ -216,13 +220,13 @@ impl HerdrWindow {
     /// other enabled, connected, scriptable host showing a workspace of the
     /// same repository, a new worktree and then each such workspace. Their
     /// remotes are compared in the review. None while this host cannot be
-    /// scripted or the pane is outside a repository.
+    /// scripted. Non-repository panes list every device for a session-only move.
     pub(super) fn carry_devices(&self, repository: Option<&PaneRepository>) -> Vec<Device> {
         let scriptable = cfg!(any(target_os = "linux", target_os = "macos"))
             && host_for(&self.endpoints[self.selected_endpoint].connection.target).is_ok();
-        let Some(repository) = repository.filter(|_| scriptable) else {
+        if !scriptable {
             return Vec::new();
-        };
+        }
         let mut devices = Vec::new();
         for (index, endpoint) in self.endpoints.iter().enumerate() {
             if index == self.selected_endpoint
@@ -232,6 +236,16 @@ impl HerdrWindow {
             {
                 continue;
             }
+            let device = |choice, place| Device {
+                endpoint_id: endpoint.id.clone(),
+                label: endpoint.label.clone(),
+                choice,
+                place,
+            };
+            let Some(repository) = repository else {
+                devices.push(device(Choice::SessionOnly, "Agent Session Only".to_owned()));
+                continue;
+            };
             let Some(snapshot) = endpoint.live.snapshot.as_deref() else {
                 continue;
             };
@@ -248,12 +262,6 @@ impl HerdrWindow {
             if spaces.is_empty() {
                 continue;
             }
-            let device = |choice, place| Device {
-                endpoint_id: endpoint.id.clone(),
-                label: endpoint.label.clone(),
-                choice,
-                place,
-            };
             devices.push(device(Choice::NewWorktree, "New Worktree".to_owned()));
             devices.extend(spaces.into_iter().map(|space| {
                 device(
@@ -283,24 +291,52 @@ impl HerdrWindow {
                 return Err(Refusal::Busy.into());
             }
             let origin = self.carry_origin(target)?;
+            let now = PaneState::of(snapshot, &target.pane);
+            if device.choice == Choice::SessionOnly
+                && let Some(pane) = &mut self.menu.pane
+                && pane
+                    .carry_availability
+                    .as_ref()
+                    .is_some_and(|availability| availability.stale(&now))
+            {
+                pane.carry_availability = Some(Availability::check(origin.clone(), now));
+            }
+            if device.choice == Choice::SessionOnly
+                && let Some(reason) = self
+                    .menu
+                    .pane
+                    .as_ref()
+                    .and_then(|pane| pane.carry_availability.as_ref())
+                    .and_then(Availability::reason)
+            {
+                if let Some(pane) = &mut self.menu.pane {
+                    pane.error = Some(reason);
+                }
+                cx.notify();
+                return Ok(None);
+            }
             let destination = self
                 .dispatch_destination(&device.endpoint_id)
                 .ok_or(crate::Error::StaleConnection)?;
-            Ok::<_, crate::Error>(Carry::review(origin, destination, device.choice.clone()))
+            Ok::<_, crate::Error>(Some(Carry::review(
+                origin,
+                destination,
+                device.choice.clone(),
+            )))
         })();
         match started {
-            Ok(carry) => {
+            Ok(Some(carry)) => {
                 self.pane_carry = Some(carry);
                 self.menu.page = Some(Page::CarryPane);
                 cx.notify();
             }
+            Ok(None) => {}
             Err(error) => self.pane_error(error, cx),
         }
     }
 
-    fn carry_origin(&self, target: &Target) -> crate::Result<Origin> {
+    pub(super) fn carry_origin(&self, target: &Target) -> crate::Result<Origin> {
         let endpoint = &self.endpoints[self.selected_endpoint];
-        let repository = target.repository.as_ref().ok_or(crate::Error::StalePane)?;
         Ok(Origin {
             place: Place {
                 endpoint_id: endpoint.id.clone(),
@@ -309,13 +345,20 @@ impl HerdrWindow {
             },
             workspace_id: target.workspace.clone(),
             pane_id: target.pane.clone(),
-            repo_key: repository.key.clone(),
-            repo_label: repository.label.clone(),
         })
     }
 
     /// Keeps the review current and follows a finished move to its pane.
     pub(crate) fn poll_carry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(availability) = self
+            .menu
+            .pane
+            .as_mut()
+            .and_then(|pane| pane.carry_availability.as_mut())
+            && availability.poll()
+        {
+            cx.notify();
+        }
         let open = self.menu.page == Some(Page::CarryPane);
         let Some(carry) = &mut self.pane_carry else {
             return;
@@ -433,41 +476,62 @@ impl HerdrWindow {
         let (primary, armed) = match &carry.stage {
             Stage::Reviewing => {
                 body = body.child(bar(Progress::Busy)).child(
-                    line("Checking the repository and the pane's program\u{2026}".into())
+                    line("Checking the destination and the pane's program\u{2026}".into())
                         .text_color(muted),
                 );
                 ("Move", false)
             }
             Stage::Ready(review) => {
-                let state = &review.state;
-                let branch = match (&review.landing, &state.branch) {
-                    (
-                        Landing::Worktree {
-                            branch: Some(branch),
-                        },
-                        _,
-                    ) => {
-                        format!("Branch {branch}, in a new worktree")
+                match review {
+                    Review::SessionOnly(review) => {
+                        body = body
+                            .child(line(format!("New workspace in {}", review.cwd)))
+                            .child(
+                                line(review.describe()).debug_selector(|| "pane-carry-runs".into()),
+                            )
+                            .child(
+                                line("Only the agent session moves. No files are copied.".into())
+                                    .text_color(subtext),
+                            )
+                            .child(
+                                line("The pane here closes once it runs there.".into())
+                                    .text_color(subtext),
+                            );
                     }
-                    (Landing::Worktree { branch: None }, Some(branch)) => {
-                        format!("A new branch from {branch}, which is in use there")
-                    }
-                    (Landing::Worktree { branch: None }, None) => {
-                        "A new branch from this commit".to_owned()
-                    }
-                    (
-                        Landing::Space {
-                            checkout,
-                            fast_forward: true,
-                            ..
-                        },
-                        _,
-                    ) => {
-                        format!("A new tab in {checkout}, fast-forwarded to this commit first")
-                    }
-                    (Landing::Space { checkout, .. }, _) => format!("A new tab in {checkout}"),
-                };
-                body = body
+                    Review::Repository(review) => {
+                        let state = &review.state;
+                        let branch = match (&review.landing, &state.branch) {
+                            (
+                                Landing::Worktree {
+                                    branch: Some(branch),
+                                },
+                                _,
+                            ) => {
+                                format!("Branch {branch}, in a new worktree")
+                            }
+                            (Landing::Worktree { branch: None }, Some(branch)) => {
+                                format!("A new branch from {branch}, which is in use there")
+                            }
+                            (Landing::Worktree { branch: None }, None) => {
+                                "A new branch from this commit".to_owned()
+                            }
+                            (
+                                Landing::Space {
+                                    checkout,
+                                    fast_forward: true,
+                                    ..
+                                },
+                                _,
+                            ) => {
+                                format!(
+                                    "A new tab in {checkout}, fast-forwarded to this commit first"
+                                )
+                            }
+                            (Landing::Space { checkout, .. }, _) => {
+                                format!("A new tab in {checkout}")
+                            }
+                        };
+                        body = body
                     .child(line(format!("Into {}", review.repository.label)))
                     .child(line(branch))
                     .child(line(format!(
@@ -488,6 +552,8 @@ impl HerdrWindow {
                         )
                         .text_color(subtext),
                     );
+                    }
+                }
                 ("Move", true)
             }
             Stage::Moving(step) => {

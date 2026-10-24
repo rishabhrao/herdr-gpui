@@ -169,3 +169,23 @@ fn comments_load_only_for_the_followed_pull_request(cx: &mut TestAppContext) {
         })
     });
 }
+
+#[gpui::test]
+fn a_missing_pull_request_says_when_the_github_app_waits_on_the_user(cx: &mut TestAppContext) {
+    let (view, cx) = window(cx);
+    cx.update(|_, cx| {
+        view.update(cx, |view, _| {
+            signed_in(view);
+            view.menu.github.profile.as_mut().unwrap().access = crate::github::Access::NotInstalled;
+            let Response::Host {
+                reply: Reply::Pr { pr: None, note },
+            } = status(view, &caller(Some("w3")))
+            else {
+                panic!("expected no pull request");
+            };
+            let note = note.unwrap();
+            assert!(note.contains("still looking"));
+            assert!(note.contains("GitHub page in Herdr UI"));
+        })
+    });
+}

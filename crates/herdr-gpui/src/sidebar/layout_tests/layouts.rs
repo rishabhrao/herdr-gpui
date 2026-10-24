@@ -29,7 +29,7 @@ fn check_layouts(modes: &[crate::config::LayoutMode], cx: &mut gpui::TestAppCont
         pr.number = 7;
         pr.additions = 234;
         pr.deletions = 567;
-        view.menu.pr_cache.seed(input.clone(), pr, now);
+        view.seed_pr(input.clone(), pr, now);
         view.git.seed_probe(input, true, now);
         // Its work was teleported away, so the row carries that mark too.
         view.teleport_marks.add(crate::teleport::Mark {
@@ -204,7 +204,7 @@ fn sidebar_densities_keep_details_and_badges_within_their_rows(cx: &mut gpui::Te
         pr.number = 7;
         pr.additions = 234;
         pr.deletions = 567;
-        view.menu.pr_cache.seed(input.clone(), pr, now);
+        view.seed_pr(input.clone(), pr, now);
         view.git.seed_probe(input, true, now);
         view
     });
@@ -221,7 +221,6 @@ fn sidebar_densities_keep_details_and_badges_within_their_rows(cx: &mut gpui::Te
             {
                 let compact = mode.density() == Density::Compact;
                 let comfortable = mode.density() == Density::Comfortable;
-                let rounded = mode.style() == Style::Rounded;
                 view.update(cx, |view, cx| {
                     view.config.layout.mode = mode;
                     view.config.sidebar.size = font_size;
@@ -313,18 +312,16 @@ fn sidebar_densities_keep_details_and_badges_within_their_rows(cx: &mut gpui::Te
                 let badge = cx.debug_bounds("pr-sidebar-child").unwrap();
                 assert_eq!(badge.right(), row.right() - px(padding));
                 assert!(badge.bottom() <= row.bottom());
-                assert!(cx.debug_bounds("name-sidebar-child").unwrap().right() <= badge.left());
+                let first = cx.debug_bounds("badge-line-sidebar-child").unwrap();
+                assert!(cx.debug_bounds("name-sidebar-child").unwrap().right() <= first.left());
                 assert!(cx.debug_bounds("dirty-sidebar-child").is_some());
-                // Debug bounds outlive the element that recorded them, so a
-                // rounded frame cannot prove tree lines absent here; see
-                // `rounded_rows_drop_tree_lines_and_title_headers`.
-                if !rounded {
-                    let gutter = cx.debug_bounds("tree-sidebar-child").unwrap();
-                    assert_eq!(
-                        gutter.left(),
-                        cx.debug_bounds("column-agent-launcher").unwrap().left()
-                    );
-                }
+                // Rounded rows hang worktrees from the same guide as flat
+                // ones, under the parent's label column.
+                let gutter = cx.debug_bounds("tree-sidebar-child").unwrap();
+                assert_eq!(
+                    gutter.left(),
+                    cx.debug_bounds("column-agent-launcher").unwrap().left()
+                );
                 let arrow = cx.debug_bounds("collapse-3").unwrap();
                 let parent = cx.debug_bounds("row-agent-launcher").unwrap();
                 assert!(arrow.top() >= parent.top() && arrow.bottom() <= parent.bottom());
@@ -334,7 +331,7 @@ fn sidebar_densities_keep_details_and_badges_within_their_rows(cx: &mut gpui::Te
 }
 
 #[gpui::test]
-fn rounded_rows_drop_tree_lines_and_title_headers(cx: &mut gpui::TestAppContext) {
+fn rounded_rows_keep_tree_lines_and_title_headers(cx: &mut gpui::TestAppContext) {
     use crate::config::{Density, LayoutMode, Style};
     // A fresh window per mode: GPUI keeps debug bounds from earlier frames,
     // so absence is only observable when the element never rendered.
@@ -351,10 +348,8 @@ fn rounded_rows_drop_tree_lines_and_title_headers(cx: &mut gpui::TestAppContext)
             full_draw(window, cx).clear(cx);
         });
         assert!(cx.debug_bounds("row-sidebar-child").is_some());
-        assert_eq!(
-            cx.debug_bounds("tree-sidebar-child").is_some(),
-            style == Style::Flat
-        );
+        // `[worktrees]` hangs worktrees from guides in both styles.
+        assert!(cx.debug_bounds("tree-sidebar-child").is_some());
         let heading = cx.debug_bounds("header-spaces").unwrap();
         let row = cx.debug_bounds("row-herdr").unwrap();
         let column = cx.debug_bounds("column-herdr").unwrap();

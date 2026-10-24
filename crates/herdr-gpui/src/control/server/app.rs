@@ -287,6 +287,16 @@ pub(super) fn ui(call: Call<UiOp>, cx: &mut App) -> Response {
                     "The activity bar is off: [sidebar] activity_bar = false",
                 );
             }
+            if !view.activity_panel_listed(panel) {
+                return Response::error(
+                    ErrorCode::Unsupported,
+                    format!(
+                        "{} is turned off: [sidebar] {} = false",
+                        panel.name(),
+                        panel.name()
+                    ),
+                );
+            }
             view.show_activity_panel(panel, window, cx);
             Response::done(format!("Showing {}", panel.name()))
         }

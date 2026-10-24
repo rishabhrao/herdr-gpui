@@ -21,8 +21,6 @@ fn abandoned(stage: Stage) -> Carry {
             place: place(crate::endpoint::LOCAL),
             workspace_id: "w1".into(),
             pane_id: "inactive".into(),
-            repo_key: "/repo/.git".into(),
-            repo_label: "repo".into(),
         },
         destination: "There".into(),
         stage,
@@ -48,7 +46,7 @@ fn a_lost_worker_fails_the_review_or_move() {
     assert!(!carry.moving());
 
     // A review that already answered is not disturbed by its worker ending.
-    let mut carry = abandoned(Stage::Ready(Box::new(shell_review(place("ssh:there")))));
+    let mut carry = abandoned(Stage::Ready(shell_review(place("ssh:there"))));
     assert!(matches!(carry.poll(), (false, None)));
     assert!(matches!(carry.stage, Stage::Ready(_)));
 }
@@ -69,9 +67,7 @@ fn an_agent_that_starts_working_during_the_review_is_not_moved(cx: &mut TestAppC
     });
     cx.update(|window, cx| {
         view.update(cx, |v, cx| {
-            v.pane_carry = Some(abandoned(Stage::Ready(Box::new(shell_review(place(
-                "ssh:there",
-            ))))));
+            v.pane_carry = Some(abandoned(Stage::Ready(shell_review(place("ssh:there")))));
             v.menu.page = Some(Page::CarryPane);
             v.submit_carry(window, cx);
             let carry = v.pane_carry.as_ref().unwrap();
@@ -83,3 +79,5 @@ fn an_agent_that_starts_working_during_the_review_is_not_moved(cx: &mut TestAppC
         });
     });
 }
+
+mod session_only;

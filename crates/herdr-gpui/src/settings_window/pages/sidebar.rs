@@ -3,8 +3,8 @@
 use super::{SettingsWindow, on_value, ui};
 use crate::{
     config::{
-        AgentsPlacement, Config, DeviceFooter, LayoutMode, SelectMode, SidebarOverrides,
-        preferences::Preference,
+        AgentsPlacement, ChangeCounts, Config, DeviceFooter, LayoutMode, SelectMode,
+        SidebarOverrides, preferences::Preference,
     },
     settings_window::{
         inputs::{DropdownField, NumberField},
@@ -160,6 +160,46 @@ impl SettingsWindow {
                     .control(self.layout_dropdown(ready, cx)),
             )
             .child(
+                ui::row(theme, "sidebar-activity-bar", "Show activity bar")
+                    .description(
+                        "The icon column at the window's left edge that switches between \
+                         workspaces, overview, pull requests, issues, security, automations and usage.",
+                    )
+                    .switch(
+                        ui::toggle(
+                            theme,
+                            "sidebar-activity-bar-toggle",
+                            self.config.sidebar_style.activity_bar,
+                            ready,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let mut intent = SidebarIntent::of(&this.config);
+                            intent.style.activity_bar = !intent.style.activity_bar;
+                            this.commit_sidebar(intent, cx);
+                        })),
+                    ),
+            )
+            .child(
+                ui::row(theme, "sidebar-automations", "Show automations")
+                    .description(
+                        "The activity bar's Automations section. Off, Herdr UI neither reads \
+                         nor starts any host's automation daemon.",
+                    )
+                    .switch(
+                        ui::toggle(
+                            theme,
+                            "sidebar-automations-toggle",
+                            self.config.sidebar_style.automations,
+                            ready,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let mut intent = SidebarIntent::of(&this.config);
+                            intent.style.automations = !intent.style.automations;
+                            this.commit_sidebar(intent, cx);
+                        })),
+                    ),
+            )
+            .child(
                 ui::row(theme, "sidebar-select", "Selection marks")
                     .description("What selecting a workspace highlights beyond its own row.")
                     .control(ui::segmented(
@@ -198,6 +238,28 @@ impl SettingsWindow {
                         on_value(cx, |this, footer, _, cx| {
                             let mut intent = SidebarIntent::of(&this.config);
                             intent.style.device_footer = footer;
+                            this.commit_sidebar(intent, cx);
+                        }),
+                    )),
+            )
+            .child(
+                ui::row(theme, "sidebar-change-counts", "Change counts")
+                    .description(
+                        "The +added/-deleted lines under a worktree: its pull request's, or \
+                         its uncommitted changes against HEAD.",
+                    )
+                    .control(ui::segmented(
+                        theme,
+                        "sidebar-change-counts-control",
+                        &[
+                            (ChangeCounts::PullRequest, "Pull request"),
+                            (ChangeCounts::Local, "Uncommitted"),
+                        ],
+                        Some(self.config.sidebar_style.change_counts),
+                        ready,
+                        on_value(cx, |this, counts, _, cx| {
+                            let mut intent = SidebarIntent::of(&this.config);
+                            intent.style.change_counts = counts;
                             this.commit_sidebar(intent, cx);
                         }),
                     )),

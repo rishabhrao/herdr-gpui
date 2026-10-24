@@ -7,10 +7,12 @@ use crate::{
 };
 
 mod back;
+mod bubbles;
 mod counts;
 mod drawer;
 mod layout;
 mod sections;
+mod startup_counts;
 mod toggle;
 
 fn item(native_id: &str, title: &str) -> Item {

@@ -10,8 +10,14 @@ fn setting(view: &mut HerdrWindow, provider: CloudProvider) -> Option<&mut Optio
         CloudProvider::Boat => Some(&mut view.config.boat.api_url),
         #[cfg(feature = "coder")]
         CloudProvider::Coder => Some(&mut view.config.coder.url),
+        #[cfg(feature = "container")]
+        CloudProvider::Container => None,
         #[cfg(feature = "daytona")]
         CloudProvider::Daytona => Some(&mut view.config.daytona.api_url),
+        #[cfg(feature = "opensandbox")]
+        CloudProvider::OpenSandbox => Some(&mut view.config.opensandbox.api_url),
+        #[cfg(feature = "sprites")]
+        CloudProvider::Sprites => Some(&mut view.config.sprites.api_url),
         #[cfg(feature = "railway")]
         CloudProvider::Railway => {
             let _ = view;
@@ -32,8 +38,16 @@ fn account(provider: CloudProvider) -> Option<(&'static str, &'static str)> {
         CloudProvider::Boat => Some(("HERDR_BOAT_API_URL", "https://boat.dev/api/v1")),
         #[cfg(feature = "coder")]
         CloudProvider::Coder => Some(("HERDR_CODER_URL", "https://coder.example.com")),
+        #[cfg(feature = "container")]
+        CloudProvider::Container => None,
         #[cfg(feature = "daytona")]
         CloudProvider::Daytona => Some(("HERDR_DAYTONA_API_URL", "https://app.daytona.io/api")),
+        #[cfg(feature = "opensandbox")]
+        CloudProvider::OpenSandbox => {
+            Some(("HERDR_OPENSANDBOX_API_URL", "https://sandbox.example.com"))
+        }
+        #[cfg(feature = "sprites")]
+        CloudProvider::Sprites => Some(("HERDR_SPRITES_API_URL", "https://api.sprites.dev")),
         #[cfg(feature = "railway")]
         CloudProvider::Railway => None,
     }

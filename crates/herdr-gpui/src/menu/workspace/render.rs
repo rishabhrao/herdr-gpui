@@ -59,11 +59,24 @@ impl HerdrWindow {
             );
         let creating = self.menu.creation.is_some() || dispatching;
         // Another host chosen in the picker, where the new checkout goes.
-        let dispatched = self
+        let destination = self
             .menu
             .dispatch
             .as_ref()
-            .and_then(|picker| picker.dispatched());
+            .map_or(crate::dispatch::Destination::Here, |picker| {
+                picker.destination()
+            });
+        let dispatched = match destination {
+            crate::dispatch::Destination::Host(host) => Some(host),
+            _ => None,
+        };
+        // A new machine the provider makes first, where the checkout goes.
+        let sandbox = match destination {
+            crate::dispatch::Destination::Sandbox(sandbox) => {
+                Some(crate::dispatch::sandbox_words(sandbox))
+            }
+            _ => None,
+        };
         // Until the daemon names the checkout there is nothing to confirm, and a
         // request already in flight leaves nothing to press either.
         let armed = (action != WorkspaceAction::DeleteWorktree
@@ -93,10 +106,10 @@ impl HerdrWindow {
         let (title, submit): (&str, SharedString) = match action {
             WorkspaceAction::Rename => ("Rename workspace", "Rename".into()),
             WorkspaceAction::Close => (target.close_label(), target.close_label().into()),
-            WorkspaceAction::NewWorktree => ("New worktree", create_label(dispatched)),
+            WorkspaceAction::NewWorktree => ("New worktree", create_label(destination)),
             WorkspaceAction::OpenWorktree => ("Open worktree", "Open".into()),
             WorkspaceAction::NewTab => ("New tab", "Create".into()),
-            WorkspaceAction::NewWorkspace => ("New workspace", create_label(dispatched)),
+            WorkspaceAction::NewWorkspace => ("New workspace", create_label(destination)),
             WorkspaceAction::Note => ("Note", "Save".into()),
             WorkspaceAction::DeleteWorktree if force => {
                 ("Force delete checkout?", "Force remove".into())
@@ -140,6 +153,11 @@ impl HerdrWindow {
                         host.label,
                         clone_note(host)
                     ))
+                }))
+                .children(sandbox.clone().map(|machine| {
+                    div().text_color(rgb(theme.subtext())).child(format!(
+                        "Makes {machine}, clones the repository there, and opens it."
+                    ))
                 })),
             WorkspaceAction::Close => body.child(div().text_color(rgb(theme.subtext())).child(format!(
                 "Closes {} workspace(s) and terminates their running terminals. Checkout files and branches are not deleted.",
@@ -177,14 +195,18 @@ impl HerdrWindow {
                         .as_ref()
                         .map(|picker| self.render_host_picker(picker, row, cx)),
                 )
-                .child(match dispatched {
-                    Some(host) => format!(
+                .child(match (dispatched, &sandbox) {
+                    (Some(host), _) => format!(
                         "Creates a worktree from {} on {}{}, without granting repository trust:",
                         target.base_label(),
                         host.label,
                         clone_note(host)
                     ),
-                    None => format!(
+                    (None, Some(machine)) => format!(
+                        "Makes {machine} and creates a worktree from {} there, cloning the repository first, without granting repository trust:",
+                        target.base_label(),
+                    ),
+                    (None, None) => format!(
                         "Creates this folder from {}, without granting repository trust:",
                         target.base_label()
                     ),
@@ -196,9 +218,12 @@ impl HerdrWindow {
                         .bg(rgb(theme.active))
                         .px(px(10.))
                         .py(px(6.))
-                        .child(match dispatched {
-                            Some(host) => format!("{}'s daemon chooses the checkout.", host.label),
-                            None => self.checkout_preview(),
+                        .child(match (dispatched, &sandbox) {
+                            (Some(host), _) => {
+                                format!("{}'s daemon chooses the checkout.", host.label)
+                            }
+                            (None, Some(_)) => "Its daemon chooses the checkout.".to_owned(),
+                            (None, None) => self.checkout_preview(),
                         }),
                 )
             }
@@ -481,10 +506,13 @@ impl HerdrWindow {
 }
 
 /// The submit button of a dialog that may create on another host.
-fn create_label(dispatched: Option<&crate::dispatch::Candidate>) -> SharedString {
-    match dispatched {
-        Some(host) => format!("Create on {}", host.label).into(),
-        None => "Create".into(),
+fn create_label(destination: crate::dispatch::Destination<'_>) -> SharedString {
+    match destination {
+        crate::dispatch::Destination::Here => "Create".into(),
+        crate::dispatch::Destination::Host(host) => format!("Create on {}", host.label).into(),
+        crate::dispatch::Destination::Sandbox(sandbox) => {
+            format!("Create in {}", crate::dispatch::sandbox_words(sandbox)).into()
+        }
     }
 }
 

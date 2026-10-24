@@ -28,7 +28,7 @@
 #define AppName "Herdr UI"
 #define AppExe "herdr-gpui.exe"
 #define Launcher "herdr-gpui-launcher.exe"
-; The app's AppUserModelID (constants::APP_ID), which each window carries with
+; The app's AppUserModelID (herdr_updater::APP_ID), which each window carries with
 ; relaunch properties naming the launcher (src/taskbar.rs). Shortcuts carry it
 ; too, so a pinned shortcut and the window share one taskbar button.
 #define AppUserModelID "so.pen.herdr-gpui"

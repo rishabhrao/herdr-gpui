@@ -53,13 +53,19 @@ fn ui_panel_shows_a_section_and_workspaces_expands_the_sidebar(cx: &mut gpui::Te
 }
 
 #[gpui::test]
-fn ui_panel_shows_the_overview_and_usage_across_the_window(cx: &mut gpui::TestAppContext) {
+fn ui_panel_shows_the_overview_automations_and_usage_across_the_window(
+    cx: &mut gpui::TestAppContext,
+) {
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = fixture_window(window, cx);
         view.config.sidebar_style.activity_bar = true;
         view
     });
-    for panel in [ActivityPanel::Overview, ActivityPanel::Usage] {
+    for panel in [
+        ActivityPanel::Overview,
+        ActivityPanel::Automations,
+        ActivityPanel::Usage,
+    ] {
         let shown = cx.cx.update(|cx| ui(call(UiOp::Panel { panel }), cx));
         assert!(matches!(shown, Response::Done { .. }), "{shown:?}");
         cx.cx.update(|cx| {

@@ -3,8 +3,11 @@ use crate::config::{FontFace, LayoutMode};
 use crate::settings_window::inputs::NumberField;
 use core::prelude::v1::test;
 
+mod activity_bar;
 mod agents_placement;
+mod automations;
 mod backdrop;
+mod change_counts;
 mod device_icons;
 mod features;
 mod focus_follows_mouse;

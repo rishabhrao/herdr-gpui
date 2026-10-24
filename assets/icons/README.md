@@ -27,6 +27,31 @@ to package `Herdr.icns`. It also compiles `Herdr.car` (see below) and
 regenerates the PNG exports.
 Assets are checked in, so ordinary builds do not require Swift, librsvg, or Xcode.
 
+### GitHub App
+
+Upload `herdr-github-app.png` for the GitHub App logo. This 1024x1024 PNG
+uses a centered, redrawn ram head with transparent cutouts and no tile or cropped
+body. Set GitHub's badge background color to `#f4f1e9` (ivory) or `#ffffff`
+(white) for contrast with the graphite mark.
+
+The editable source is `herdr-github-app.svg`. Regenerate the upload with:
+
+```sh
+rsvg-convert -w 1024 -h 1024 assets/icons/herdr-github-app.svg \
+  -o assets/icons/herdr-github-app.png
+```
+
+`herdr-github-app-200.png` is an alternative 200x200 upload, rendered directly
+from the vector source rather than resized from the larger PNG:
+
+```sh
+rsvg-convert -w 200 -h 200 assets/icons/herdr-github-app.svg \
+  -o assets/icons/herdr-github-app-200.png
+```
+
+GitHub controls thumbnail sizing; a crisp source does not guarantee that its
+badge preview will remain sharp when enlarged or viewed at browser zoom.
+
 ### Linux desktops
 
 The tarball, Debian, RPM, Arch, and Nix packages install the circular SVG at

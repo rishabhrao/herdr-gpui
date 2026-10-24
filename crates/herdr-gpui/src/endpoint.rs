@@ -232,6 +232,14 @@ impl Endpoint {
         }
     }
 
+    /// Keeps a test fixture's endpoint from dialing its made-up target, whose
+    /// failure would otherwise drop the window back to Local at a moment that
+    /// depends on the machine's speed.
+    #[cfg(test)]
+    pub(crate) fn never_connect(&mut self) {
+        self.retry_at = Instant::now() + Duration::from_secs(3600);
+    }
+
     fn stop(&mut self) {
         self.toasts.entries.clear();
         self.connection.detach(false);
@@ -276,6 +284,9 @@ impl Endpoint {
     }
 
     fn connect(&mut self, options: ConnectOptions, active: bool) {
+        if self.suspended() {
+            return;
+        }
         self.stop();
         self.detached = false;
         self.initial_surface = active;
@@ -379,6 +390,12 @@ impl Endpoint {
         self.retry_at = self.retry_at.min(now);
     }
 
+    /// When the current connection came up with a snapshot, while it is up.
+    /// Each reconnection gives a new instant.
+    pub(crate) fn online_since(&self) -> Option<Instant> {
+        self.online_since
+    }
+
     /// Why the endpoint is reconnecting, while it is.
     pub(crate) fn outage(&self) -> Option<&str> {
         self.outage.as_deref()
@@ -388,9 +405,19 @@ impl Endpoint {
         Duration::from_millis(500u64 << self.attempts.min(8)).min(MAX_RETRY_DELAY)
     }
 
+    fn suspended(&self) -> bool {
+        #[cfg(feature = "container")]
+        if crate::container::lifecycle::suspended(&self.connection.target) {
+            return true;
+        }
+        false
+    }
+
     pub fn status(&self) -> &'static str {
         if !self.enabled {
             "disabled"
+        } else if self.suspended() {
+            "stopped"
         } else if self.detached {
             "detached"
         } else if let Some(mismatch) = &self.version_mismatch {
@@ -464,6 +491,8 @@ impl HerdrWindow {
         }
         self.install_warning_shown = false;
         self.version_notice_shown = false;
+        #[cfg(feature = "container")]
+        crate::container::lifecycle::resume(&self.endpoints[index].connection.target);
         self.endpoints[index].attempts = 0;
         self.endpoints[index].connect(self.options, index == 0);
         self.reset_selected(cx);

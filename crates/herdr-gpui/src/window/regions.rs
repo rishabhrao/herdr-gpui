@@ -372,7 +372,16 @@ impl HerdrWindow {
             return Vec::new();
         };
         let mut previous = std::mem::take(&mut self.regions);
+        // A chat view covers its pane's cells and paints its own background,
+        // so they are not painted under it: on macOS a page in the chat
+        // shows from beneath the window's drawing, and cells would cover it.
+        let covered = |owner: &Owner| {
+            surface.popup.is_none() && matches!(owner, Owner::Pane(id) if self.chats.shown(id))
+        };
         for (owner, area) in partition(&surface.frame, &surface.panes) {
+            if covered(&owner) {
+                continue;
+            }
             let slide = match &owner {
                 Owner::Pane(id) => slide.take_if(|slide| slide.pane_id == *id),
                 Owner::Chrome => None,

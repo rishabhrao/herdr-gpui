@@ -35,6 +35,7 @@ while let Ok(event) = client.events.recv() {
 connect(ConnectTarget, ConnectOptions) -> Result<Client>
 connect_with_surface_active(ConnectTarget, ConnectOptions, bool) -> Result<Client>
 load_saved_hosts(development: bool) -> Result<Vec<SavedHost>>
+store_saved_host(development: bool, host: &SavedHost) -> Result<SavedHost>
 load_saved_host_selection(development: bool) -> Result<(Vec<SavedHost>, Option<String>)>
 store_saved_host_selection(development: bool, selected: Option<&str>) -> Result<()>
 SavedHost { pub id: String, pub label: String, pub target: String, pub session: String, pub enabled: bool }
@@ -53,6 +54,14 @@ delete_remote_session(target: &str, name: &str) -> Result<()>
 ConnectOptions { surface_size: ClientSurfaceSize, cell_width_px: u32, cell_height_px: u32 }
 HostTheme { pub foreground: ClientHostColor, pub background: ClientHostColor, pub palette: [ClientHostColor; 256], pub appearance: ClientHostAppearance }
 ```
+
+`store_saved_host` atomically appends a validated profile without connecting to
+or provisioning the remote host. It preserves existing profiles and selection,
+enforces the catalog's count and byte limits, and returns the existing profile
+for an exact target/session duplicate. Callers check connectivity and resolve
+SSH aliases before saving. Calls are serialized within this process; Herdr's
+CLI does not participate in a shared catalog lock. Like the catalog loaders,
+this is blocking worker-only I/O.
 
 Session listing and deletion are blocking worker-only functions. Deletion
 requires explicit user confirmation: it delegates stopping the named session
@@ -150,6 +159,17 @@ stdin and stdout, overlapped on this end, with the same deadlines; the standard 
 `Stdio::piped` ends are not documented to be overlapped.
 If adapting a typed error to that callback, use
 `io::Error::new(error.kind(), error)`, not `error.to_string()`, to retain sources.
+
+`private_endpoint` is a local channel only the current user can reach, for
+the user's own programs (the `herdr-acp` chat and the app attached to it): on
+Unix a socket of mode 0600 in a directory of mode 0700, on Windows a named pipe
+created as the first instance with a DACL admitting only the user and refusing
+remote clients. A client checks the pipe's owner is the caller before sending
+anything; `user_sid` and `owner_sid` are those checks, also used by the app's
+control pipe. A connection splits into a reader, a writer, and a closer that
+ends the reader from any thread. Windows reads peek before reading, like the
+control pipe, so a read honours its timeout and a closer can end it; the SID
+lookups are the module's only `unsafe`.
 
 Catalog and selection failures carry `Error::Storage { operation, path, source }`.
 `StorageOperation` distinguishes filesystem, encoding, decoding, and validation
@@ -317,7 +337,15 @@ not execute escape sequences, read graphics file paths, or mutate the clipboard.
 - One dedicated thread owns connect, handshake, ordered writes, and reads.
 - 64 channel-queued commands plus one worker-held command, 8 ordered events,
   and one in-flight API request. A waiting request holds later commands in FIFO
-  order until the preceding response is complete. Events
+  order until the preceding response is complete. The one exception is a
+  `client_shell.surface.set` queued directly behind `pane.focus`, `tab.focus`, or
+  `workspace.focus`: Herdr applies that focus synchronously and handles surface
+  activation before its busy check, so the activation follows unacknowledged.
+  Its response is delivered after the focus response. If a daemon refuses it as
+  `endpoint_busy`, it is resent once after focus completes and the connection
+  stops pipelining; focus is never resent. No capability promises this
+  ordering, so only stable Herdr 0.9.0 through 0.9.5, whose sources were
+  checked, pipeline it; other versions keep the serialized order. Events
   use backpressure rather than losing snapshots, input, patches, or responses.
 - 2 MiB ordinary outbound payload cap; clipboard images alone allow 16 MiB of
   data plus 2048 bytes of bounded envelope overhead. 32 MiB inbound cap (semantic

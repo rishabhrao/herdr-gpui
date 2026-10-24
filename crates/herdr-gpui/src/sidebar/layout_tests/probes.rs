@@ -6,16 +6,16 @@ fn native_child_probe_reports_geometry_and_glyph_failures_without_panicking() {
     // Rounded rows move content in by the highlight's inset, the density's
     // gap, on both edges.
     for (mode, left, width) in [
-        (LayoutMode::from(Density::Comfortable), 56., 145.),
-        (LayoutMode::from(Density::Normal), 44., 161.),
-        (LayoutMode::from(Density::Compact), 38., 169.),
+        (LayoutMode::from(Density::Comfortable), 56., 163.),
+        (LayoutMode::from(Density::Normal), 44., 179.),
+        (LayoutMode::from(Density::Compact), 38., 187.),
         (
             LayoutMode::new(Density::Comfortable, Style::Rounded),
             64.,
-            129.,
+            147.,
         ),
-        (LayoutMode::new(Density::Normal, Style::Rounded), 50., 149.),
-        (LayoutMode::new(Density::Compact, Style::Rounded), 42., 161.),
+        (LayoutMode::new(Density::Normal, Style::Rounded), 50., 167.),
+        (LayoutMode::new(Density::Compact, Style::Rounded), 42., 179.),
     ] {
         let bounds = Bounds::new(point(px(left), px(100.)), size(px(width), px(16.)));
         let mut probe = PaintedText {

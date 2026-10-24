@@ -28,6 +28,7 @@ use std::{
 
 mod commands;
 mod errors;
+mod focus_barrier;
 mod framing;
 mod handshake;
 mod health;

@@ -337,7 +337,18 @@ pub(crate) static PROVIDER_ICONS: &[(&str, &[u8])] = &[
 ];
 
 /// The logo for a provider id, when one ships.
-pub(crate) fn for_id(id: &str) -> Option<&'static str> {
+/// The icon `provider` shows: the one it names, else its own logo, else a
+/// generic mark.
+pub(crate) fn path(provider: super::Provider) -> &'static str {
+    provider
+        .service()
+        .meta()
+        .icon
+        .or_else(|| for_id(provider.id()))
+        .unwrap_or("icons/agent-generic.svg")
+}
+
+fn for_id(id: &str) -> Option<&'static str> {
     PROVIDER_ICONS.iter().map(|(path, _)| *path).find(|path| {
         path.strip_prefix("icons/providers/")
             .and_then(|file| file.strip_suffix(".svg"))

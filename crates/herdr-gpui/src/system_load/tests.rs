@@ -159,9 +159,9 @@ fn history_is_bounded_and_a_failure_keeps_the_last_sample() {
     assert_eq!(reading.history().len(), HISTORY);
     assert_eq!(reading.history().next(), Some(3.));
     let shown = reading.latest().copied();
-    reading.apply(Err(Error::SystemLoadRemote(Box::new(
-        Error::UsageUnreachable,
-    ))));
+    reading.apply(Err(Error::SystemLoadRemote(Box::new(Error::Usage(
+        herdr_usage::Error::Unreachable,
+    )))));
     assert_eq!(
         reading.latest().copied(),
         shown,

@@ -64,9 +64,9 @@ impl Source {
                 primed: false,
                 disk: HomeDisk::open(),
             }),
-            Host::Ssh(target) => Self::remote(Shell::connect(target)),
+            Host::Ssh(target) => Self::remote(Shell::connect(target).map_err(Error::from)),
             // A distribution is sampled as a Linux host, through `wsl.exe`.
-            Host::Wsl(distro) => Self::remote(Shell::connect_wsl(distro)),
+            Host::Wsl(distro) => Self::remote(Shell::connect_wsl(distro).map_err(Error::from)),
             #[cfg(all(feature = "azure", unix))]
             Host::Azure { account, id } => Self::remote(azure_shell(account, id)),
             // A remote shell needs a Unix client, as an SSH host's does.
@@ -182,11 +182,11 @@ fn azure_shell(account: &str, id: &str) -> Result<Shell> {
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
-    Shell::start(command)
+    Ok(Shell::start(command)?)
 }
 
-fn remote(error: Error) -> Error {
-    Error::SystemLoadRemote(Box::new(error))
+fn remote(error: impl Into<Error>) -> Error {
+    Error::SystemLoadRemote(Box::new(error.into()))
 }
 
 /// Tells a worker to stop, waking it from its wait between samples. The

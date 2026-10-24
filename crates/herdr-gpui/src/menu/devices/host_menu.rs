@@ -78,11 +78,16 @@ pub(crate) struct HostMenu {
     /// Also delete the device's own GitHub sign-in. Offered only when it has
     /// one, since its account panel disappears with the device.
     forget_github: bool,
-    /// Delete an Azure device's machine at Azure, with everything it bills
-    /// for, before forgetting it: what Remove does for Azure unless Remove
-    /// from Herdr only is chosen, since a forgotten machine keeps billing.
-    #[cfg(feature = "azure")]
+    /// Delete a cloud device's machine at its provider, with everything it
+    /// bills for, before forgetting it: what Remove does for a provider that
+    /// can unless Remove from Herdr only is chosen, since a forgotten machine
+    /// keeps billing.
+    #[cfg(feature = "cloud")]
     destroy: bool,
+    /// What the machine holds that is pushed nowhere, looked for when the
+    /// Remove page opens on a device its provider can delete.
+    #[cfg(feature = "cloud")]
+    unsynced: destroy::Unsynced,
     /// The new name while renaming, or the port to forward.
     input: Option<Entity<SearchInput>>,
     renaming: bool,
@@ -210,8 +215,10 @@ impl HerdrWindow {
             session: session.to_owned(),
             selected: None,
             forget_github: true,
-            #[cfg(feature = "azure")]
+            #[cfg(feature = "cloud")]
             destroy: true,
+            #[cfg(feature = "cloud")]
+            unsynced: destroy::Unsynced::default(),
             input: None,
             renaming: false,
             error: None,
@@ -303,7 +310,11 @@ impl HerdrWindow {
                 }
                 self.menu.page = Some(Page::ForwardPort);
             }
-            Action::Remove => self.menu.page = Some(Page::RemoveDevice),
+            Action::Remove => {
+                self.menu.page = Some(Page::RemoveDevice);
+                #[cfg(feature = "cloud")]
+                self.check_unsynced(cx);
+            }
         }
         cx.notify();
     }
@@ -389,6 +400,15 @@ impl HerdrWindow {
     /// catalog drops the device, its sidebar header pulses the way a worktree
     /// row does while it is removed; a failure is reported in the status bar.
     fn confirm_remove_device(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(feature = "cloud")]
+        if self
+            .menu
+            .host
+            .as_ref()
+            .is_some_and(HostMenu::awaiting_check)
+        {
+            return;
+        }
         let Some(host) = self.menu.host.take() else {
             tracing::warn!(
                 category = "device_remove",
@@ -397,10 +417,10 @@ impl HerdrWindow {
             return;
         };
         let forget = host.forget_github && self.host_has_github(&host.id);
-        #[cfg(feature = "azure")]
-        let destroy = host.destroy && host.is_azure();
+        #[cfg(feature = "cloud")]
+        let deletion = host.deletion().filter(|_| host.destroy);
         let store = self.menu.github_hosts.get(&host.id).map_or_else(
-            || crate::github::Store::select(&self.config),
+            || crate::github::select_store(&self.config.github),
             |auth| auth.store(),
         );
         let HostMenu {
@@ -420,21 +440,21 @@ impl HerdrWindow {
                     let _claim = setup::claim_saved(&target, &session)?;
                     setup::remove(&profile)?;
                     Ok::<_, crate::Error>(match Account::host(&profile).filter(|_| forget) {
-                        Some(account) => crate::github::forget(store, &account),
+                        Some(account) => crate::github::forget(store, &account).map_err(Into::into),
                         None => Ok(()),
                     })
                 }
                 // The machine itself is left as it is at the provider, unless
-                // an Azure one was asked to go too: then it goes first, and a
-                // failure keeps the device listed rather than billing unseen.
+                // it was asked to go too: then it goes first, and a failure
+                // keeps the device listed rather than billing unseen.
                 #[cfg(feature = "cloud")]
                 Saved::Cloud { provider, id } => {
+                    if let Some(deletion) = deletion {
+                        (deletion.run)(&id)?;
+                        return Ok(Ok(()));
+                    }
                     #[cfg(feature = "azure")]
                     if provider == herdr_client::CloudProvider::Azure {
-                        if destroy {
-                            crate::azure::destroy::destroy_saved(&id)?;
-                            return Ok(Ok(()));
-                        }
                         crate::azure::forget_activity(&id);
                     }
                     crate::cloud::remove(provider, &id)?;
@@ -715,6 +735,7 @@ impl HerdrWindow {
                     .text_color(rgb(theme.subtext()))
                     .child(removal_note(host)),
             )
+            .children(self.unsynced_note(host))
             .when(github, |body| {
                 body.child(
                     div()
@@ -881,7 +902,7 @@ fn rename(saved: &Saved, label: &str) -> crate::Result<()> {
 /// What removal does, as the confirmation says it: an SSH device leaves its
 /// host's Herdr running, a cloud device leaves its machine at the provider.
 fn removal_note(host: &HostMenu) -> String {
-    #[cfg(feature = "azure")]
+    #[cfg(feature = "cloud")]
     if let Some(note) = destroy::removal_note(host) {
         return note;
     }
@@ -901,21 +922,25 @@ fn removal_note(host: &HostMenu) -> String {
     }
 }
 
-#[cfg(feature = "azure")]
+#[cfg(feature = "cloud")]
 mod destroy;
-#[cfg(feature = "azure")]
+#[cfg(feature = "cloud")]
 use destroy::remove_label;
 mod forwards;
 mod theme;
 
-#[cfg(not(feature = "azure"))]
+#[cfg(not(feature = "cloud"))]
 impl HerdrWindow {
     fn remove_only_button(&self, _: &HostMenu, _: &mut Context<Self>) -> Option<Div> {
         None
     }
+
+    fn unsynced_note(&self, _: &HostMenu) -> Option<Div> {
+        None
+    }
 }
 
-#[cfg(not(feature = "azure"))]
+#[cfg(not(feature = "cloud"))]
 fn remove_label(_: &HostMenu) -> String {
     "Remove".to_owned()
 }

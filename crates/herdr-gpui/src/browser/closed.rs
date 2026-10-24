@@ -145,7 +145,7 @@ impl ClosedTabs {
         let entries = self.workspace_mut(key);
         entries.retain(|entry| match entry {
             ClosedTab::Page(earlier) => {
-                earlier.id != tab.id && (!tab.place.is_code() || !earlier.place.is_code())
+                earlier.id != tab.id && (!tab.place.is_editor() || earlier.place != tab.place)
             }
             ClosedTab::Herdr(_) => true,
         });
@@ -258,8 +258,8 @@ impl Store {
     /// Reopens a closed browser tab in its workspace, reusing a singleton tab
     /// when the workspace already has one open.
     pub(crate) fn reopen_page(&mut self, tab: Tab) -> Option<TabId> {
-        if tab.place.is_code()
-            && let Some(existing) = self.code_tab(&tab.scope, &tab.workspace_id)
+        if let Some(editor) = tab.place.editor()
+            && let Some(existing) = self.editor_tab(&tab.scope, &tab.workspace_id, editor)
         {
             return Some(existing.id);
         }

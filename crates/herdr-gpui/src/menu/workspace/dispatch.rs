@@ -1,32 +1,46 @@
 //! Submitting a new worktree or workspace dialog whose host picker chose
-//! another host: the work runs as a dispatch job instead of a daemon request.
+//! another host, or a new machine: the work runs as a dispatch job instead of
+//! a daemon request.
 
 use super::chosen_label;
-use crate::{HerdrWindow, dispatch::Job, menu::WorkspaceAction, teleport::Naming};
+use crate::{
+    HerdrWindow,
+    dispatch::{Destination, Job, Target},
+    menu::WorkspaceAction,
+    teleport::Naming,
+};
 
 impl HerdrWindow {
-    /// The other host the dialog's picker chose, when the open form creates
-    /// through it. A GitHub listing creates its own checkouts on this host.
-    pub(in crate::menu) fn dispatch_choice(&self, action: WorkspaceAction) -> Option<String> {
+    /// Where the dialog's picker sends the new checkout when it is not this
+    /// host. A GitHub listing creates its own checkouts on this host.
+    pub(in crate::menu) fn dispatch_choice(&self, action: WorkspaceAction) -> Option<Target> {
         let creates = match action {
             WorkspaceAction::NewWorktree => !self.worktree_listing(),
             WorkspaceAction::NewWorkspace => true,
             _ => false,
         };
-        creates
-            .then(|| self.menu.dispatch.as_ref()?.dispatched())
-            .flatten()
-            .map(|host| host.endpoint_id.clone())
+        if !creates {
+            return None;
+        }
+        match self.menu.dispatch.as_ref()?.destination() {
+            Destination::Here => None,
+            Destination::Host(host) => Some(Target::Host(host.endpoint_id.clone())),
+            Destination::Sandbox(sandbox) => Some(Target::Sandbox(sandbox)),
+        }
     }
 
-    /// Start creating on `endpoint_id`. The dialog stays open on the job's
+    /// Start creating on `target`. The dialog stays open on the job's
     /// progress, and the window follows the result once it lands.
     pub(in crate::menu) fn submit_dispatch(
         &mut self,
         action: WorkspaceAction,
-        endpoint_id: &str,
+        target: &Target,
         name: Option<String>,
     ) -> crate::Result<()> {
+        let endpoint_id = match target {
+            Target::Host(endpoint_id) => endpoint_id.as_str(),
+            Target::Sandbox(sandbox) => return self.submit_sandboxed(action, *sandbox, name),
+        };
         if self.dispatch_job.is_some() {
             return Err(crate::Error::DispatchBusy);
         }
@@ -49,27 +63,91 @@ impl HerdrWindow {
                 .map_or_else(|| endpoint_id.to_owned(), |e| e.label.clone());
             return Err(crate::Error::DispatchHostUnavailable(label));
         };
+        let job = match self.dispatch_then(action, name)? {
+            crate::dispatch::Then::Worktree { base, naming } => {
+                Job::worktree(origin, destination, base, naming)
+            }
+            crate::dispatch::Then::Workspace { label } => {
+                Job::workspace(origin, destination, label)
+            }
+        };
+        self.dispatch_job = Some(job);
+        self.menu.error = None;
+        Ok(())
+    }
+
+    /// What the open dialog asks for, from its fields.
+    fn dispatch_then(
+        &self,
+        action: WorkspaceAction,
+        name: Option<String>,
+    ) -> crate::Result<crate::dispatch::Then> {
+        let target = self
+            .menu
+            .target
+            .as_ref()
+            .ok_or(crate::Error::StaleWorkspace)?;
         let text = self
             .menu
             .input
             .as_ref()
             .map_or("", |input| input.text.as_str())
             .trim();
-        let job = if action == WorkspaceAction::NewWorktree {
+        Ok(if action == WorkspaceAction::NewWorktree {
             if !text.is_empty() {
                 crate::worktree::validate_branch(text)?;
             }
-            let naming = Naming {
-                branch: (!text.is_empty()).then(|| text.to_owned()),
-                label: name,
-            };
-            Job::worktree(origin, destination, target.base_ref()?, naming)
+            crate::dispatch::Then::Worktree {
+                base: target.base_ref()?,
+                naming: Naming {
+                    branch: (!text.is_empty()).then(|| text.to_owned()),
+                    label: name,
+                },
+            }
         } else {
-            let label = chosen_label(text, self.menu.suggested_name.as_deref()).map(str::to_owned);
-            Job::workspace(origin, destination, label)
-        };
-        self.dispatch_job = Some(job);
-        self.menu.error = None;
-        Ok(())
+            crate::dispatch::Then::Workspace {
+                label: chosen_label(text, self.menu.suggested_name.as_deref()).map(str::to_owned),
+            }
+        })
+    }
+
+    /// Start making a new machine from `sandbox`, then creating there.
+    fn submit_sandboxed(
+        &mut self,
+        action: WorkspaceAction,
+        sandbox: crate::dispatch::Sandbox,
+        name: Option<String>,
+    ) -> crate::Result<()> {
+        if self.dispatch_job.is_some() {
+            return Err(crate::Error::DispatchBusy);
+        }
+        let target = self
+            .menu
+            .target
+            .as_ref()
+            .ok_or(crate::Error::StaleWorkspace)?;
+        let tree = target
+            .worktree
+            .as_ref()
+            .ok_or(crate::Error::WorkspaceRepositoryChanged)?;
+        let origin = self
+            .dispatch_origin(&target.id, &tree.key, &tree.label)
+            .ok_or_else(|| {
+                crate::Error::DispatchHostUnavailable(
+                    self.endpoints[self.selected_endpoint].label.clone(),
+                )
+            })?;
+        let then = self.dispatch_then(action, name)?;
+        #[cfg(feature = "cloud")]
+        {
+            self.dispatch_job = Some(Job::sandboxed(sandbox, origin, then)?);
+            self.menu.error = None;
+            Ok(())
+        }
+        #[cfg(not(feature = "cloud"))]
+        {
+            let _ = (origin, then);
+            match sandbox {}
+        }
     }
 }

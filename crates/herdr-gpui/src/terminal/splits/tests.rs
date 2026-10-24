@@ -1,6 +1,8 @@
 use super::*;
 use herdr_client::protocol::{ClientShellPopupSurface, FrameData, PaneSurfacePane, SurfaceRect};
 
+mod even;
+
 fn rect(x: u16, y: u16, width: u16, height: u16) -> SurfaceRect {
     SurfaceRect {
         x,

@@ -108,6 +108,12 @@ show_network_quality = false
 # and momentum; false scrolls by whole rows. Applications reading the mouse
 # always get whole rows. Also under Settings > General.
 smooth_scroll = true
+# Linux only: draw minimize, maximize, and close buttons at the right end of the
+# menu bar. When true the window needs no title bar from the window manager;
+# disable server-side decorations in your compositor or window manager settings.
+# On Wayland without server-side decorations (GNOME), buttons are always shown
+# regardless of this setting.
+# show_window_controls = true
 
 # Focus split terminal panes on hover in the active window, without clicking.
 focus_follows_mouse = true
@@ -149,6 +155,13 @@ keep_selection_after_copy = true
 # only) draw rows with a design of their own. "devices" lists each device with
 # its agents under it, and a search over them. View > Layout lists them all.
 layout = "normal"
+# How tab strips draw their tabs: "classic" (even cells divided by a rule),
+# "pills" (rounded pills led by the agent's logo, the status after the title),
+# "outline" (bare titles, the chosen one in an outlined pill with its close
+# button), "underline" (flat titles, a bar under the chosen one), "cards"
+# (browser-like, the chosen tab joined to its terminal), or "compact" (icons
+# only, the chosen tab named). View > Tab Layout lists them all.
+tab_layout = "classic"
 
 [palette]
 # Two short Shift taps open the unified palette in the focused GUI window.
@@ -269,7 +282,7 @@ project_roots = []
 # cycle_windows = "cmd-`"
 # close_window = "cmd-alt-shift-w"
 # Unbound by default: themes, reconnect, logs, about, worktree_notes,
-# edit_worktree_note.
+# edit_worktree_note, review_changes, git_menu, toggle_annotate.
 
 # What the focused pane receives instead of a keystroke, as Ghostty's text:
 # binds do. The value is a key a terminal can receive (ctrl-a, home, alt-b,
@@ -334,6 +347,13 @@ size = 12
 # keep their shortcuts and command palette entries, and Devices Overview in
 # the palette still offers Add Device.
 # device_footer = "always"
+# Whose +added/-deleted line counts a worktree row shows: "pr" (its cached
+# pull request's) or "local" (the checkout's uncommitted changes against HEAD,
+# for checkouts on this machine, drawn inside the pencil chip that marks
+# uncommitted work). Only one set is shown. Local counts reuse
+# the uncommitted-work probe's slow schedule: one checkout at a time, each at
+# most every 30 seconds while the window is active.
+# change_counts = "pr"
 
 # The activity bar: an icon column at the window's left edge. Workspaces is
 # the sidebar beside the terminals; Orchestrator, Pull requests, and Issues
@@ -341,12 +361,32 @@ size = 12
 # Settings sits at its foot. false keeps the plain sidebar.
 # activity_bar = true
 
+# The bar's Automations section, which lists the herdr-automate scripts and
+# runs of every host. false hides it, and Herdr UI then neither reads nor
+# starts any host's automation daemon; daemons already running keep running.
+# automations = true
+
 # A colour per host, keyed by the host's name in the sidebar, as #rgb or
 # #rrggbb. It washes the host's header, its workspace rows, and its agents'
 # rows faintly, so a long list reads by colour. Names with spaces go in quotes.
 # [sidebar.hosts]
 # Personal = "#3a4a6b"
 # "Mac mini" = "#5a3a3a"
+
+# Linked Git worktrees, told apart from their repository's main checkout,
+# which keeps the theme as drawn. In every sidebar layout, worktrees nested
+# under their main checkout hang from it on the tree's thin guide lines; one
+# standing alone, its main checkout not open, shows the branch glyph in place
+# of the owner's avatar. Its workspace gets a thin rule where the tab strip
+# meets the terminals, and none while the strip is hidden; terminal cells are
+# never covered or recoloured. tint picks the glyph's and the rule's hue as
+# #rgb or #rrggbb; unset, it is the theme's blue. Either way the hue only gets
+# lighter or darker as far as it must to stand out from the chrome. apply_to
+# lists where the marks show, "sidebar" and "terminal"; [] turns them off,
+# leaving the guides only in the flat layouts, which always drew them.
+# [worktrees]
+# tint = "#7aa2f7"
+# apply_to = ["sidebar", "terminal"]
 
 [tabs]
 # Default: "Menlo" on macOS, "Cascadia Mono" on Windows (Consolas when
@@ -403,6 +443,34 @@ size = 12
 # port = 51234
 # license_accepted = true
 # url = "http://127.0.0.1:8000/?tkn=..."
+
+# px0 in an editor tab (local workspaces on macOS and Windows). With no url,
+# discover an existing workbench, or start installed px0 lazily. Set a local
+# workbench address to attach to your own. Settings > Code edits this value.
+# [px0]
+# url = "http://127.0.0.1:7777/"
+
+# How chat views draw: "timeline" (entries on a line with avatars), "bubbles"
+# (your messages in bubbles on the right, like Claude's app), "terminal"
+# (Claude Code's own screen, in the terminal font), "document" (each prompt
+# a heading, the reply prose under it), "cards" (each turn in one card), or
+# "imessage" (blue and gray bubbles with tails, like Apple's Messages).
+# The button in a chat's header steps through them.
+# [chat]
+# layout = "timeline"
+#
+# Scroll smoothly to a streaming reply's new text, rather than jumping to it
+# as each chunk lands. Settings > General edits this while ACP chats are on.
+# glide = false
+
+# Variables every chat's tab starts with, on this machine or an SSH host, so
+# an agent reaches a company endpoint the pane's shell does not set up: GitHub
+# Enterprise for Copilot, an LLM gateway for Claude. Values are stored as
+# written, so keep tokens in your shell or the agent's own sign-in. HERDR_ACP is
+# the app's own. Settings > General edits this while ACP chats are on.
+# [chat.env]
+# GH_HOST = "mycompany.ghe.com"
+# ANTHROPIC_BASE_URL = "https://llm.example.com"
 
 # Native GitHub sign-in uses the public Herdr GPUI GitHub App by default.
 # Optionally override with your own Device Flow-enabled app's public client ID.
@@ -481,6 +549,50 @@ size = 12
 # snapshot = "daytonaio/sandbox:0.4.3"
 # Same meaning as [github] allow_plaintext_credentials, for the API key, which
 # is saved in its own 0600 daytona-api-key file. Default is false.
+# allow_plaintext_credentials = false
+
+# Containers on this computer's Docker or Podman engine as devices. Settings >
+# Cloud devices > Container edits this table. Each container gets its own home
+# volume and runs agents as an unprivileged "herdr" user, with the limits below,
+# no-new-privileges, and no access to this computer's files. Containers share
+# this computer's kernel, so prefer a VM provider for code you do not trust.
+# [container]
+# docker or podman; the first one installed when unset.
+# engine = "docker"
+# The image new containers start from, pinned to its digest when created. It
+# needs curl to install Herdr and git for checkouts.
+# image = "buildpack-deps:bookworm"
+# cpus = 4
+# memory = "8g"
+# pids_limit = 4096
+# Stop a running container once none of its agents has worked or waited for
+# input for this long (at least 5m); its files stay and the next connection
+# starts it. Default is never.
+# auto_stop = "30m"
+# The most containers kept as devices at once, up to 64. Default is 8.
+# max_containers = 8
+
+# Sandboxes on a self-hosted OpenSandbox server as devices (experimental).
+# Settings > Cloud devices > OpenSandbox edits this table and saves the API key
+# to the credential store; the key is never read from this file.
+# HERDR_OPENSANDBOX_API_KEY overrides the saved key and
+# HERDR_OPENSANDBOX_API_URL overrides api_url.
+# [opensandbox]
+# https, or http on this computer.
+# api_url = "http://127.0.0.1:8080"
+# image = "buildpack-deps:bookworm"
+# cpu = "2"
+# memory = "4Gi"
+# allow_plaintext_credentials = false
+
+# Fly Sprites as devices (experimental). Settings > Cloud devices > Sprites
+# edits this table and saves the API token to the credential store; the token
+# is never read from this file. HERDR_SPRITES_TOKEN overrides the saved token
+# and HERDR_SPRITES_API_URL overrides api_url.
+# [sprites]
+# api_url = "https://api.sprites.dev"
+# Same meaning as [github] allow_plaintext_credentials, for the token, which is
+# saved in its own 0600 sprites-api-token file. Default is false.
 # allow_plaintext_credentials = false
 
 # What a new cloud device runs the first time it connects, in a "setup" tab:

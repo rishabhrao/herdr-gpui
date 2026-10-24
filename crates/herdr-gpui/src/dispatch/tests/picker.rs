@@ -104,7 +104,7 @@ fn one_host_alone_offers_no_choice() {
     let mut picker = Picker::new("laptop", now);
     picker.update(vec![current(host("laptop", 8, 1.)), offline("farm")], now);
     assert!(!picker.offers_choice());
-    assert!(Picker::opened("laptop", vec![current(host("laptop", 8, 1.))]).is_none());
+    assert!(Picker::opened("laptop", vec![current(host("laptop", 8, 1.))], Vec::new()).is_none());
 }
 
 #[test]

@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 const SKILL: &str = include_str!("../../../skills/herdr-gpui-browser/SKILL.md");
+/// How agents write automations, installed beside the browser skill.
+const AUTOMATIONS: &str = include_str!("../../../skills/herdr-automations/SKILL.md");
+const AUTOMATIONS_NAME: &str = "herdr-automations";
 /// Marks a skill file this app manages.
 const MARKER: &str = "<!-- herdr-gpui-managed-skill v1";
 const NAME: &str = "herdr-gpui-browser";
@@ -59,12 +62,35 @@ pub(crate) fn text_naming(command: &str) -> String {
     SKILL.replace("herdr-gpui ", &format!("{command} "))
 }
 
+/// The automations skill, naming this executable and the `herdr-automate`
+/// that ships beside it; a bundle puts neither on `PATH`.
+pub(crate) fn automations_text(executable: Option<&Path>) -> String {
+    let automate = executable
+        .and_then(Path::parent)
+        .map(|dir| {
+            dir.join(if cfg!(windows) {
+                "herdr-automate.exe"
+            } else {
+                "herdr-automate"
+            })
+        })
+        .filter(|path| path.is_file());
+    let mut text = AUTOMATIONS.to_owned();
+    if let Some(automate) = automate.as_deref().and_then(Path::to_str) {
+        text = text.replace("herdr-automate ", &format!("{} ", shell_word(automate)));
+    }
+    if executable.and_then(Path::to_str).is_some() {
+        text = text.replace("herdr-gpui ", &format!("{} ", command(executable)));
+    }
+    text
+}
+
 fn managed(contents: &str) -> bool {
     contents.contains(MARKER)
 }
 
-fn file(root: &Path) -> PathBuf {
-    root.join("skills").join(NAME).join("SKILL.md")
+fn file(root: &Path, name: &str) -> PathBuf {
+    root.join("skills").join(name).join("SKILL.md")
 }
 
 fn install_error(path: &Path) -> impl FnOnce(std::io::Error) -> crate::Error + '_ {
@@ -74,16 +100,34 @@ fn install_error(path: &Path) -> impl FnOnce(std::io::Error) -> crate::Error + '
     }
 }
 
-/// Writes `text` into each agent directory that exists under `home`. A file
-/// the user wrote there under the same name is left alone. Returns where the
-/// skill now is. Blocking; run off the UI thread.
+/// Writes `text` into each agent directory that exists under `home`, with
+/// the automations skill beside it. A file the user wrote there under the
+/// same name is left alone. Returns where the skill now is. Blocking; run
+/// off the UI thread.
 pub(crate) fn install(home: &Path, text: &str) -> crate::Result<Vec<PathBuf>> {
+    let placed = place(home, NAME, text)?;
+    if placed.is_empty() {
+        return Err(crate::Error::SkillInstall {
+            path: home.join(ROOTS[0]),
+            source: std::io::ErrorKind::NotFound.into(),
+        });
+    }
+    place(
+        home,
+        AUTOMATIONS_NAME,
+        &automations_text(executable().as_deref()),
+    )?;
+    Ok(placed)
+}
+
+/// Writes one skill into each agent directory that exists under `home`.
+fn place(home: &Path, name: &str, text: &str) -> crate::Result<Vec<PathBuf>> {
     let mut placed = Vec::new();
     for root in ROOTS.map(|root| home.join(root)) {
         if !root.is_dir() {
             continue;
         }
-        let path = file(&root);
+        let path = file(&root, name);
         match std::fs::read_to_string(&path) {
             Ok(current) if current == text => {}
             Ok(current) if !managed(&current) => continue,
@@ -98,12 +142,6 @@ pub(crate) fn install(home: &Path, text: &str) -> crate::Result<Vec<PathBuf>> {
         }
         placed.push(path);
     }
-    if placed.is_empty() {
-        return Err(crate::Error::SkillInstall {
-            path: home.join(ROOTS[0]),
-            source: std::io::ErrorKind::NotFound.into(),
-        });
-    }
     Ok(placed)
 }
 
@@ -112,19 +150,21 @@ pub(crate) fn install(home: &Path, text: &str) -> crate::Result<Vec<PathBuf>> {
 pub(crate) fn remove(home: &Path) -> crate::Result<Vec<PathBuf>> {
     let mut removed = Vec::new();
     for root in ROOTS.map(|root| home.join(root)) {
-        let path = file(&root);
-        let Ok(current) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        if !managed(&current) {
-            continue;
+        for name in [NAME, AUTOMATIONS_NAME] {
+            let path = file(&root, name);
+            let Ok(current) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if !managed(&current) {
+                continue;
+            }
+            std::fs::remove_file(&path).map_err(install_error(&path))?;
+            if let Some(dir) = path.parent() {
+                // Only succeeds when the folder is empty, which is the intent.
+                let _ = std::fs::remove_dir(dir);
+            }
+            removed.push(path);
         }
-        std::fs::remove_file(&path).map_err(install_error(&path))?;
-        if let Some(dir) = path.parent() {
-            // Only succeeds when the folder is empty, which is the intent.
-            let _ = std::fs::remove_dir(dir);
-        }
-        removed.push(path);
     }
     Ok(removed)
 }
@@ -295,20 +335,72 @@ mod tests {
     /// every agent's frontmatter parser, hiding the skill from agents.
     #[test]
     fn the_skill_description_is_a_quoted_scalar() {
-        let frontmatter = SKILL
+        assert!(!description(SKILL).contains('"'));
+        assert!(!description(AUTOMATIONS).contains('"'));
+    }
+
+    #[test]
+    fn the_automations_skill_is_marked_and_names_its_commands() {
+        assert!(AUTOMATIONS.starts_with("---\nname: herdr-automations\n"));
+        assert!(managed(AUTOMATIONS));
+        assert_eq!(automations_text(None), AUTOMATIONS);
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("Herdr");
+        std::fs::write(&app, "").unwrap();
+        let automate = dir.path().join(if cfg!(windows) {
+            "herdr-automate.exe"
+        } else {
+            "herdr-automate"
+        });
+        std::fs::write(&automate, "").unwrap();
+        let text = automations_text(Some(&app));
+        assert!(text.contains(&format!(
+            "{} check FILE",
+            shell_word(automate.to_str().unwrap())
+        )));
+        assert!(text.contains(&format!(
+            "{} automation approve FILE",
+            shell_word(app.to_str().unwrap())
+        )));
+        assert!(!text.contains("herdr-gpui automation"));
+    }
+
+    #[test]
+    fn both_skills_install_and_go_together() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+        let placed = install(home.path(), SKILL).unwrap();
+        assert_eq!(placed.len(), 1);
+        let automations = file(&home.path().join(".claude"), AUTOMATIONS_NAME);
+        assert!(managed(&std::fs::read_to_string(&automations).unwrap()));
+        let removed = remove(home.path()).unwrap();
+        assert_eq!(removed.len(), 2);
+        assert!(!automations.exists());
+    }
+
+    /// The Agent Skills format caps a description at 1,024 characters, and
+    /// agents such as Pi refuse a skill over it.
+    #[test]
+    fn the_skill_description_fits_the_agent_skills_limit() {
+        for skill in [SKILL, AUTOMATIONS] {
+            let length = description(skill).chars().count();
+            assert!((1..=1024).contains(&length), "{length} characters");
+        }
+    }
+
+    /// The frontmatter's description, without its quotes.
+    fn description(skill: &str) -> &str {
+        skill
             .strip_prefix("---\n")
             .and_then(|rest| rest.split_once("\n---\n"))
-            .map(|(frontmatter, _)| frontmatter)
-            .unwrap();
-        let description = frontmatter
-            .lines()
-            .find_map(|line| line.strip_prefix("description: "))
-            .unwrap();
-        let value = description
-            .strip_prefix('"')
+            .and_then(|(frontmatter, _)| {
+                frontmatter
+                    .lines()
+                    .find_map(|line| line.strip_prefix("description: "))
+            })
+            .and_then(|value| value.strip_prefix('"'))
             .and_then(|value| value.strip_suffix('"'))
-            .unwrap();
-        assert!(!value.contains('"'));
+            .unwrap()
     }
 
     #[test]
@@ -341,11 +433,11 @@ mod tests {
         std::fs::create_dir(home.path().join(".agents")).unwrap();
         std::fs::create_dir(home.path().join(".claude")).unwrap();
         // A skill of the same name the user wrote is theirs.
-        let own = file(&home.path().join(".claude"));
+        let own = file(&home.path().join(".claude"), NAME);
         std::fs::create_dir_all(own.parent().unwrap()).unwrap();
         std::fs::write(&own, "my own skill").unwrap();
         let placed = install(home.path(), SKILL).unwrap();
-        assert_eq!(placed, [file(&home.path().join(".agents"))]);
+        assert_eq!(placed, [file(&home.path().join(".agents"), NAME)]);
         assert_eq!(std::fs::read_to_string(&placed[0]).unwrap(), SKILL);
         assert_eq!(std::fs::read_to_string(&own).unwrap(), "my own skill");
 
@@ -354,8 +446,16 @@ mod tests {
         install(home.path(), &newer).unwrap();
         assert_eq!(std::fs::read_to_string(&placed[0]).unwrap(), newer);
 
-        // Removing takes only the managed copy and its now-empty folder.
-        assert_eq!(remove(home.path()).unwrap(), placed);
+        // Removing takes only the managed copies, the automations skill's
+        // too, and their now-empty folders.
+        let removed = remove(home.path()).unwrap();
+        let browser = removed
+            .iter()
+            .filter(|path| path.parent().is_some_and(|dir| dir.ends_with(NAME)))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(browser, placed);
+        assert!(removed.iter().all(|path| path != &own));
         assert!(!placed[0].parent().unwrap().exists());
         assert_eq!(std::fs::read_to_string(&own).unwrap(), "my own skill");
         assert!(remove(home.path()).unwrap().is_empty());

@@ -1,9 +1,10 @@
-//! The orchestrator's view, owned by the window: one, made the first time the
-//! Pull requests or Issues section is shown (see `section`), listing every
-//! distinct repository the workspaces of every connected host hold. The
-//! window's tick hands it those repositories, the theme, live agents, and
-//! each host's GitHub account, and acts on its events. The view itself knows
-//! nothing of its host.
+//! The orchestrator's view, owned by the window: one, made once there is a
+//! repository to list while the activity bar is on, so the bar counts pull
+//! requests and issues before either section is shown (see `section`). It
+//! lists every distinct repository the workspaces of every connected host
+//! hold. The window's tick hands it those repositories, the theme, live
+//! agents, and each host's GitHub account, and acts on its events. The view
+//! itself knows nothing of its host.
 
 use super::{Event, LiveAgent, LiveBranch, Look, OrchestratorView, RepoSpec, Request, Timing};
 use crate::{
@@ -148,7 +149,7 @@ impl HerdrWindow {
     /// Every distinct repository the workspaces of the connected hosts that
     /// can run the orchestrator's scripts hold, in sidebar order. Worktrees
     /// of one repository are one: they share its database.
-    pub(super) fn repo_specs(&self) -> Vec<RepoSpec> {
+    pub(crate) fn repo_specs(&self) -> Vec<RepoSpec> {
         let mut specs: Vec<RepoSpec> = Vec::new();
         for (index, endpoint) in self.endpoints.iter().enumerate() {
             let target = &endpoint.connection.target;
@@ -241,6 +242,7 @@ impl HerdrWindow {
             self.orchestrator_event(id, event, window, cx);
         }
         self.sync_activity_section(cx);
+        self.prepare_activity_sections(cx);
         let views = self.orchestrator_views();
         // The bar's counts read what the views polled last tick.
         if self.activity.observe_sources(&views, cx) {

@@ -242,7 +242,7 @@ fn a_finished_job_queues_its_script_and_a_failed_one_does_not(cx: &mut gpui::Tes
                 ("plain", Ok(plain), None),
                 (
                     "failed",
-                    Err(crate::cloud::Error::Cancelled.into()),
+                    Err(crate::Error::from(crate::cloud::Error::Cancelled)),
                     Some("echo no".to_owned()),
                 ),
             ] {

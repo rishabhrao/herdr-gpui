@@ -45,6 +45,7 @@ impl HerdrWindow {
         if let Some(preferences) = &self.sidebar_preferences {
             preferences.save(crate::preferences::Chrome {
                 activity_panel: self.activity.chosen(),
+                activity_last_opened: self.activity.last_opened().clone(),
                 sidebar_width: self.sidebar_width,
                 sidebar_split: self.sidebar_split,
                 agent_sort: self.agent_sort_modified.then_some(self.agent_sort),

@@ -8,6 +8,7 @@ pub(crate) use tabs::{Ends, strip_height};
 
 pub(crate) use decorations::controls;
 pub(crate) use decorations::frame;
+pub(crate) use decorations::show_controls;
 
 use crate::{HerdrWindow, fonts::StyledFont, menu::Page};
 use gpui::{prelude::*, *};
@@ -15,6 +16,8 @@ use gpui::{prelude::*, *};
 /// Avatar or signed-out GitHub icon. Smaller than the hit target, which stays a
 /// comfortable size for the pointer.
 const AVATAR: f32 = 20.;
+/// The dot an account waiting on GitHub App approval puts on the avatar.
+const ATTENTION_DOT: f32 = 10.;
 
 const SIDEBAR_TOGGLE_SIZE: f32 = 28.;
 const SIDEBAR_GLYPH_WIDTH: f32 = 18.;
@@ -59,10 +62,11 @@ impl HerdrWindow {
         let background = rgb(theme.surface).blend(rgba(0xffffff1a));
         let status = self.git.status();
         let running = self.git.running().is_some();
+        let anchor = self.git_anchor.clone();
         let pr = self.git_pull_request().map(|pr| {
             (
                 format!("#{}", pr.number),
-                pr.color(theme),
+                crate::pull_request::color(&pr, theme),
                 pr.additions,
                 pr.deletions,
                 pr.url.clone(),
@@ -175,6 +179,7 @@ impl HerdrWindow {
                     div()
                         .id("titlebar-git")
                         .debug_selector(|| "titlebar-git".into())
+                        .relative()
                         .flex()
                         .items_center()
                         .gap(px(4.))
@@ -202,6 +207,15 @@ impl HerdrWindow {
                                 .size(px(12.))
                                 .flex_none()
                                 .text_color(rgb(theme.muted)),
+                        )
+                        .child(
+                            canvas(
+                                |_, _, _| (),
+                                move |bounds, _, _, _| anchor.set(bounds.center()),
+                            )
+                            .absolute()
+                            .inset_0()
+                            .size_full(),
                         )
                         .on_mouse_down(
                             MouseButton::Left,
@@ -306,7 +320,10 @@ impl HerdrWindow {
     /// What ends the bar: git actions, the account, and the window controls
     /// a client-decorated window draws.
     fn titlebar_end(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let image = self.pr_profile().and_then(|p| p.avatar.clone());
+        let image = self
+            .pr_profile()
+            .and_then(|profile| self.menu.github_avatars.get(&profile.avatar_url));
+        let attention = self.github_needs_attention();
         div()
             .flex()
             .flex_none()
@@ -325,7 +342,11 @@ impl HerdrWindow {
                         div()
                             .id("titlebar-avatar")
                             .role(Role::Button)
-                            .aria_label("GitHub account")
+                            .aria_label(if attention {
+                                "GitHub account, needs attention"
+                            } else {
+                                "GitHub account"
+                            })
                             .map(|control| {
                                 self.chrome_stop(
                                     crate::window::chrome_focus::Region::TitleBar,
@@ -337,6 +358,7 @@ impl HerdrWindow {
                             .flex()
                             .items_center()
                             .justify_center()
+                            .relative()
                             .size(px(28.))
                             .rounded_full()
                             .cursor_pointer()
@@ -380,12 +402,29 @@ impl HerdrWindow {
                                                 .text_color(rgb(self.theme.foreground)),
                                         ),
                                     }),
-                            ),
+                            )
+                            // On the avatar's upper right, inside the hit
+                            // target, ringed in the bar's color to stand off
+                            // any avatar.
+                            .when(attention, |control| {
+                                control.child(
+                                    div()
+                                        .debug_selector(|| "titlebar-avatar-attention".into())
+                                        .absolute()
+                                        .top(px(3.))
+                                        .right(px(3.))
+                                        .size(px(ATTENTION_DOT))
+                                        .rounded_full()
+                                        .border_2()
+                                        .border_color(bar(self.theme.surface))
+                                        .bg(rgb(self.theme.ink(self.theme.palette[1]))),
+                                )
+                            }),
                     ),
             )
             // The in-window menu bar carries the window controls instead.
             .when(!crate::menus::IN_WINDOW, |end| {
-                end.children(controls(window, &self.theme, |window, _| {
+                end.children(controls(false, window, &self.theme, |window, _| {
                     window.remove_window();
                 }))
             })
@@ -423,10 +462,21 @@ pub(super) fn render(
 /// macOS windows own titlebar dragging (`app_owns_titlebar_drag`), so AppKit
 /// never moves the window from under a tab, and a client-decorated window has
 /// nothing else to move it. A server-drawn frame moves the window from its own
-/// title bar, so there `area` is left alone.
+/// title bar, so there `area` is left alone—unless the user has enabled window
+/// controls, which implies they may hide the WM's title bar.
 pub(crate) fn movable<E: InteractiveElement>(area: E, window: &Window) -> E {
+    movable_with_controls(area, window, false)
+}
+
+/// Like `movable`, but `controls_enabled` forces dragging even with SSD,
+/// for users who hide the WM's title bar and need the menu bar to move.
+pub(crate) fn movable_with_controls<E: InteractiveElement>(
+    area: E,
+    window: &Window,
+    controls_enabled: bool,
+) -> E {
     let client = decorations::client(window);
-    if !cfg!(target_os = "macos") && !client {
+    if !cfg!(target_os = "macos") && !client && !controls_enabled {
         return area;
     }
     // The move starts on the press: pointer motion during a press is claimed
@@ -459,7 +509,7 @@ pub(crate) fn header(
     // A served window's panel has the page's own title bar and close button.
     let needed = cfg!(target_os = "macos") || decorations::client(window);
     (needed && !crate::served::active()).then(|| {
-        let buttons = controls(window, theme, close);
+        let buttons = controls(false, window, theme, close);
         render(bar(theme.surface), None, window).children(buttons)
     })
 }
@@ -535,6 +585,9 @@ mod tests {
         size,
     };
 
+    /// A signed-in fixture account's picture address, shown without loading it.
+    pub(super) const AVATAR_URL: &str = "https://avatars.githubusercontent.com/u/1";
+
     /// The fixture window with Herdr's tab bar at the bottom, so it keeps the
     /// full-width header these tests measure.
     pub(crate) fn header_window(
@@ -587,10 +640,14 @@ mod tests {
                         };
                         view.menu.github.failed = state == 1;
                         if let Some(profile) = view.menu.github.profile.as_mut() {
-                            profile.avatar = Some(std::sync::Arc::new(gpui::Image::from_bytes(
-                                gpui::ImageFormat::Svg,
-                                include_bytes!("../../../assets/icons/user.svg").to_vec(),
-                            )));
+                            profile.avatar_url = AVATAR_URL.into();
+                            view.menu.github_avatars.show(
+                                AVATAR_URL,
+                                std::sync::Arc::new(gpui::Image::from_bytes(
+                                    gpui::ImageFormat::Svg,
+                                    include_bytes!("../../../assets/icons/user.svg").to_vec(),
+                                )),
+                            );
                         }
                         cx.notify();
                     });
@@ -680,6 +737,8 @@ mod tests {
 
 #[cfg(test)]
 mod git_button_tests;
+#[cfg(test)]
+mod git_command_tests;
 
 #[cfg(all(test, target_os = "macos"))]
 #[allow(clippy::unwrap_used)]
@@ -727,10 +786,14 @@ mod native_chrome_tests {
                     view.update(cx, |view, cx| {
                         view.menu.github = crate::github::Auth::connected_fixture();
                         if let Some(profile) = view.menu.github.profile.as_mut() {
-                            profile.avatar = Some(std::sync::Arc::new(gpui::Image::from_bytes(
-                                gpui::ImageFormat::Svg,
-                                include_bytes!("../../../assets/icons/user.svg").to_vec(),
-                            )));
+                            profile.avatar_url = super::tests::AVATAR_URL.into();
+                            view.menu.github_avatars.show(
+                                super::tests::AVATAR_URL,
+                                std::sync::Arc::new(gpui::Image::from_bytes(
+                                    gpui::ImageFormat::Svg,
+                                    include_bytes!("../../../assets/icons/user.svg").to_vec(),
+                                )),
+                            );
                         }
                         cx.notify();
                     })

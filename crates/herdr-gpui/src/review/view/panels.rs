@@ -96,8 +96,14 @@ impl HerdrWindow {
         };
         let count = match panel {
             // Only notes the agent does not have yet.
-            Panel::Notes => Some(review.notes.iter().filter(|note| !note.sent).count())
-                .filter(|&count| count > 0),
+            Panel::Notes => Some(
+                review
+                    .notes
+                    .iter()
+                    .filter(|note| note.sent.is_none())
+                    .count(),
+            )
+            .filter(|&count| count > 0),
             _ => None,
         };
         let (foreground, surface) = (theme.foreground, theme.surface);

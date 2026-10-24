@@ -66,6 +66,8 @@ macro_rules! features {
 // from parallel branches land on different lines.
 features! {
     // keep-sorted start
+    acp_chats: AcpChats, "ACP chats",
+        "Show herdr-acp chats as native chat views and offer new chats with the agents installed on the host. Off, chat panes keep their terminal and nothing looks for herdr-acp or agents.";
     sidebar_hover_menu: SidebarHoverMenu, "Open space menus on hover",
         "Open a space's menu when the pointer rests on its sidebar row, without a right click. Moving the pointer anywhere but into that menu closes it again.";
     // keep-sorted end

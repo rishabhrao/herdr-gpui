@@ -158,7 +158,7 @@ fn opened(
     let id = cx.try_global::<Store>().and_then(|store| {
         store
             .in_workspace(&scope, workspace)
-            .filter(|tab| !tab.place.is_code())
+            .filter(|tab| !tab.place.is_editor())
             .filter(|tab| tab.location.as_ref().is_some_and(&shows))
             .last()
             .map(|tab| tab.id)
@@ -347,3 +347,35 @@ pub(super) fn review(
 
 #[cfg(test)]
 mod tests;
+
+pub(super) fn px0(
+    caller: &Caller,
+    incoming: socket::Incoming,
+    watches: &mut Watches,
+    cx: &mut App,
+) {
+    open_there(
+        caller,
+        incoming,
+        watches,
+        cx,
+        |_| true,
+        |view, workspace, window, cx| {
+            if !crate::browser::EMBEDDED || view.px0_root().is_none() {
+                return Response::error(
+                    ErrorCode::Unsupported,
+                    "px0 needs a local workspace and embedded pages (macOS or Windows)",
+                );
+            }
+            match view.open_px0(None, window, cx) {
+                Some(id) => Response::Tab {
+                    reply: Reply::Opened {
+                        id: id.into(),
+                        workspace: workspace.to_owned(),
+                    },
+                },
+                None => Response::error(ErrorCode::Failed, "Could not open the px0 tab"),
+            }
+        },
+    );
+}

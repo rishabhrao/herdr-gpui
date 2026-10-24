@@ -178,7 +178,12 @@ pub(crate) fn decode(key: &SurfaceGraphicsAssetKey, data: &[u8]) -> Result<RgbaI
             )
         }
     };
-    let mut pixels = pixels.ok_or(Error::PaneImageLimit)?;
+    Ok(fit_bgra(pixels.ok_or(Error::PaneImageLimit)?))
+}
+
+/// `pixels` scaled to fit `MAX_TEXTURE_SIDE` and in the BGRA order GPUI
+/// uploads.
+pub(crate) fn fit_bgra(mut pixels: RgbaImage) -> RgbaImage {
     let (width, height) = pixels.dimensions();
     if width > MAX_TEXTURE_SIDE || height > MAX_TEXTURE_SIDE {
         let scale = f64::from(MAX_TEXTURE_SIDE) / f64::from(width.max(height));
@@ -188,7 +193,7 @@ pub(crate) fn decode(key: &SurfaceGraphicsAssetKey, data: &[u8]) -> Result<RgbaI
     for pixel in pixels.chunks_exact_mut(4) {
         pixel.swap(0, 2);
     }
-    Ok(pixels)
+    pixels
 }
 
 enum State {
@@ -395,7 +400,7 @@ impl ImageCache {
     }
 }
 
-fn texture(pixels: RgbaImage) -> RenderImage {
+pub(crate) fn texture(pixels: RgbaImage) -> RenderImage {
     RenderImage::new(vec![Frame::new(pixels)])
 }
 

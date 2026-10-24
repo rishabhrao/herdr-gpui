@@ -9,6 +9,8 @@ use crate::{Error, usage::Host};
 use herdr_client::ConnectTarget;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+#[cfg(unix)]
+mod repeated_scans;
 mod ssh_links;
 mod status_bar;
 mod wsl_hosts;
@@ -182,9 +184,11 @@ fn only_a_different_scan_changes_what_is_shown() {
     assert!(reading.apply(Ok(found.clone())));
     assert!(!reading.apply(Ok(found.clone())));
     // A failed scan keeps the last ports and is not a change.
-    assert!(!reading.apply(Err(Error::ListeningPorts(Box::new(
-        Error::UsageUnreachable
-    )))));
+    assert!(
+        !reading.apply(Err(Error::ListeningPorts(Box::new(Error::Usage(
+            herdr_usage::Error::Unreachable
+        )))))
+    );
     assert_eq!(reading.ports, found);
     let error = reading.error.clone().unwrap();
     assert!(
@@ -700,7 +704,10 @@ fn another_process_on_the_port_is_never_taken_for_the_tunnel() {
     let result = tunnel::ready(|| child.try_wait(), stdout, deadline);
     child.kill().unwrap();
     child.wait().unwrap();
-    assert!(matches!(result, Err(Error::TunnelTimeout)), "{result:?}");
+    assert!(
+        matches!(result, Err(Error::Tunnel(tunnel::Error::Timeout))),
+        "{result:?}"
+    );
 }
 
 #[cfg(unix)]
@@ -722,7 +729,7 @@ fn ssh_ending_before_its_forward_is_bound_reports_why() {
     let (mut child, stdout) = scripted("echo 'bind failed' >&2; exit 255");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     match tunnel::ready(|| child.try_wait(), stdout, deadline) {
-        Err(Error::TunnelExited(status)) => assert_eq!(status.code(), Some(255)),
+        Err(Error::Tunnel(tunnel::Error::Exited(status))) => assert_eq!(status.code(), Some(255)),
         other => panic!("expected the exit status, got {other:?}"),
     }
 }

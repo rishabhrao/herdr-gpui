@@ -85,133 +85,161 @@ impl HerdrWindow {
                     ),
                 )
         });
-        let rows =
-            review.notes.iter().enumerate().map(|(index, note)| {
-                div()
-                    .id(("review-note", index))
-                    .when(note.sent, |row| row.opacity(0.6))
-                    .when(editing == Some(index), |row| row.bg(rgb(theme.active)))
-                    .flex()
-                    .gap_2()
-                    .p_2()
-                    .border_b_1()
-                    .border_color(rgb(theme.active))
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(18.))
-                            .rounded_full()
-                            .bg(rgb(theme.palette[3]))
-                            .text_color(rgb(theme.text_on(theme.palette[3])))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child((index + 1).to_string()),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(div().text_color(rgb(theme.muted)).truncate().child(
-                                if note.sent {
-                                    format!("{} \u{b7} sent", note.place())
-                                } else {
-                                    note.place()
-                                },
-                            ))
-                            // Clicking the text edits it.
-                            .child(
-                                div()
-                                    .id(("review-edit", index))
-                                    .debug_selector(move || format!("review-edit-{index}"))
-                                    .cursor_text()
-                                    .child(note.comment.clone())
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.edit_review_note(id, index, window, cx)
-                                    })),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id(("review-remove", index))
-                            .flex_none()
-                            .size(px(18.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .cursor_pointer()
-                            .rounded(px(crate::config::corners::CONTROL))
-                            .hover(|s| s.bg(rgb(theme.active)))
-                            .child(
-                                svg()
-                                    .path("icons/close.svg")
-                                    .size(px(12.))
-                                    .text_color(rgb(theme.muted)),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.remove_review_note(id, index, cx)
-                            })),
-                    )
-            });
-        let has_notes = !review.notes.is_empty();
-        let has_agent = review.agent.is_some();
-        let unsent = review.notes.iter().filter(|note| !note.sent).count();
-        let send_label = crate::agent_notes::send_label(review.notes.len(), unsent);
-        let any_sent = unsent < review.notes.len();
-        let panel =
+        let rows = review.notes.iter().enumerate().map(|(index, note)| {
             div()
-                .id("review-notes")
-                .debug_selector(|| "review-notes".into())
-                .flex_none()
-                .h_full()
+                .id(("review-note", index))
+                .when(note.sent.is_some(), |row| row.opacity(0.6))
+                .when(editing == Some(index), |row| row.bg(rgb(theme.active)))
                 .flex()
-                .flex_col()
-                .border_l_1()
+                .gap_2()
+                .p_2()
+                .border_b_1()
                 .border_color(rgb(theme.active))
-                .children(composer)
                 .child(
                     div()
-                        .id("review-note-list")
+                        .flex_none()
+                        .size(px(18.))
+                        .rounded_full()
+                        .bg(rgb(theme.palette[3]))
+                        .text_color(rgb(theme.text_on(theme.palette[3])))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child((index + 1).to_string()),
+                )
+                .child(
+                    div()
                         .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .children(rows)
-                        .when(!has_notes && review.draft.is_none(), |list| {
-                            list.child(
-                                div().p_2().text_color(rgb(theme.muted)).child(
-                                    "Click a line or a file name to note what should change.",
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(div().text_color(rgb(theme.muted)).truncate().child(
+                            if note.sent.is_some() {
+                                format!("{} \u{b7} sent", note.place())
+                            } else {
+                                note.place()
+                            },
+                        ))
+                        // Clicking the text edits it.
+                        .child(
+                            div()
+                                .id(("review-edit", index))
+                                .debug_selector(move || format!("review-edit-{index}"))
+                                .cursor_text()
+                                .child(note.comment.clone())
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.edit_review_note(id, index, window, cx)
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .id(("review-remove", index))
+                        .flex_none()
+                        .size(px(18.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .rounded(px(crate::config::corners::CONTROL))
+                        .hover(|s| s.bg(rgb(theme.active)))
+                        .child(
+                            svg()
+                                .path("icons/close.svg")
+                                .size(px(12.))
+                                .text_color(rgb(theme.muted)),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.remove_review_note(id, index, cx)
+                        })),
+                )
+        });
+        let has_notes = !review.notes.is_empty();
+        let has_agent = review.agent.is_some();
+        let unsent = review
+            .notes
+            .iter()
+            .filter(|note| note.sent.is_none())
+            .count();
+        let send_label = crate::agent_notes::send_label(review.notes.len(), unsent);
+        let any_sent = unsent < review.notes.len();
+        let queued = review.sending.queued(
+            &self.deliveries,
+            cx.try_global::<crate::browser::Feedback>(),
+        );
+        let panel = div()
+            .id("review-notes")
+            .debug_selector(|| "review-notes".into())
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .border_l_1()
+            .border_color(rgb(theme.active))
+            .children(composer)
+            .child(
+                div()
+                    .id("review-note-list")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .children(rows)
+                    .when(!has_notes && review.draft.is_none(), |list| {
+                        list.child(
+                            div()
+                                .p_2()
+                                .text_color(rgb(theme.muted))
+                                .child("Click a line or a file name to note what should change."),
+                        )
+                    }),
+            )
+            // A queued batch stays withdrawable after Clear sent empties
+            // the list.
+            .when(has_notes || queued.is_some(), |panel| {
+                panel.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_1()
+                        .p_2()
+                        .border_t_1()
+                        .border_color(rgb(theme.active))
+                        .when_some(queued, |row, queued| {
+                            row.child(
+                                div()
+                                    .id("review-queued")
+                                    .debug_selector(|| "review-queued".into())
+                                    .w_full()
+                                    .text_color(rgb(theme.muted))
+                                    .child(queued.label()),
+                            )
+                            .child(
+                                button("review-withdraw", "Withdraw".into(), true).on_click(
+                                    cx.listener(move |this, _, _, cx| this.withdraw_review(id, cx)),
+                                ),
+                            )
+                        })
+                        .when(has_agent && queued.is_none(), |row| {
+                            row.child(button("review-send", send_label.into(), true).on_click(
+                                cx.listener(move |this, _, _, cx| this.send_review(id, cx)),
+                            ))
+                        })
+                        .when(has_notes, |row| {
+                            row.child(button("review-copy", "Copy".into(), !has_agent).on_click(
+                                cx.listener(move |this, _, _, cx| this.copy_review(id, cx)),
+                            ))
+                        })
+                        .when(any_sent, |row| {
+                            row.child(
+                                button("review-clear-sent", "Clear sent".into(), false).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.clear_sent_review_notes(id, cx)
+                                    }),
                                 ),
                             )
                         }),
                 )
-                .when(has_notes, |panel| {
-                    panel.child(
-                        div()
-                            .flex()
-                            .gap_1()
-                            .p_2()
-                            .border_t_1()
-                            .border_color(rgb(theme.active))
-                            .when(has_agent, |row| {
-                                row.child(button("review-send", send_label.into(), true).on_click(
-                                    cx.listener(move |this, _, _, cx| this.send_review(id, cx)),
-                                ))
-                            })
-                            .child(button("review-copy", "Copy".into(), !has_agent).on_click(
-                                cx.listener(move |this, _, _, cx| this.copy_review(id, cx)),
-                            ))
-                            .when(any_sent, |row| {
-                                row.child(
-                                    button("review-clear-sent", "Clear sent".into(), false)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.clear_sent_review_notes(id, cx)
-                                        })),
-                                )
-                            }),
-                    )
-                });
+            });
         self.resizable_panel(
             panel,
             "review-notes-resize",

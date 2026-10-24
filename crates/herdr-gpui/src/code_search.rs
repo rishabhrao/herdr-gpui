@@ -173,7 +173,7 @@ impl HerdrWindow {
         let token = code.search.clone();
         let found = cx
             .background_executor()
-            .spawn(async move { code_index::checkout_root(&cwd, &cancelled) });
+            .spawn(async move { Ok(code_index::checkout_root(&cwd, &cancelled)?) });
         cx.spawn(async move |this, cx| {
             let root = found.await;
             let _ = this.update(cx, |this, cx| {
@@ -215,7 +215,7 @@ impl HerdrWindow {
             let token = code.search.clone();
             let built = cx
                 .background_executor()
-                .spawn(async move { Index::build(&root, &cancelled).map(Arc::new) });
+                .spawn(async move { Ok(Index::build(&root, &cancelled).map(Arc::new)?) });
             cx.spawn(async move |this, cx| {
                 let index = built.await;
                 let _ = this.update(cx, |this, cx| this.checkout_indexed(&token, index, cx));

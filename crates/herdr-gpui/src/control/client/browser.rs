@@ -1,8 +1,9 @@
 //! `browser ...` and `feedback`.
 use super::{Context, Output, caller, notes_daemon, rejected, send, tabs, unexpected};
+use crate::control::ControlError;
 use crate::{
     browser::{LocalFile, WebUrl},
-    cli::control::{BrowserCommand, Placement},
+    cli::control::{BrowserCommand, Placement, ZoomChange},
     control::protocol::{
         BrowserOpen, Caller, ErrorCode, FeedbackRequest, MAX_WAIT_SECONDS, OpenedIn, Page, Request,
         Response,
@@ -96,10 +97,10 @@ fn open(
 
 fn reload() -> crate::Result<Output> {
     match send(&Request::Reload(caller(None)?))? {
-        Response::Reloaded { tabs: 0 } => Err(crate::Error::ControlRejected {
+        Response::Reloaded { tabs: 0 } => Err(crate::Error::Control(ControlError::Rejected {
             code: ErrorCode::InvalidRequest,
             message: "This pane has no browser tabs open".into(),
-        }),
+        })),
         Response::Reloaded { tabs } => Output::data(
             format!("Reloaded {tabs} browser tab(s)"),
             &serde_json::json!({ "tabs": tabs }),
@@ -111,10 +112,11 @@ fn reload() -> crate::Result<Output> {
 /// The user's notes for this pane: page, review, and terminal notes alike
 /// are kept for it whenever they could not be typed into the pane.
 pub(super) fn feedback(wait: u64, _: &Context) -> crate::Result<Output> {
-    let pane_id = super::env_id("HERDR_PANE_ID").ok_or(crate::Error::ControlRejected {
-        code: ErrorCode::InvalidRequest,
-        message: "feedback runs in the Herdr pane that should receive the notes".into(),
-    })?;
+    let pane_id =
+        super::env_id("HERDR_PANE_ID").ok_or(crate::Error::Control(ControlError::Rejected {
+            code: ErrorCode::InvalidRequest,
+            message: "feedback runs in the Herdr pane that should receive the notes".into(),
+        }))?;
     let request = Request::Feedback(FeedbackRequest {
         pane_id,
         daemon_socket: Some(notes_daemon()?),
@@ -140,6 +142,24 @@ fn text(id: u64, context: &Context) -> crate::Result<Output> {
         Response::Tab {
             reply: Reply::Text { text },
         } => Output::data(text.clone(), &serde_json::json!({ "id": id, "text": text })),
+        response => Err(unexpected(response)),
+    }
+}
+
+/// Zooms a page tab.
+fn zoom(id: u64, change: ZoomChange, context: &Context) -> crate::Result<Output> {
+    zoomed(context.call(Request::Tab, TabOp::Zoom { id, change })?)
+}
+
+/// What a zoomed tab says: the zoom it landed on.
+fn zoomed(response: Response) -> crate::Result<Output> {
+    match response {
+        Response::Tab {
+            reply: Reply::Zoom { id, percent },
+        } => Output::data(
+            format!("Tab {id} is zoomed to {percent}%"),
+            &serde_json::json!({ "id": id, "zoom": percent }),
+        ),
         response => Err(unexpected(response)),
     }
 }
@@ -185,6 +205,7 @@ pub(super) fn run(command: BrowserCommand, context: &Context) -> crate::Result<O
         BrowserCommand::Forward { id } => context.act(Request::Tab, TabOp::Forward { id }),
         BrowserCommand::Text { id } => text(id, context),
         BrowserCommand::Screenshot { id, path } => screenshot(id, &path, context),
+        BrowserCommand::Zoom { id, change } => zoom(id, change, context),
     }
 }
 

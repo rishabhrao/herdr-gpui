@@ -5,6 +5,9 @@ use std::{collections::VecDeque, ffi::OsString};
 
 pub(crate) struct Args {
     rest: VecDeque<OsString>,
+    /// Everything after a `--`, taken as it is: no flag there is this
+    /// program's, as in `cloud exec ID -- git log --json`.
+    trailing: Option<Vec<OsString>>,
     /// The command being parsed, named in errors.
     command: &'static str,
 }
@@ -15,10 +18,21 @@ fn is_flag(value: &OsString) -> bool {
 
 impl Args {
     pub(crate) fn new(args: impl IntoIterator<Item = OsString>, command: &'static str) -> Self {
+        let mut rest: VecDeque<OsString> = args.into_iter().collect();
+        let trailing = rest
+            .iter()
+            .position(|arg| arg == "--")
+            .map(|at| rest.split_off(at).into_iter().skip(1).collect());
         Self {
-            rest: args.into_iter().collect(),
+            rest,
+            trailing,
             command,
         }
+    }
+
+    /// What followed `--`, once; `None` when there was no `--`.
+    pub(crate) fn trailing(&mut self) -> Option<Vec<OsString>> {
+        self.trailing.take()
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -137,7 +151,8 @@ impl Args {
 
     /// Fails on anything left over, so a typo is never silently ignored.
     pub(crate) fn finish(&mut self) -> Result<(), CliError> {
-        match self.rest.pop_front() {
+        let unread = self.trailing.take().map(|_| OsString::from("--"));
+        match self.rest.pop_front().or(unread) {
             None => Ok(()),
             Some(extra) => Err(CliError::Unexpected {
                 command: self.command,
@@ -213,5 +228,21 @@ mod tests {
         assert_eq!(words.words().unwrap().as_deref(), Some("fix the bug"));
         // A lone dash is a value, as for stdin.
         assert_eq!(args(&["-"]).required_text("x").unwrap(), "-");
+    }
+
+    #[test]
+    fn everything_after_a_double_dash_is_left_as_it_is() {
+        let mut parsed = args(&["id", "--", "git", "log", "--json", "--"]);
+        assert!(!parsed.flag("--json"));
+        assert!(!parsed.wants_help());
+        assert_eq!(parsed.required_text("ID").unwrap(), "id");
+        assert_eq!(
+            parsed.trailing().unwrap(),
+            ["git", "log", "--json", "--"].map(OsString::from)
+        );
+        parsed.finish().unwrap();
+        // A `--` no command reads is refused, like any other leftover.
+        assert!(args(&["--", "x"]).finish().is_err());
+        assert_eq!(args(&["a"]).trailing(), None);
     }
 }

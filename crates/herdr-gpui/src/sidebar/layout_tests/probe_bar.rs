@@ -7,7 +7,7 @@ fn native_child_probe_expects_the_label_beside_the_activity_bar() {
     use crate::config::{Density, LayoutMode};
     let mode = LayoutMode::from(Density::Normal);
     let bar = crate::sidebar::activity::BAR_WIDTH;
-    let bounds = Bounds::new(point(px(44. + bar), px(100.)), size(px(161.), px(16.)));
+    let bounds = Bounds::new(point(px(44. + bar), px(100.)), size(px(179.), px(16.)));
     let probe = PaintedText {
         bounds,
         mask: bounds,

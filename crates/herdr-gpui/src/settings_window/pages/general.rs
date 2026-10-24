@@ -1,11 +1,11 @@
 //! General: interface toggles, the optional `[features]` flags, clipboard
 //! feedback, merged worktrees, the browser skill, launch at login (Windows)
 //! and the update channel.
-use super::{CLIPBOARD_POSITIONS, SettingsWindow, on_off, ui};
+use super::{CLIPBOARD_POSITIONS, SettingsWindow, on_off, on_value, ui};
 use crate::settings_window::inputs::DropdownField;
 use crate::{
     agent_skill::{AgentSkill, Choice},
-    config::{ClipboardToast, Feature, UpdateChannel, preferences::Preference},
+    config::{ChatLayoutMode, ClipboardToast, Feature, UpdateChannel, preferences::Preference},
     herdr_settings::Edit,
 };
 use gpui::{prelude::*, *};
@@ -80,8 +80,59 @@ impl SettingsWindow {
                         cx,
                     )),
             )
+            .when(cfg!(target_os = "linux"), |page| {
+                page.child(
+                    ui::row(theme, "general-window-controls", "Show window controls")
+                        .description(
+                            "Draw minimize, maximize, and close buttons in the menu bar. Disable \
+                             server-side decorations in your window manager to avoid a double bar.",
+                        )
+                        .switch(self.preference_toggle(
+                            "general-window-controls-toggle",
+                            self.config.show_window_controls,
+                            Preference::ShowWindowControls(!self.config.show_window_controls),
+                            cx,
+                        )),
+                )
+            })
             .child(ui::section(theme, "Features", None))
             .children(self.feature_rows(cx))
+            .children(self.config.features.acp_chats.then(|| {
+                let layouts: Vec<_> = ChatLayoutMode::ALL
+                    .iter()
+                    .map(|&mode| (mode, mode.label()))
+                    .collect();
+                ui::row(theme, "general-chat-layout", "Chat layout")
+                    .description(
+                        "How chat views draw messages and the composer: on a timeline, as \
+                         bubbles like Claude's app, as Claude Code's terminal screen, as a \
+                         document, or as one card per turn. The button in a chat's header steps through them too.",
+                    )
+                    .control(ui::segmented(
+                        theme,
+                        "general-chat-layout-control",
+                        &layouts,
+                        Some(self.config.chat.layout),
+                        !self.quitting && self.closing.is_none(),
+                        on_value(cx, |this, mode, _, cx| {
+                            this.save_preference(Preference::ChatLayout(mode), cx)
+                        }),
+                    ))
+            }))
+            .children(self.config.features.acp_chats.then(|| {
+                ui::row(theme, "general-chat-glide", "Smooth chat scrolling")
+                    .description(
+                        "Scroll smoothly to a reply's new text as it streams in. Off, the \
+                         chat jumps to it as each chunk lands.",
+                    )
+                    .switch(self.preference_toggle(
+                        "general-chat-glide-toggle",
+                        self.config.chat.glide,
+                        Preference::ChatGlide(!self.config.chat.glide),
+                        cx,
+                    ))
+            }))
+            .children(self.render_chat_env_controls(cx))
             .child(ui::section(theme, "Clipboard", None))
             .child(
                 self.gate_shared(

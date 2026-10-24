@@ -216,6 +216,7 @@ pub(super) struct PaneMenu {
     /// The daemon to ask for the pane's processes, when they run here.
     daemon: Option<crate::processes::Daemon>,
     processes: Option<processes::PaneProcesses>,
+    carry_availability: Option<carry::Availability>,
     /// Whether this endpoint's host can run `herdr pane move`.
     movable: bool,
     /// The move in flight, which keeps the menu from starting another.
@@ -284,6 +285,7 @@ impl HerdrWindow {
             error: None,
             daemon,
             processes: None,
+            carry_availability: None,
             movable,
             moving: None,
             scroll: ScrollHandle::new(),

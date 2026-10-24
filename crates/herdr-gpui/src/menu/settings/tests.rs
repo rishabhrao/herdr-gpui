@@ -253,7 +253,7 @@ fn failed_config_load_still_restores_the_saved_github_sign_in(cx: &mut gpui::Tes
         assert!(view.menu.github.loading_profile());
         assert_eq!(
             view.menu.github.store(),
-            crate::github::Store::select(&view.config)
+            crate::github::select_store(&view.config.github)
         );
     });
 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::boat::{DEFAULT_API_URL, Settings};
+use crate::cloud::ProviderError;
 
 #[test]
 fn uncommented_boat_example_loads_with_account_defaults() {
@@ -44,7 +45,9 @@ fn nonempty_invalid_optional_values_remain_invalid() {
         .unwrap();
         assert!(matches!(
             config.settings_with(|_| None),
-            Err(crate::Error::Boat(crate::boat::Error::Field(_)))
+            Err(herdr_remote::Error::Provider(ProviderError::Boat(
+                crate::boat::Error::Field(_)
+            )))
         ));
     }
 }

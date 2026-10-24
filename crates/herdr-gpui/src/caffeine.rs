@@ -24,6 +24,19 @@ mod work;
 
 pub(crate) use work::Work;
 
+/// Why the machine could not be kept awake.
+#[derive(Debug, thiserror::Error)]
+pub enum Failure {
+    #[error("Could not keep the machine awake: {0}")]
+    Hold(#[source] keepawake::Error),
+    #[error("No agent is working, so there is nothing to stay awake for")]
+    NoWorkingAgents,
+    #[error("Could not start the keep-awake thread")]
+    Thread(#[source] std::io::Error),
+    #[error("The keep-awake thread stopped; the display may sleep")]
+    WorkerStopped,
+}
+
 /// How long a hold lasts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Mode {
@@ -212,7 +225,7 @@ fn toggle_until_agents_finish_with<G>(
     match caffeine.cup {
         Cup::Pending => {}
         Cup::On(Mode::UntilAgentsFinish) => release(cx, report),
-        _ if idle => cx.defer(move |cx| report(Error::CaffeineNoWorkingAgents, cx)),
+        _ if idle => cx.defer(move |cx| report(Failure::NoWorkingAgents.into(), cx)),
         Cup::On(Mode::Indefinite) => {
             caffeine.cup = Cup::On(Mode::UntilAgentsFinish);
             cx.refresh_windows();
@@ -270,7 +283,7 @@ fn send(
                 reply,
             })
             .map(|()| worker)
-            .map_err(|_| Error::CaffeineWorkerStopped)
+            .map_err(|_| Error::from(Failure::WorkerStopped))
     });
     let caffeine = cx.default_global::<Caffeine>();
     match sent {
@@ -291,8 +304,8 @@ fn send(
     cx.spawn(async move |cx| {
         // A dropped reply means the worker died, e.g. a panicking release.
         let result = match wait.await {
-            Ok(result) => result.map_err(Error::Caffeine),
-            Err(_) => Err(Error::CaffeineWorkerStopped),
+            Ok(result) => result.map_err(|error| Failure::Hold(error).into()),
+            Err(_) => Err(Failure::WorkerStopped.into()),
         };
         cx.update(|cx| finish(cx, change, result, report));
     })
@@ -315,7 +328,7 @@ fn finish(
     {
         caffeine.changes = caffeine.changes.wrapping_add(1);
     }
-    if matches!(result, Err(Error::CaffeineWorkerStopped)) {
+    if matches!(result, Err(Error::Caffeine(Failure::WorkerStopped))) {
         caffeine.worker = None;
     }
     cx.refresh_windows();
@@ -333,7 +346,7 @@ fn spawn<G>(
     std::thread::Builder::new()
         .name("herdr-keepawake".into())
         .spawn(move || run(&requests, start))
-        .map_err(Error::CaffeineThread)?;
+        .map_err(Failure::Thread)?;
     Ok(worker)
 }
 

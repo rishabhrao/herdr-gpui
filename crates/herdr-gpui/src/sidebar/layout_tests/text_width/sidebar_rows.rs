@@ -84,13 +84,16 @@ pub(super) fn check_row_geometry(cx: &mut gpui::VisualTestContext) {
             name.left(),
             parent.left() + px(crate::sidebar::CHILD_INDENT - crate::sidebar::ICON_RESERVE)
         );
+        // A member has no chevron, so its name also takes the head's arrow
+        // column.
         assert_eq!(
             name.size.width,
-            px(crate::sidebar::LABEL_WIDTH
-                - crate::sidebar::CHILD_INDENT
-                - crate::sidebar::ARROW_RESERVE)
+            px(crate::sidebar::LABEL_WIDTH - crate::sidebar::CHILD_INDENT)
         );
-        assert_eq!(name.right(), parent.right());
+        assert_eq!(
+            name.right(),
+            parent.right() + px(crate::sidebar::ARROW_RESERVE)
+        );
         assert_eq!(detail.size.width, name.size.width);
         assert_eq!(name.size.height, px(16.));
     }
@@ -172,9 +175,14 @@ pub(super) fn check_sidebar_resize(
         );
         assert_eq!(
             child.size.width,
-            parent.size.width - px(crate::sidebar::CHILD_INDENT) + px(crate::sidebar::ICON_RESERVE)
+            parent.size.width - px(crate::sidebar::CHILD_INDENT)
+                + px(crate::sidebar::ICON_RESERVE)
+                + px(crate::sidebar::ARROW_RESERVE)
         );
-        assert_eq!(child.right(), parent.right());
+        assert_eq!(
+            child.right(),
+            parent.right() + px(crate::sidebar::ARROW_RESERVE)
+        );
         cx.update(|_, cx| {
             for (text, (bounds, rendered, glyph_width)) in &cx.global::<TextProbes>().0 {
                 // GPUI rounds available text width to physical pixels.

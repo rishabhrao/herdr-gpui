@@ -50,7 +50,7 @@ fn a_machine_being_created_shows_its_progress_in_the_devices_box(cx: &mut TestAp
                 move |_, report| {
                     report(Step::InstallingHerdr);
                     let _ = wait.recv_timeout(std::time::Duration::from_secs(10));
-                    Err(crate::cloud::Error::Cancelled.into())
+                    Err(crate::Error::from(crate::cloud::Error::Cancelled))
                 },
                 cx,
             )

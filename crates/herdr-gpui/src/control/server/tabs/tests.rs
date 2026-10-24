@@ -3,11 +3,14 @@ use super::*;
 use crate::{
     browser::{LocalFile, OrchestratorRepo, Scope, WebUrl},
     code_view::CodeFile,
+    control::protocol::Request,
     sidebar::layout_tests::{fixture_window, snapshot},
 };
 use gpui::{Entity, VisualTestContext};
 use std::{path::Path, sync::Arc};
 
+mod px0;
+mod review;
 mod windows;
 
 fn web(url: &str) -> Location {
@@ -45,9 +48,10 @@ fn tabs_are_listed_by_kind_with_what_they_show() {
         store.open(scope.clone(), "w_1", location, Some("w_1:p1".into()));
     }
     // The VS Code tab's address carries its token, which is never listed.
-    store.open_code_tab(
+    store.open_editor_tab(
         scope.clone(),
         "w_1",
+        crate::browser::Editor::VsCode,
         Some(web("http://127.0.0.1:8000/?tkn=secret")),
     );
     let listed: Vec<TabInfo> = store.tabs().map(info).collect();
@@ -103,4 +107,21 @@ fn open(
         let scope = crate::browser::scope(&view.read(cx).endpoints[0]);
         Store::update(cx, |store| store.open(scope, workspace, location, None)).unwrap()
     })
+}
+
+/// A request queued on a private socket, and the caller waiting for it.
+fn queued(
+    server: &socket::Server,
+    op: TabOp,
+    caller: Caller,
+) -> (
+    Call<TabOp>,
+    socket::Incoming,
+    std::thread::JoinHandle<herdr_control_protocol::Result<Response>>,
+) {
+    let path = server.path().to_owned();
+    let call = Call { caller, op };
+    let request = Request::Tab(call.clone());
+    let waiting = std::thread::spawn(move || socket::call(&path, &request));
+    (call, server.next().unwrap(), waiting)
 }

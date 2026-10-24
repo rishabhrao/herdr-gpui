@@ -5,6 +5,8 @@ fn integration_methods_require_exact_advertisement() {
     for (method, name) in [
         (Method::IntegrationList, "integration.list"),
         (Method::IntegrationInstall, "integration.install"),
+        (Method::IntegrationListV2, "integration.list.v2"),
+        (Method::IntegrationInstallV2, "integration.install.v2"),
     ] {
         assert_eq!(method.as_str(), name);
         assert_eq!(method.to_string(), name);
@@ -106,7 +108,9 @@ const OFFERED: &[&str] = &[
     "client_shell.surface.set",
     "command.invoke",
     "integration.install",
+    "integration.install.v2",
     "integration.list",
+    "integration.list.v2",
     "layout.set_split_ratio",
     "pane.clear",
     "pane.close",

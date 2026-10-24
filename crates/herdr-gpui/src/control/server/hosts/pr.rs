@@ -62,6 +62,22 @@ fn lookup(view: &HerdrWindow, caller: &Caller) -> Result<(Place, Lookup), Respon
             "Herdr UI is still looking up this branch's pull request; try again shortly".into(),
         )),
     };
+    // A private repository's lookup fails until the App is installed and
+    // approved, which only the user can do; say so beside GitHub's answer.
+    let found = match found {
+        Lookup::Missing(note)
+            if view
+                .pr_profile()
+                .is_some_and(|profile| profile.access.needs_attention()) =>
+        {
+            let hint = "Herdr UI's GitHub App needs installing or its permissions approved; the user can do it from the GitHub page in Herdr UI";
+            Lookup::Missing(Some(match note {
+                Some(note) => format!("{note}. {hint}"),
+                None => hint.to_owned(),
+            }))
+        }
+        found => found,
+    };
     Ok((place, found))
 }
 

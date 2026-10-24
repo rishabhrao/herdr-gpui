@@ -1,53 +1,25 @@
-#![allow(clippy::unwrap_used)]
+use super::*;
 
-use super::{
-    Base, Cache, Input, Lookup, Origin, Remote, Result, base_repository, clean,
-    fetch::{
-        Ask, OUTPUT_LIMIT, TIMEOUT, fetch, local_repository, origin_repository, remote_host,
-        target, worktree_checkout,
-    },
-    fixture,
-    lookup::Worker,
-    model::{MergeState, Outcome, State},
-    parse::{parse, parse_graphql},
-    run,
-};
-use crate::Error;
-use std::{
-    process::Command,
-    sync::{Arc, mpsc},
-    time::{Duration, Instant},
-};
-
-mod actions;
-mod batch;
-mod by_number;
-mod cache;
-mod fetch;
-mod fork_branch;
-mod fork_remote;
-mod lookup;
-mod responses;
-mod reused_branch;
-mod routing;
-mod upstream;
-mod workspace_directory;
-
-fn response() -> serde_json::Value {
-    serde_json::json!([{
-        "number":8, "url":"https://github.com/example/project/pull/8", "title":"Title\n\u{202e}safe",
-        "state":"OPEN", "isDraft":false, "headRefName":"feature", "baseRefName":"main",
-        "additions":1, "deletions":0, "changedFiles":1, "updatedAt":"now",
-        "mergeStateStatus":"UNKNOWN", "reviewDecision":"", "headRepositoryOwner":{"login":"example"}
-    }])
+#[test]
+fn each_tone_takes_its_own_palette_color() {
+    let theme = crate::config::Theme::default();
+    for (tone, expected) in [
+        (Tone::Attention, theme.palette[1]),
+        (Tone::Held, theme.palette[208]),
+        (Tone::Merged, theme.palette[5]),
+        (Tone::Muted, theme.muted),
+        (Tone::Ready, theme.palette[2]),
+        (Tone::Waiting, theme.palette[3]),
+    ] {
+        assert_eq!(tone_color(tone, &theme), theme.ink(expected), "{tone:?}");
+    }
 }
 
-/// What a checkout with only a GitHub `origin` resolves to.
-fn origin_base(owner: &str, repo: &str) -> Base {
-    Base {
-        owner: owner.into(),
-        repo: repo.into(),
-        remote: Remote::Origin,
-        fork_owner: None,
-    }
+#[test]
+fn a_badge_is_colored_by_its_tone() -> anyhow::Result<()> {
+    let theme = crate::config::Theme::default();
+    let mut pr = fixture()?;
+    pr.state = State::Merged;
+    assert_eq!(color(&pr, &theme), theme.ink(theme.palette[5]));
+    Ok(())
 }

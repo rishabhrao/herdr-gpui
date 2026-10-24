@@ -1,5 +1,6 @@
 //! Internal failures retain their categories and sources until presentation.
 pub use crate::updater::UpdateError;
+pub use clipboard::ClipboardError;
 use daemon::daemon_error_message;
 pub use github::{GitHubAccountsError, GitHubJsonError};
 use std::{io, path::PathBuf};
@@ -19,14 +20,10 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[cfg(feature = "azure")]
     #[error(transparent)]
-    Azure(#[from] crate::azure::Error),
+    Automations(#[from] crate::automations::Error),
     #[error(transparent)]
     Backdrop(#[from] crate::backdrop::Error),
-    #[cfg(feature = "boat")]
-    #[error(transparent)]
-    Boat(#[from] crate::boat::Error),
     #[error("Searching the local network failed: {0}")]
     Bonjour(#[from] mdns_sd::Error),
     #[error("{} already exists; choose a new file name", path.display())]
@@ -37,14 +34,10 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[error("Could not keep the machine awake: {0}")]
-    Caffeine(#[source] keepawake::Error),
-    #[error("No agent is working, so there is nothing to stay awake for")]
-    CaffeineNoWorkingAgents,
-    #[error("Could not start the keep-awake thread")]
-    CaffeineThread(#[source] io::Error),
-    #[error("The keep-awake thread stopped; the display may sleep")]
-    CaffeineWorkerStopped,
+    #[error(transparent)]
+    Caffeine(#[from] crate::caffeine::Failure),
+    #[error(transparent)]
+    Chat(#[from] crate::chat::Error),
     #[error("That checkpoint was taken on another branch. Check that branch out to restore it.")]
     CheckpointBranch,
     #[error("A merge, rebase, cherry-pick, or revert is in progress. Finish or abort it first.")]
@@ -74,21 +67,14 @@ pub enum Error {
     Client(#[from] herdr_client::Error),
     #[error("HERDR_GITHUB_OAUTH_CLIENT_ID must be UTF-8")]
     ClientIdEncoding,
-    #[error("The clipboard changed while reading. Try pasting again.")]
-    ClipboardChanged,
-    #[error("Clipboard text is not valid UTF-8.")]
-    ClipboardEncoding(#[source] std::str::Utf8Error),
-    #[error("Could not read the clipboard; on Linux, install wl-paste or xclip.")]
-    ClipboardProcess(#[source] io::Error),
-    #[error("Clipboard content exceeds the {limit}-byte limit.")]
-    ClipboardSize { limit: usize },
-    #[error("Clipboard acquisition timed out.")]
-    ClipboardTimeout,
-    #[error("Remote clipboard acquisition is not supported on this platform.")]
-    ClipboardUnsupported,
+    #[error(transparent)]
+    Clipboard(#[from] ClipboardError),
     #[cfg(feature = "cloud")]
     #[error(transparent)]
     Cloud(#[from] crate::cloud::Error),
+    #[cfg(feature = "cloud")]
+    #[error(transparent)]
+    CloudBatch(#[from] crate::cloud::batch::Error),
     /// Only CPU and memory are sampled on an Azure machine so far.
     #[cfg(feature = "azure")]
     #[error("This is not available for cloud machines yet.")]
@@ -103,9 +89,6 @@ pub enum Error {
     CodeIndexCancelled,
     #[error("Only a local Git checkout can be searched for files and symbols")]
     CodeIndexRoot,
-    #[cfg(feature = "coder")]
-    #[error(transparent)]
-    Coder(#[from] crate::coder::Error),
     #[error("{0}")]
     Config(#[source] config_loader::ConfigError),
     #[error("{source}")]
@@ -122,46 +105,10 @@ pub enum Error {
     ConnectionBusy,
     #[error("The connection is not ready. Try again.")]
     ConnectionNotReady,
-    #[error("Control request or response exceeds {limit} bytes")]
-    ControlMessageSize { limit: usize },
-    #[error("Herdr UI closed the control connection without answering")]
-    ControlNoResponse,
-    #[error("{} is held by something other than this user's Herdr UI, so it is not used", path.display())]
-    ControlPipeForeign { path: PathBuf },
-    #[error("{message}")]
-    ControlRejected {
-        code: crate::control::ErrorCode,
-        message: String,
-    },
-    #[error("Another Herdr UI already serves {}", path.display())]
-    ControlSocketInUse { path: PathBuf },
-    #[error("Herdr UI is not running, or its control socket {} is unreachable: {source}", path.display())]
-    ControlUnavailable {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("Could not identify the Windows user: {0}")]
-    ControlUser(#[source] io::Error),
-    #[error("Missing credential directory.")]
-    CredentialDirectory,
-    #[error("Cannot access private credential file.")]
-    CredentialIo(#[source] io::Error),
-    #[cfg(windows)]
     #[error(transparent)]
-    CredentialManager(#[from] crate::github::CredentialManagerError),
-    #[error(
-        "Cannot access private credential file. Require an owned directory and regular 0600 file; symlinks are rejected."
-    )]
-    CredentialPermissions,
-    #[error(
-        "No secure credential store configured. Explicitly opt in with allow_plaintext_credentials = true in the [github] or [coder] table, or use GH_TOKEN / GITHUB_TOKEN for GitHub."
-    )]
-    CredentialPolicy,
-    #[error(
-        "No GitHub credential store is available on this platform. Use GH_TOKEN / GITHUB_TOKEN."
-    )]
-    CredentialUnsupported,
+    Control(#[from] crate::control::ControlError),
+    #[error(transparent)]
+    Credentials(#[from] herdr_credentials::Error),
     #[error("daemon startup cancelled")]
     DaemonCancelled,
     #[error("herdr server exited before accepting connections: {0}. Check the Herdr server log.")]
@@ -175,9 +122,6 @@ pub enum Error {
     },
     #[error("Timed out waiting for herdr server at {}. Check the Herdr server log and use Terminal > Reconnect.", .0.display())]
     DaemonTimeout(PathBuf),
-    #[cfg(feature = "daytona")]
-    #[error(transparent)]
-    Daytona(#[from] crate::daytona::Error),
     #[error("Checkout lookup failed. Dismiss and reopen the menu.")]
     DeletionLookup,
     #[error("HEAD is detached. Check a branch out first.")]
@@ -493,12 +437,6 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error("{0}")]
     Json(#[from] serde_json::Error),
-    #[cfg(target_os = "macos")]
-    #[error("Cannot read GitHub Keychain entry. Unlock your login Keychain or set GH_TOKEN.")]
-    KeychainRead(#[source] security_framework::base::Error),
-    #[cfg(target_os = "macos")]
-    #[error("GitHub Keychain update failed. Unlock your login Keychain and try again.")]
-    KeychainWrite(#[source] security_framework::base::Error),
     #[error(
         "keybindings.{command}: {keystroke:?} needs a cmd, ctrl, alt, or fn modifier so typing still reaches the terminal"
     )]
@@ -680,24 +618,14 @@ pub enum Error {
     PrMetadata,
     #[error("No local worktree matches the daemon branch.")]
     PrMissingWorktree,
-    #[error("Herdr's answer about the pane's process was not understood.")]
-    ProcessesAnswer(#[source] serde_json::Error),
-    #[error("Still ending the last processes. Try again in a moment.")]
-    ProcessesBusy,
-    #[error("The herdr executable's path is not valid UTF-8.")]
-    ProcessesExecutable,
-    #[error("Herdr did not name a process for this pane.")]
-    ProcessesNoRoot,
-    #[error("Could not ask Herdr which process the pane runs.")]
-    ProcessesQuery(#[source] herdr_client::Error),
-    #[error("The pane's process has exited.")]
-    ProcessesRootExited,
-    #[error("The process list stopped updating. Reopen it to try again.")]
-    ProcessesStopped,
-    #[error("Could not start watching the pane's processes.")]
-    ProcessesWorker(#[source] io::Error),
+    #[error(transparent)]
+    Processes(#[from] crate::processes::Error),
     #[error("PR lookup supports GitHub.com origins only.")]
     PrOrigin,
+    /// A cloud provider's own failure; see `cloud::ProviderError`.
+    #[cfg(feature = "cloud")]
+    #[error(transparent)]
+    Provider(#[from] crate::cloud::ProviderError),
     #[error("Could not {operation} for Git PR lookup.")]
     PrProcess {
         operation: &'static str,
@@ -720,11 +648,13 @@ pub enum Error {
     PrWorkspaceRepository,
     #[error("Local repository unavailable for worktree lookup.")]
     PrWorktreeLookup,
-    #[cfg(feature = "railway")]
     #[error(transparent)]
-    Railway(#[from] crate::railway::Error),
+    Px0(#[from] crate::px0::Error),
     #[error("XDG_CONFIG_HOME must be an absolute path")]
     RelativeConfigRoot,
+    /// What `herdr-remote` reports that the app has no variant of its own for.
+    #[error(transparent)]
+    Remote(herdr_remote::Error),
     #[error("Could not install the agent tools on the SSH host: {0}")]
     RemoteAgentTools(#[source] herdr_client::Error),
     #[error("{method}: {source}")]
@@ -739,6 +669,9 @@ pub enum Error {
     ReviewNoBase,
     #[error("These changes are too large to review here, even leaving out the largest files.")]
     ReviewTooLarge,
+    #[cfg(feature = "cloud")]
+    #[error(transparent)]
+    SandboxImage(#[from] crate::cloud::image::Error),
     #[error("The page's picture could not be turned into a PNG")]
     ScreenshotImage,
     #[error("Could not write the screenshot to {}: {source}", path.display())]
@@ -747,19 +680,6 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[cfg(target_os = "linux")]
-    #[error(
-        "Cannot read GitHub sign-in from the desktop keyring. Unlock your keyring or set GH_TOKEN."
-    )]
-    SecretServiceRead(#[source] Box<oo7::Error>),
-    #[cfg(target_os = "linux")]
-    #[error(
-        "No desktop keyring (Secret Service) is running. Start GNOME Keyring, KWallet, or KeePassXC, or set [github] allow_plaintext_credentials = true, or use GH_TOKEN / GITHUB_TOKEN."
-    )]
-    SecretServiceUnavailable,
-    #[cfg(target_os = "linux")]
-    #[error("GitHub keyring update failed. Unlock your desktop keyring and try again.")]
-    SecretServiceWrite(#[source] Box<oo7::Error>),
     #[error("The selection reaches rows the pane no longer shows.")]
     SelectionOffscreen,
     #[error("Selection is too large to copy.")]
@@ -799,26 +719,8 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    #[error("Audio playback cancelled")]
-    SoundCancelled,
-    #[error("Sound configuration exceeds 1 MiB")]
-    SoundConfigSize,
-    #[error("Could not decode MP3 sound: {0}")]
-    SoundDecode(#[from] rodio::decoder::DecoderError),
-    #[error("Could not open audio output: {0}")]
-    SoundDevice(#[from] rodio::DeviceSinkError),
-    #[error("Could not read sound file {}: {source}", path.display())]
-    SoundFile {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("Sound must be a regular file of at most 16 MiB")]
-    SoundFileSize,
-    #[error("Audio output failed: {0}")]
-    SoundStream(#[from] rodio::cpal::StreamError),
-    #[error("Audio playback timed out")]
-    SoundTimeout,
+    #[error(transparent)]
+    Sound(#[from] crate::sound::Error),
     #[error("Could not read {}: {source}", path.display())]
     SshConfig {
         path: PathBuf,
@@ -844,6 +746,8 @@ pub enum Error {
     /// The host's `uname -s`, bounded, so the message names what it is.
     #[error("CPU and memory cannot be read on {0:?} hosts.")]
     SystemLoadUnsupported(String),
+    #[error(transparent)]
+    TabLayout(#[from] crate::config::tab_layout::Error),
     #[error("Tailscale returned an unreadable status: {0}")]
     TailscaleJson(#[source] serde_json::Error),
     #[error("Tailscale did not answer in time")]
@@ -874,14 +778,8 @@ pub enum Error {
     TooManyKeystrokes(&'static str),
     #[error("pane_keys must list at most {0} keystrokes")]
     TooManyPaneKeys(usize),
-    #[error("SSH ended before the tunnel opened ({0}).")]
-    TunnelExited(std::process::ExitStatus),
-    #[error("No free local port for an SSH tunnel.")]
-    TunnelPort(#[source] io::Error),
-    #[error("Could not start ssh for a tunnel.")]
-    TunnelStart(#[source] io::Error),
-    #[error("The SSH tunnel did not open in time.")]
-    TunnelTimeout,
+    #[error(transparent)]
+    Tunnel(#[from] crate::listening_ports::TunnelError),
     #[error("Herdr UI has no setting {}; config-gpui.toml lists every setting", .0.join(", "))]
     UnknownConfigKeys(Vec<String>),
     #[error("keybindings.{0} is not a command; see the keybindings list in config-gpui.toml")]
@@ -894,47 +792,9 @@ pub enum Error {
     UnsupportedCommand,
     #[error("{0}")]
     Update(#[from] UpdateError),
-    #[error("Usage command failed: {0}.")]
-    UsageCommand(&'static str),
-    #[error("Could not reach the usage service from this host.")]
-    UsageConnect,
-    #[error("Saved sign-in cannot be sent as a header.")]
-    UsageHeader(#[source] ureq::http::header::InvalidHeaderValue),
-    /// The body may hold account details, so only the parser's category is kept.
-    #[error("Usage response was not the expected JSON.")]
-    UsageJson(serde_json::error::Category),
-    #[error("Reading this sign-in needs Keychain access, which macOS asks for.")]
-    UsageKeychainAccess,
-    #[error("Keychain access was denied, so this sign-in cannot be read.")]
-    UsageKeychainDenied,
-    #[error("curl is not installed on this host, so usage cannot be read.")]
-    UsageMissingCurl,
-    #[error("Usage request mixes this machine's settings with the remote host's sign-in.")]
-    UsageMixedSecrets,
-    #[error("Usage request failed or timed out.")]
-    UsageNetwork(#[source] ureq::Error),
-    #[error("This account has no plan with usage limits to show.")]
-    UsageNoPlan,
-    #[error("No sign-in found on this host. Set it up under [usage.providers] in the config.")]
-    UsageNotSignedIn,
-    #[error("Could not {operation}.")]
-    UsageProcess {
-        operation: &'static str,
-        #[source]
-        source: io::Error,
-    },
-    #[error("Usage is rate limited. Retrying later.")]
-    UsageRateLimited,
-    #[error("Saved sign-in was rejected. Open the agent to sign in again.")]
-    UsageRejected,
-    #[error("Usage output exceeded the size limit.")]
-    UsageSize,
-    #[error("Usage service returned HTTP {0}.")]
-    UsageStatus(u16),
-    #[error("Usage check timed out.")]
-    UsageTimeout,
-    #[error("Could not reach this host over SSH to read usage.")]
-    UsageUnreachable,
+    /// A usage read failed; see `error/usage.rs` for what is folded elsewhere.
+    #[error(transparent)]
+    Usage(herdr_usage::Error),
     #[cfg(any(target_os = "macos", windows))]
     #[error("Could not create the page: {0}")]
     WebView(#[from] wry::Error),
@@ -947,6 +807,8 @@ pub enum Error {
     WorkspaceGroupChanged,
     #[error("Repository changed. Dismiss and reopen the menu.")]
     WorkspaceRepositoryChanged,
+    #[error(transparent)]
+    WorktreeIdentity(#[from] crate::worktree_identity::Error),
     #[error("Invalid or oversized worktree list. Dismiss and reopen the menu.")]
     WorktreeList,
     #[error("Malformed worktree list. Dismiss and reopen the menu.")]
@@ -977,8 +839,7 @@ pub enum Error {
     WorktreeScriptsUnsupportedHost,
     #[error("Select a checkout from the daemon's worktree list.")]
     WorktreeSelection,
-    /// A shell into a WSL distribution starts through `wsl.exe`, which only a
-    /// Windows client has.
+    /// WSL shells start through `wsl.exe`, which only a Windows client has.
     #[error("WSL distributions can only be reached from Windows.")]
     WslHostUnsupported,
     #[error("Another drop's paths are still being mapped in WSL. Try again in a moment.")]
@@ -988,11 +849,15 @@ pub enum Error {
     // keep-sorted end
 }
 
+mod clipboard;
 mod config;
 mod daemon;
 mod github;
 mod path;
+mod remote;
 mod theme;
+mod usage;
+mod vcs;
 
 #[cfg(test)]
 mod tests;

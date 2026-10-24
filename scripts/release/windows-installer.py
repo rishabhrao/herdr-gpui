@@ -324,7 +324,7 @@ def stop_processes_at(path):
 
 def check_update_relaunches(installer, app):
     """Run Setup over the installation as the app's in-app update does
-    (updater/windows.rs), and require it to start the app again."""
+    (herdr-updater/src/windows.rs), and require it to start the app again."""
     gui = app / "herdr-gpui.exe"
     if processes_at(gui):
         raise ValueError("A silent install started the app without /RELAUNCH=1")

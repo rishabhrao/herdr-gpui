@@ -13,7 +13,9 @@ fn unreadable_credentials_keep_saved_devices_visible_and_removable(cx: &mut Test
             view.boat_card.as_mut().unwrap().account = Account::Known(Box::new(Overview {
                 pending: Ok(None),
                 key: Err(crate::boat::Error::Storage(Box::new(
-                    crate::Error::CredentialIo(std::io::ErrorKind::PermissionDenied.into()),
+                    herdr_remote::Error::Credentials(herdr_credentials::Error::Io(
+                        std::io::ErrorKind::PermissionDenied.into(),
+                    )),
                 ))),
                 sandboxes: None,
                 devices: vec![SavedDevice {

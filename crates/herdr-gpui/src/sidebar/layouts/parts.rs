@@ -10,7 +10,7 @@
 use super::super::{
     cell::{RowContext, RowState},
     glyph_width, label_text, line_height,
-    row::{self, PrBadge, RowLift, removing_dot},
+    row::{self, Counts, PrBadge, RowIcon, RowLift, removing_dot},
     status_indicator,
     tokens::ResolvedToken,
 };
@@ -27,7 +27,11 @@ enum Fit {
     /// Its natural width, capped at this share of the line and at what is
     /// left once fixed pieces are placed.
     Shrink(f32),
-    /// An equal part of whatever the other pieces leave.
+    /// Its natural width, already capped at a share of the line, kept ahead
+    /// of shrinking pieces but behind filling ones.
+    Keep,
+    /// Its natural width, kept ahead of shrinking pieces, then an equal part
+    /// of whatever the other pieces leave.
     Fill,
 }
 
@@ -121,9 +125,41 @@ impl<'a> Line<'a> {
         )
     }
 
+    /// A label that keeps its natural width, up to `share` of the line, ahead
+    /// of every other label, so a short state outlasts long names before it.
+    pub(super) fn keep(
+        self,
+        shell: Div,
+        text: impl Into<Cow<'a, str>>,
+        glyph: f32,
+        share: f32,
+    ) -> Self {
+        let text = text.into();
+        let natural = (text.chars().count() as f32 * glyph)
+            .ceil()
+            .min(share * self.width);
+        self.push(shell, Content::Text(text, 0.), natural, Fit::Keep)
+    }
+
     /// Text that takes the room the other pieces leave.
     pub(super) fn fill(self, shell: Div, text: impl Into<Cow<'a, str>>) -> Self {
         self.push(shell, Content::Text(text.into(), 0.), 0., Fit::Fill)
+    }
+
+    /// Text that fills the room the others leave, but first keeps its natural
+    /// width, up to `share` of the line, ahead of every label.
+    pub(super) fn lead(
+        self,
+        shell: Div,
+        text: impl Into<Cow<'a, str>>,
+        glyph: f32,
+        share: f32,
+    ) -> Self {
+        let text = text.into();
+        let natural = (text.chars().count() as f32 * glyph)
+            .ceil()
+            .min(share * self.width);
+        self.push(shell, Content::Text(text, 0.), natural, Fit::Fill)
     }
 
     /// Content that takes the room the other pieces leave, built at that width.
@@ -145,29 +181,51 @@ impl<'a> Line<'a> {
             .map(|piece| piece.natural)
             .sum();
         let mut free = (self.width - gaps - fixed).max(0.);
+        let reserved = |fit: fn(Fit) -> bool| -> f32 {
+            self.pieces
+                .iter()
+                .filter(|piece| fit(piece.fit))
+                .map(|piece| piece.natural)
+                .sum()
+        };
+        let reserve = reserved(|fit| matches!(fit, Fit::Fill));
+        let kept = reserved(|fit| matches!(fit, Fit::Keep));
         let mut widths: Vec<f32> = self
             .pieces
             .iter()
             .map(|piece| match piece.fit {
                 Fit::Fixed => piece.natural,
                 Fit::Shrink(share) => {
-                    let width = piece.natural.min(share * self.width).min(free);
+                    let room = (free - reserve - kept).max(0.);
+                    let width = piece.natural.min(share * self.width).min(room);
                     free -= width;
                     width
                 }
-                Fit::Fill => 0.,
+                Fit::Keep | Fit::Fill => 0.,
             })
             .collect();
+        // Kept labels take what shrinking ones left them, after the room
+        // filling pieces reserved.
+        for (width, piece) in widths.iter_mut().zip(&self.pieces) {
+            if matches!(piece.fit, Fit::Keep) {
+                *width = piece.natural.min((free - reserve).max(0.));
+                free -= *width;
+            }
+        }
         let fills = self
             .pieces
             .iter()
             .filter(|piece| matches!(piece.fit, Fit::Fill))
             .count();
         if fills > 0 {
-            let share = free / fills as f32;
+            // Filling pieces take back what they reserved, as far as the line
+            // holds it, then split the rest evenly.
+            let share = (free - reserve).max(0.) / fills as f32;
             for (width, piece) in widths.iter_mut().zip(&self.pieces) {
                 if matches!(piece.fit, Fit::Fill) {
-                    *width = share;
+                    let kept = piece.natural.min(free);
+                    free -= kept;
+                    *width = kept + share;
                 }
             }
         }
@@ -240,12 +298,8 @@ pub(super) fn mark(row: Div, state: RowState, colors: (Rgba, Rgba), theme: &Them
     }
 }
 
-pub(super) fn icon(path: impl Into<SharedString>, size: f32, color: u32) -> Svg {
-    svg()
-        .path(path)
-        .size(px(size))
-        .flex_none()
-        .text_color(rgb(color))
+pub(super) fn icon(path: impl Into<SharedString>, size: f32, color: u32) -> AnyElement {
+    crate::icons::icon(path, size, color)
 }
 
 /// The status dot, or the pulse that replaces it while a checkout is deleted.
@@ -300,14 +354,30 @@ pub(super) fn teleported(key: &str, size: f32, theme: &Theme) -> Div {
     crate::icons::teleported(theme, size).debug_selector(|| format!("teleported-{key}"))
 }
 
+/// The branch glyph a linked worktree standing alone leads its name with,
+/// in the hue its icon carries. These rows have no avatar slot, so every
+/// other icon draws nothing.
+pub(super) fn worktree(key: &str, icon: &RowIcon, size: f32) -> Option<Div> {
+    let RowIcon::Worktree(hue) = icon else {
+        return None;
+    };
+    Some(
+        div()
+            .debug_selector(|| format!("worktree-icon-{key}"))
+            .size(px(size))
+            .flex_none()
+            .child(self::icon("icons/git-branch.svg", size, *hue)),
+    )
+}
+
 pub(super) fn dirty(key: &str, size: f32, theme: &Theme) -> Div {
     crate::icons::uncommitted(theme, size).debug_selector(|| format!("dirty-{key}"))
 }
 
-/// The pull request's `+additions -deletions`, colored or muted, and the
-/// width it needs at `glyph`.
-pub(super) fn pr_counts(key: &str, pr: &PrBadge, glyph: f32, colors: (u32, u32)) -> (f32, Div) {
-    let glyphs = pr.additions.chars().count() + pr.deletions.chars().count() + 1;
+/// The row's `+additions -deletions`, colored or muted, and the width it
+/// needs at `glyph`.
+pub(super) fn counts(key: &str, counts: &Counts, glyph: f32, colors: (u32, u32)) -> (f32, Div) {
+    let glyphs = counts.glyphs();
     let element = div()
         .debug_selector(|| format!("pr-{key}"))
         .flex()
@@ -315,12 +385,12 @@ pub(super) fn pr_counts(key: &str, pr: &PrBadge, glyph: f32, colors: (u32, u32))
         .child(
             div()
                 .text_color(rgb(colors.0))
-                .child(label_text(&pr.additions)),
+                .child(label_text(&counts.additions)),
         )
         .child(
             div()
                 .text_color(rgb(colors.1))
-                .child(label_text(&pr.deletions)),
+                .child(label_text(&counts.deletions)),
         );
     ((glyphs as f32 * glyph).ceil(), element)
 }
@@ -396,6 +466,36 @@ mod tests {
             .fill(div(), "a")
             .spacer();
         assert_eq!(widths(line), vec![50., 25., 25.]);
+    }
+
+    #[test]
+    fn a_lead_keeps_its_width_ahead_of_labels_that_a_plain_fill_gives_up() {
+        let long = || "x".repeat(80);
+        let line = Line::new(100., 0.)
+            .lead(div(), "grok", 10., 0.4)
+            .label(div(), long(), 1., 0.5)
+            .label(div(), long(), 1., 0.5);
+        assert_eq!(widths(line), vec![40., 50., 10.]);
+        let line = Line::new(100., 0.)
+            .fill(div(), "grok")
+            .label(div(), long(), 1., 0.5)
+            .label(div(), long(), 1., 0.5);
+        assert_eq!(widths(line), vec![0., 50., 50.]);
+    }
+
+    #[test]
+    fn a_kept_label_holds_its_width_ahead_of_earlier_labels_but_behind_a_lead() {
+        let long = || "x".repeat(80);
+        let line = Line::new(100., 0.)
+            .lead(div(), "grok", 10., 0.4)
+            .label(div(), long(), 1., 0.5)
+            .label(div(), long(), 1., 0.5)
+            .keep(div(), "idle", 5., 0.3);
+        assert_eq!(widths(line), vec![40., 40., 0., 20.]);
+        let line = Line::new(30., 0.)
+            .lead(div(), "grok", 10., 0.4)
+            .keep(div(), "working", 5., 0.9);
+        assert_eq!(widths(line), vec![12., 18.]);
     }
 
     #[test]

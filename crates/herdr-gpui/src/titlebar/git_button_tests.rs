@@ -183,7 +183,7 @@ fn a_cached_pull_request_replaces_the_uncommitted_counts(cx: &mut TestAppContext
                 },
             );
             view.menu.github = crate::github::Auth::connected_fixture();
-            view.menu.pr_cache.seed(
+            view.seed_pr(
                 input,
                 crate::pull_request::fixture().unwrap(),
                 std::time::Instant::now(),
@@ -265,7 +265,7 @@ fn a_clean_checkout_with_a_pull_request_shows_no_dot(cx: &mut TestAppContext) {
         view.update(cx, |view, cx| {
             view.git = Git::fixture(input.clone(), Status::default());
             view.menu.github = crate::github::Auth::connected_fixture();
-            view.menu.pr_cache.seed(
+            view.seed_pr(
                 input,
                 crate::pull_request::fixture().unwrap(),
                 std::time::Instant::now(),

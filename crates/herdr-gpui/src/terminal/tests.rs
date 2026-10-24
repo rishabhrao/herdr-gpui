@@ -4,6 +4,7 @@ mod bold_color;
 mod layout_chords;
 mod wheel;
 mod wheel_notches;
+mod wheel_reports;
 
 /// The scroll count that leaves the platform's own notch size unchanged.
 const NEUTRAL: NonZeroU16 = NonZeroU16::new(PLATFORM_NOTCH_LINES).unwrap();
@@ -172,23 +173,26 @@ fn wheel_hits_inner_pane_and_uses_relative_coordinates_and_semantic_modes() {
             target.position,
             ClientMousePosition::Cell { column: 2, row: 2 }
         );
-        assert!(matches!(
-            target
-                .wheel_events(
-                    WheelSteps {
-                        lines: -3,
-                        columns: 0
-                    },
-                    Modifiers::default()
-                )
-                .next()
-                .unwrap(),
-            ClientPaneInputEvent::Mouse {
-                kind: ClientMouseKind::ScrollDown,
-                lines: 3,
-                ..
-            }
-        ));
+        // The scrollback moves by the whole count; an application on the
+        // alternate screen gets one arrow key per step from Herdr.
+        let lines: Vec<_> = target
+            .wheel_events(
+                WheelSteps {
+                    lines: -3,
+                    columns: 0,
+                },
+                Modifiers::default(),
+            )
+            .map(|event| match event {
+                ClientPaneInputEvent::Mouse {
+                    kind: ClientMouseKind::ScrollDown,
+                    lines,
+                    ..
+                } => lines,
+                event => panic!("unexpected wheel event {event:?}"),
+            })
+            .collect();
+        assert_eq!(lines, if alternate { vec![1; 3] } else { vec![3] });
     }
     surface.panes[0].sgr_pixel_mouse = true;
     let target = wheel_target(&surface, 35., 65., 10., CELL_HEIGHT).unwrap();

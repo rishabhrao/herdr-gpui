@@ -14,8 +14,8 @@ const MAX_QUOTED_CHARS: usize = 200;
 pub(crate) struct Note {
     pub anchor: Anchor,
     pub comment: String,
-    /// Whether the note went to the agent and was not edited since.
-    pub sent: bool,
+    /// The send that delivered the note, unless it was edited since.
+    pub sent: Option<crate::agent_notes::SendId>,
 }
 
 /// One line of text: no controls, no runs of whitespace, and bounded.
@@ -40,7 +40,7 @@ impl Note {
         (!comment.is_empty()).then_some(Self {
             anchor,
             comment,
-            sent: false,
+            sent: None,
         })
     }
 

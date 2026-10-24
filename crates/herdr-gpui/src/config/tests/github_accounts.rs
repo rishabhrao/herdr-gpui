@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    config::{GitHubAccount, MAX_ACCOUNTS, valid_account_id},
+    config::{GitHubAccount, MAX_ACCOUNTS},
     error::GitHubAccountsError,
 };
 
@@ -116,7 +116,7 @@ fn what_a_newer_build_adds_is_ignored_and_named_not_refused() -> anyhow::Result<
 fn generated_ids_are_valid_and_distinct() -> anyhow::Result<()> {
     let first = GitHubAccount::generate()?;
     let second = GitHubAccount::generate()?;
-    assert!(valid_account_id(&first.id));
+    assert!(herdr_github::config::valid_account_id(&first.id));
     assert_ne!(first.id, second.id);
     assert!(first.owners.is_empty());
     Ok(())

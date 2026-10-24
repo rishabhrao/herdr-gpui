@@ -229,7 +229,8 @@ fn child_gutter_lines_land_on_whole_device_pixels() {
         let device = |value: Pixels| f32::from(value) * scale;
         let whole = |value: Pixels| (device(value) - device(value).round()).abs() < 0.001;
         for tree in [RowTree::Child, RowTree::LastChild] {
-            let [trunk, tick] = tree_lines(row, tree, &font, 4., scale);
+            let middle = row.top() + px(4. + super::super::line_height(&font) / 2.);
+            let [trunk, tick] = tree_lines(row, tree, middle, scale);
             // Both lines carry the same weight and start on the device grid, so
             // neither is drawn thinner or blurrier than the other.
             assert!(
@@ -249,7 +250,6 @@ fn child_gutter_lines_land_on_whole_device_pixels() {
             assert_eq!(trunk.left(), row.left(), "{scale}");
             assert_eq!(tick.right(), row.right(), "{scale}");
             // The tick meets the status dot's middle row.
-            let middle = row.top() + px(4. + super::super::line_height(&font) / 2.);
             assert!(
                 (tick.center().y - middle).abs() <= px(1. / scale),
                 "{scale}"

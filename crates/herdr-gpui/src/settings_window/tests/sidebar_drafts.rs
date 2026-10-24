@@ -34,6 +34,8 @@ fn settings_with_source(
 fn intent(overrides: SidebarOverrides, select: SelectMode) -> SidebarIntent {
     SidebarIntent {
         style: SidebarStyle {
+            // As the layout fixture has it, so only the keys a test sets differ.
+            activity_bar: false,
             overrides,
             select,
             ..Default::default()
@@ -299,7 +301,10 @@ fn typed_hex_commits_on_enter_and_invalid_text_writes_nothing(cx: &mut TestAppCo
 /// A writer whose reload reflects what it wrote, so a follow-up save diffs
 /// against the first one's result.
 fn disk_io(edits: Edits) -> controls::preferences::PreferenceIo {
-    disk_io_from(edits, Config::default())
+    let mut start = Config::default();
+    // As the layout fixture has it, so a draft's untouched bar is not a change.
+    start.sidebar_style.activity_bar = false;
+    disk_io_from(edits, start)
 }
 
 fn disk_io_from(edits: Edits, start: Config) -> controls::preferences::PreferenceIo {

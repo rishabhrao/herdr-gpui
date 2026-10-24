@@ -1,5 +1,9 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+mod boot_fence;
+mod closed;
+mod closed_page;
+mod hosts;
 mod marks;
 mod page;
 mod presets;

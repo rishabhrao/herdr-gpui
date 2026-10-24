@@ -88,7 +88,16 @@ fn a_section_makes_its_view_once_and_picks_its_list(cx: &mut gpui::TestAppContex
 
 #[gpui::test]
 fn a_section_lists_every_repository_once_and_drops_closed_ones(cx: &mut gpui::TestAppContext) {
+    let repositories = tempfile::tempdir().unwrap();
+    for folder in ["worktrees", "other"] {
+        gix::init(repositories.path().join(folder)).unwrap();
+    }
     let (view, cx) = local(cx);
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.prepare_orchestrator_projects_for_tests(repositories.path(), cx);
+        });
+    });
     show(&view, cx, ActivityPanel::Issues);
     let keys = |cx: &mut VisualTestContext| {
         cx.update(|_, cx| {

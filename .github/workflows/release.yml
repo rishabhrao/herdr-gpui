@@ -105,7 +105,7 @@ jobs:
       # repository variable, is set; windows-sign then requires the Azure
       # variables too. Until then Windows ships unsigned and skips winget, and
       # those builds name no publisher, so their in-app updater stays off
-      # (updater/windows.rs) rather than trusting an unsigned installer.
+      # (herdr-updater/src/windows.rs) rather than trusting an unsigned installer.
       - id: windows-signing
         env:
           WINDOWS_SIGNING_SUBJECT: ${{ vars.WINDOWS_SIGNING_SUBJECT }}
@@ -233,7 +233,7 @@ jobs:
           fallback: none
       - run: cargo about --version
       - run: python3 scripts/release/generate-notices.py "target/$TARGET/release/THIRD-PARTY-NOTICES.txt"
-      - name: Package experimental Linux executable
+      - name: Package Linux executable
         run: |
           mkdir dist
           bash scripts/release/package-linux.sh "$VERSION" "$TARGET" "target/$TARGET/release/herdr-gpui" dist "target/$TARGET/release/THIRD-PARTY-NOTICES.txt"
@@ -260,10 +260,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Experimental: the executable is built and its CLI smoke-tested here, and
-  # windows-sign Authenticode-signs exactly these bytes. Nothing runs its
-  # window or a live daemon, and it is deliberately absent from the update
-  # manifest. No credentials reach this job or its build scripts.
+  # The executable is built and its CLI smoke-tested here, and windows-sign
+  # Authenticode-signs exactly these bytes. Nothing runs its window or a live
+  # daemon. Signed releases list the installers in windows-manifest.json, so
+  # installed copies update in the app. No credentials reach this job or its
+  # build scripts.
   windows:
     name: Windows (${{ matrix.target }})
     needs: validate
@@ -285,7 +286,7 @@ jobs:
       HERDR_RELEASE_VERSION: ${{ needs.validate.outputs.version }}
       HERDR_UPDATE_PUBLIC_KEY: ${{ vars.HERDR_UPDATE_PUBLIC_KEY }}
       # The publisher the in-app updater requires on a downloaded installer
-      # (updater/windows.rs); windows-sign checks the release is signed by it.
+      # (herdr-updater/src/windows.rs); windows-sign checks the release is signed by it.
       # A repository variable: this job is outside the release environment.
       # Empty while signing is not set up, which turns that build's updater off.
       HERDR_WINDOWS_SIGNER: ${{ vars.WINDOWS_SIGNING_SUBJECT }}
@@ -308,7 +309,7 @@ jobs:
       - run: cargo about --version
       # The Windows image provides `python`, not `python3`.
       - run: python scripts/release/generate-notices.py "target/$TARGET/release/THIRD-PARTY-NOTICES.txt"
-      - name: Package experimental Windows executable
+      - name: Package Windows executable
         run: |
           mkdir dist
           python scripts/release/package-windows.py "$VERSION" "$TARGET" "target/$TARGET/release/herdr-gpui.exe" "target/$TARGET/release/herdr-gpui-launcher.exe" dist "target/$TARGET/release/THIRD-PARTY-NOTICES.txt"

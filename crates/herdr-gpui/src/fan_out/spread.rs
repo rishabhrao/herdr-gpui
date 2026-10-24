@@ -63,11 +63,8 @@ impl HerdrWindow {
                         .rounded(px(crate::config::corners::CONTROL))
                         .bg(rgb(theme.surface))
                         .child(
-                            svg()
-                                .path(AgentIcon::from_identity(Some(kind.name())).path())
-                                .size(px(14.))
-                                .flex_none()
-                                .text_color(rgb(theme.foreground)),
+                            AgentIcon::from_identity(Some(kind.name()))
+                                .element(14., theme.foreground),
                         )
                         .child(div().flex_1().min_w_0().truncate().child(kind.name()))
                         .child(chip),

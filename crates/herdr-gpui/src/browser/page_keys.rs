@@ -18,7 +18,8 @@
 //!   unhandled, so these would otherwise do nothing while it has focus.
 //! - The keys bound to moving to another tab, workspace, or agent stay with
 //!   the app, as a browser keeps its tab keys. Without them, only the mouse
-//!   could leave a page.
+//!   could leave a page. So do the keys bound to the font size commands,
+//!   which zoom the page, as a browser keeps its zoom keys.
 //!
 //! The monitor and the edit actions are the AppKit calls here, and they need
 //! `unsafe`: the monitor's handler must return a valid event or null, and an
@@ -50,19 +51,25 @@ thread_local! {
 }
 
 /// The commands a focused page leaves to the app: moving to another tab,
-/// workspace, or agent.
+/// workspace, or agent, moving the page's own tab, and the font size
+/// commands, which zoom the page.
 fn leaves_page(command: Command) -> bool {
     matches!(
         command,
         Command::NextTab
             | Command::PreviousTab
             | Command::TabNumber(_)
+            | Command::MoveTabPrevious
+            | Command::MoveTabNext
             | Command::NextWorkspace
             | Command::PreviousWorkspace
             | Command::WorkspaceNumber(_)
             | Command::NextAgent
             | Command::PreviousAgent
             | Command::AgentNumber(_)
+            | Command::IncreaseFontSize
+            | Command::DecreaseFontSize
+            | Command::ResetFontSize
     )
 }
 

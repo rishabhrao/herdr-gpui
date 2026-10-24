@@ -77,3 +77,44 @@ fn latin_layout_ctrl_chords_keep_their_own_key() {
         Some((ClientKeyCode::Char('ö'), 2))
     );
 }
+
+const CTRL_ALT: Modifiers = Modifiers {
+    control: true,
+    alt: true,
+    shift: false,
+    platform: false,
+    function: false,
+};
+
+#[test]
+fn windows_alt_gr_characters_stay_text() {
+    // Windows reports AltGr as Ctrl+Alt. When the chord types a character,
+    // as AltGr+W types `?` and AltGr+Q `/` on a Brazilian ABNT2 layout, GPUI
+    // marks it as preferring character input. Sent as Ctrl+Alt+W, the key
+    // event would keep Windows from ever delivering the `?`.
+    for (key, key_char) in [("w", "?"), ("q", "/")] {
+        let typed = KeyDownEvent {
+            prefer_character_input: true,
+            ..reported(key, Some(key_char), CTRL_ALT)
+        };
+        for alt_keys in [false, true] {
+            assert_eq!(sent(&typed, alt_keys), None, "altgr+{key}");
+        }
+    }
+}
+
+#[test]
+fn chords_that_type_nothing_or_are_replayed_stay_keys() {
+    // Ctrl+Alt+W on a layout without AltGr characters types nothing.
+    assert_eq!(
+        sent(&reported("w", None, CTRL_ALT), true),
+        Some((ClientKeyCode::Char('w'), 6))
+    );
+    // GPUI also marks every keystroke it replays after an unfinished
+    // multi-key binding, so the mark alone does not make Alt-A text.
+    let replayed = KeyDownEvent {
+        prefer_character_input: true,
+        ..reported("a", Some("a"), Modifiers::alt())
+    };
+    assert_eq!(sent(&replayed, true), Some((ClientKeyCode::Char('a'), 4)));
+}

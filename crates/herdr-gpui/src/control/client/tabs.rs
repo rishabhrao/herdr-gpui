@@ -1,4 +1,5 @@
 //! `tab`, `code`, `devices`, `orchestrator`, and `review`.
+use crate::control::ControlError;
 mod items;
 
 use super::{Context, Output, unexpected};
@@ -15,10 +16,10 @@ use crate::{
 use std::{fmt::Write as _, path::Path};
 
 fn rejected(code: ErrorCode, message: impl Into<String>) -> crate::Error {
-    crate::Error::ControlRejected {
+    crate::Error::Control(ControlError::Rejected {
         code,
         message: message.into(),
-    }
+    })
 }
 
 /// One line per tab: its ID, kind, title, what it shows, and where.
@@ -144,6 +145,10 @@ pub(super) fn code(command: CodeCommand, context: &Context) -> crate::Result<Out
 pub(super) fn devices(context: &Context) -> crate::Result<Output> {
     let response = context.call(Request::Tab, TabOp::Devices)?;
     opened("the Devices overview", response)
+}
+
+pub(super) fn px0(context: &Context) -> crate::Result<Output> {
+    opened("px0", context.call(Request::Tab, TabOp::Px0)?)
 }
 
 pub(super) fn orchestrator(

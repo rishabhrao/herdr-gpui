@@ -38,18 +38,20 @@ pub(super) fn serve(
         TabOp::Forward { id } => incoming.respond(page::history(&caller, id, true, cx)),
         TabOp::Text { id } => page::text(caller, id, incoming, watches, cx),
         TabOp::Screenshot { id, path } => page::screenshot(caller, id, path, incoming, watches, cx),
+        TabOp::Zoom { id, change } => incoming.respond(page::zoom(&caller, id, change, cx)),
         TabOp::Code { path, line } => arrive::code(&caller, &path, line, incoming, watches, cx),
         TabOp::Edit { path, line } => arrive::edit(&caller, &path, line, incoming, watches, cx),
         TabOp::Devices => arrive::devices(&caller, incoming, watches, cx),
         TabOp::Orchestrator { repo } => arrive::orchestrator(&caller, repo, incoming, watches, cx),
         TabOp::Review => arrive::review(&caller, incoming, watches, cx),
+        TabOp::Px0 => arrive::px0(&caller, incoming, watches, cx),
     }
 }
 
 /// What a tab is, as `tab list` names it. The workspace's VS Code tab is
 /// its editor, whatever address it shows.
 fn kind(tab: &Tab) -> TabKind {
-    if tab.place.is_code() {
+    if tab.place.is_editor() {
         return TabKind::Editor;
     }
     match &tab.location {
@@ -75,7 +77,7 @@ fn location(tab: &Tab) -> Option<String> {
         Location::Review { checkout } => checkout
             .checkout
             .clone()
-            .unwrap_or_else(|| checkout.repo_key.clone()),
+            .or_else(|| checkout.repo_key.clone())?,
         Location::Orchestrator { repo } => repo.checkout.clone(),
         Location::Code { file } => file.path.clone(),
         Location::Devices => return None,

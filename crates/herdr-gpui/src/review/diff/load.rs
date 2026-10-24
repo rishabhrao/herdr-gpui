@@ -221,8 +221,8 @@ fn size(root: &Path, name: &str) -> Option<u64> {
 }
 
 /// Git's output outgrew what is read: say so in the review's terms.
-fn too_large(error: crate::Error) -> crate::Error {
-    match error {
+fn too_large(error: impl Into<crate::Error>) -> crate::Error {
+    match error.into() {
         crate::Error::PrSize => crate::Error::ReviewTooLarge,
         error => error,
     }

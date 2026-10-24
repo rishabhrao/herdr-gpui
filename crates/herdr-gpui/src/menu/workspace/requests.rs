@@ -249,7 +249,16 @@ impl HerdrWindow {
         if let Some(group) = group {
             self.collapsed_repos_mut().remove(&group);
         }
-        self.navigate_endpoint(&endpoint, NavigationTarget::Workspace(&created), cx);
+        // Navigate to the pane when creating (the new shell), to the workspace
+        // when opening (an existing checkout whose pane is already focused).
+        let pane = result["root_pane"]["pane_id"]
+            .as_str()
+            .filter(|id| !id.is_empty());
+        if let Some(pane_id) = pane {
+            self.navigate_endpoint(&endpoint, NavigationTarget::Pane(pane_id), cx);
+        } else {
+            self.navigate_endpoint(&endpoint, NavigationTarget::Workspace(&created), cx);
+        }
         if let Some(launch) = setup
             && let Err(error) = self.start_worktree_script(launch, cx)
         {
@@ -293,8 +302,8 @@ impl HerdrWindow {
             return;
         }
         let name = self.worktree_name(cx);
-        if let Some(endpoint) = self.dispatch_choice(action) {
-            match self.submit_dispatch(action, &endpoint, name) {
+        if let Some(target) = self.dispatch_choice(action) {
+            match self.submit_dispatch(action, &target, name) {
                 Ok(()) => self.local_error = None,
                 Err(error) => self.menu.error = Some(error.to_string()),
             }

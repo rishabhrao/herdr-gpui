@@ -188,8 +188,10 @@ impl HerdrWindow {
                         crate::caffeine::set_scope(config.status_bar.keep_awake_scope, cx);
                         if config.keybindings != this.config.keybindings {
                             crate::actions::rebind_keys(cx);
-                        } else if config.layout.mode != this.config.layout.mode {
-                            // The View menu checks the layout in use.
+                        } else if config.layout.mode != this.config.layout.mode
+                            || config.tab_layout != this.config.tab_layout
+                        {
+                            // The View menu checks the layouts in use.
                             crate::menus::install(cx);
                         }
                         if this.config.notifications.delivery() == crate::config::NotificationDelivery::Off
@@ -242,12 +244,12 @@ impl HerdrWindow {
                 // credential under the settings already in effect.
                 let mut reloaded = false;
                 if this.avatars.is_some() {
-                    reloaded = this.menu.github.initialize(&this.config);
+                    reloaded = this.menu.github.initialize(&this.config.github);
                     for auth in this.menu.github_hosts.values_mut() {
-                        reloaded |= auth.initialize(&this.config);
+                        reloaded |= auth.initialize(&this.config.github);
                     }
                     for account in &mut this.menu.github_accounts {
-                        reloaded |= account.auth.initialize(&this.config);
+                        reloaded |= account.auth.initialize(&this.config.github);
                     }
                     this.sync_github_accounts();
                 }
@@ -326,6 +328,9 @@ impl HerdrWindow {
                 | Command::ReopenClosedTab
                 | Command::NewBrowserTab
                 | Command::OpenOrchestrator
+                | Command::ReviewChanges
+                | Command::GitMenu
+                | Command::ToggleAnnotate
                 | Command::SplitEditor
                 | Command::MoveTabPrevious
                 | Command::MoveTabNext
@@ -368,6 +373,7 @@ impl HerdrWindow {
                 Command::NewWindow
                 | Command::ToggleSidebar
                 | Command::OpenCode
+                | Command::OpenPx0
                 | Command::ToggleStatusBar
                 | Command::FocusNextRegion
                 | Command::FocusPreviousRegion

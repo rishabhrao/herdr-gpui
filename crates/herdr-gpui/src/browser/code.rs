@@ -10,7 +10,7 @@
 //! only after an answer of its own. Until then the tab says why it is
 //! empty. The server is the one at `[code] url`, or the one the app starts
 //! (see [`crate::code_server::launcher`]).
-use super::{GroupId, Location, Pick, Scope, Store, TabId, WebUrl, view::store};
+use super::{Editor, GroupId, Location, Scope, Store, TabId, WebUrl, view::store};
 use crate::{
     HerdrWindow,
     code_server::{self, Launcher, Server, Startup},
@@ -66,8 +66,7 @@ pub(super) enum Reach {
 impl HerdrWindow {
     /// The focused workspace's VS Code tab, if it has one.
     pub(crate) fn code_tab_id(&self, cx: &App) -> Option<TabId> {
-        let (scope, workspace) = self.browser_key()?;
-        Some(store(cx)?.code_tab(&scope, &workspace)?.id)
+        self.editor_tab_id(Editor::VsCode, cx)
     }
 
     /// Opens the focused workspace's VS Code tab in `group`, or in the group
@@ -80,10 +79,10 @@ impl HerdrWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((scope, workspace)) = self.browser_key() else {
+        if self.browser_key().is_none() {
             self.show_flash(Flash::warning("Open a workspace first"), cx);
             return;
-        };
+        }
         let startup = Launcher::startup(cx, &self.config.code);
         if !super::EMBEDDED {
             self.show_flash(Flash::warning("This build cannot show pages"), cx);
@@ -100,32 +99,7 @@ impl HerdrWindow {
         let location = startup.url(&self.config.code).map(|url| Location::Web {
             url: self.code_start(url),
         });
-        let Some(id) = Store::update(cx, |store| store.open_code_tab(scope, &workspace, location))
-        else {
-            self.show_flash(Flash::warning("Too many browser tabs are open"), cx);
-            return;
-        };
-        // A workspace has one VS Code tab: asked for again, it moves to the
-        // group that asked, or else to the group in use.
-        match group.or_else(|| self.ensure_layout().map(|layout| layout.active())) {
-            Some(group) => self.move_tab_to_group(Pick::Page(id), group, window, cx),
-            None => self.show_browser_tab_in(None, id, window, cx),
-        }
-    }
-
-    /// Closes this window's VS Code pages, keeping their tabs, and forgets why
-    /// any could not be created, so each is created anew.
-    #[cfg(any(target_os = "macos", windows))]
-    fn close_code_pages(&mut self, cx: &App) {
-        let Some(store) = store(cx) else {
-            return;
-        };
-        let code = |id: TabId| store.get(id).is_some_and(|tab| tab.place.is_code());
-        let pages: Vec<TabId> = self.browser.pages.ids().filter(|id| code(*id)).collect();
-        for id in pages {
-            self.browser.pages.close(id);
-        }
-        self.browser.failed.retain(|id, _| !code(*id));
+        self.open_embedded_editor(Editor::VsCode, group, location, window, cx);
     }
 
     /// Runs on every window tick, and when a group shows the VS Code tab: a
@@ -170,7 +144,7 @@ impl HerdrWindow {
         // made again, where it was, once the server is back.
         #[cfg(any(target_os = "macos", windows))]
         if matches!(startup, Startup::Failed { .. }) {
-            self.close_code_pages(cx);
+            self.close_editor_pages(Editor::VsCode, cx);
         }
         // A tab opened before its server's address was known starts at it
         // now, on the workspace's folder.
@@ -204,16 +178,12 @@ impl HerdrWindow {
             else {
                 return;
             };
-            let id = tab.id;
             if let Some(Location::Web { url: page }) = &tab.location {
                 tab.location = Some(Location::Web {
                     url: with_token(page, &url),
                 });
             }
-            if let Err(error) = self.browser.pages.ensure(&tab, window, cx) {
-                tracing::warn!(%error, "Cannot create the VS Code page");
-                self.browser.failed.insert(id, error.to_string().into());
-            }
+            self.create_editor_page(&tab, window, cx);
             // An answer serves one page: the next one asks again, in case
             // the server has stopped since.
             self.browser.code_server.state = Reach::Unknown;
@@ -231,11 +201,7 @@ impl HerdrWindow {
         else {
             return false;
         };
-        #[cfg(any(target_os = "macos", windows))]
-        if self.browser.pages.contains(id) || self.browser.pages.is_building(id) {
-            return true;
-        }
-        self.browser.failed.contains_key(&id)
+        self.editor_page_settled(id)
     }
 
     /// Starts over when `url` is a new address: it moves the VS Code tabs
@@ -252,7 +218,7 @@ impl HerdrWindow {
                 store.follow_code_server(url, |page| on_server(page, url))
             });
             #[cfg(any(target_os = "macos", windows))]
-            self.close_code_pages(cx);
+            self.close_editor_pages(Editor::VsCode, cx);
         }
     }
 
@@ -261,18 +227,8 @@ impl HerdrWindow {
     /// first pane reports it. Only a workspace on this computer names one,
     /// since a remote one's folder is on another machine than the server.
     pub(super) fn code_start(&self, url: &WebUrl) -> WebUrl {
-        let local = self
-            .endpoints
-            .get(self.selected_endpoint)
-            .is_some_and(|endpoint| !endpoint.connection.target.is_remote());
-        let folder = self
-            .browser_key()
-            .zip(self.live.snapshot.as_deref())
-            .and_then(|((_, workspace), snapshot)| {
-                crate::palette::launch_root(snapshot, &workspace)
-            })
-            .filter(|folder| local && std::path::Path::new(folder).is_absolute());
-        folder.map_or_else(|| url.clone(), |folder| with_folder(url, folder))
+        self.local_editor_root()
+            .map_or_else(|| url.clone(), |folder| with_folder(url, folder))
     }
 
     /// Forgets the server once its address is removed, closing the pages
@@ -285,7 +241,7 @@ impl HerdrWindow {
         server.state = Reach::Unknown;
         server.generation += 1;
         #[cfg(any(target_os = "macos", windows))]
-        self.close_code_pages(cx);
+        self.close_editor_pages(Editor::VsCode, cx);
         #[cfg(not(any(target_os = "macos", windows)))]
         let _ = cx;
     }

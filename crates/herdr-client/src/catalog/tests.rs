@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
+
+mod save;
 use serde_json::json;
 
 // Symlink and permission fixtures require POSIX semantics.

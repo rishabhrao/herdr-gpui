@@ -45,7 +45,7 @@ fn system_notification_click_opens_its_origin_and_rejects_a_reconnect(
         );
     });
 
-    cx.update(|_, cx| crate::window::system_notifications::install(cx));
+    cx.update(|_, cx| crate::window::system_notifications::install_registry(cx));
     view.update(cx, |view, _| view.endpoints[1].toasts.receive([second]));
     post(&view, cx);
     let shown = cx.shown_system_notifications();

@@ -5,6 +5,7 @@ use super::{
     super::{Context, Output},
     rejected,
 };
+use crate::control::ControlError;
 use crate::{
     checkpoint::{self, Checkout, Checkpoint, direct},
     cli::control::CheckpointCommand,
@@ -73,11 +74,11 @@ pub(super) fn describe(checkpoints: &[CheckpointInfo], branch: &str, now: i64) -
 /// The checkout of the current directory.
 fn here() -> crate::Result<Checkout> {
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
-        return Err(crate::Error::ControlRejected {
+        return Err(crate::Error::Control(ControlError::Rejected {
             code: ErrorCode::Unsupported,
             message: "Checkpoints run POSIX shell scripts, which this platform does not have"
                 .into(),
-        });
+        }));
     }
     let dir = std::env::current_dir().map_err(|error| rejected(crate::Error::LocalGit(error)))?;
     super::here::checkout(&dir).map_err(rejected)

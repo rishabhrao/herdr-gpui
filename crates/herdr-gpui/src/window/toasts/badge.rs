@@ -13,7 +13,7 @@ const EMOJI_BYTES: usize = 48;
 pub(super) enum Mark<'a> {
     /// A leading emoji the sender put in the title.
     Emoji(&'a str),
-    /// An embedded SVG asset path.
+    /// An embedded image or SVG asset path.
     Icon(&'static str),
 }
 
@@ -78,7 +78,7 @@ fn emoji(grapheme: &str) -> bool {
 /// The round badge: a neutral disc showing who sent the notice, with a dot
 /// in the kind's accent on its corner showing what it is.
 pub(super) fn circle(mark: Mark<'_>, theme: &crate::config::Theme, accent: u32) -> gpui::Div {
-    use gpui::{ParentElement, Styled, div, px, rgb, svg};
+    use gpui::{ParentElement, Styled, div, px, rgb};
     let disc = div()
         .size_full()
         .rounded_full()
@@ -88,12 +88,7 @@ pub(super) fn circle(mark: Mark<'_>, theme: &crate::config::Theme, accent: u32) 
         .justify_center();
     let disc = match mark {
         Mark::Emoji(emoji) => disc.text_size(px(15.)).child(emoji.to_owned()),
-        Mark::Icon(path) => disc.child(
-            svg()
-                .path(path)
-                .size(px(14.))
-                .text_color(rgb(theme.foreground)),
-        ),
+        Mark::Icon(path) => disc.child(crate::icons::icon(path, 14., theme.foreground)),
     };
     div()
         .relative()

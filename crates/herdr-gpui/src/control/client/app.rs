@@ -1,5 +1,6 @@
 //! `status`, `app`, `window`, `ui`, and `run`.
 use super::{Context, Output, send, unexpected};
+use crate::control::ControlError;
 use crate::{
     cli::control::{AppCommand, UiCommand, WindowCommand},
     control::protocol::{
@@ -150,10 +151,10 @@ pub(super) fn run_command(name: &str, context: &Context) -> crate::Result<Output
         .iter()
         .any(|info| info.name == name)
     {
-        return Err(crate::Error::ControlRejected {
+        return Err(crate::Error::Control(ControlError::Rejected {
             code: crate::control::ErrorCode::NotFound,
             message: format!("No command is named {name}; `herdr-gpui commands` lists them"),
-        });
+        }));
     }
     context.act(
         Request::Command,

@@ -20,6 +20,7 @@ fn session_response_slot_correlates_chunks_and_clears_only_on_completion() {
     );
     session.pending = Some(Pending {
         id: "one".into(),
+        method: Method::PaneFocus,
         bytes: Vec::new(),
         started: Instant::now(),
     });
@@ -63,6 +64,7 @@ fn session_response_limit_counts_previous_chunks_and_allows_exact_limit() {
         let response = br#"{"id":"one"}"#;
         session.pending = Some(Pending {
             id: "one".into(),
+            method: Method::PaneFocus,
             bytes: vec![b' '; MAX_RESPONSE_BYTES - response.len()],
             started: Instant::now(),
         });
@@ -122,6 +124,7 @@ fn session_deadlines_and_snapshot_revision_fence() {
     session.check_timeouts().unwrap();
     session.pending = Some(Pending {
         id: "one".into(),
+        method: Method::PaneFocus,
         bytes: Vec::new(),
         started: Instant::now() - COMMAND_TIMEOUT - POLL,
     });

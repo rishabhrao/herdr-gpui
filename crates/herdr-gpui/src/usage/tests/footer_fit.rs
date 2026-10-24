@@ -53,14 +53,7 @@ fn the_footer_fits_more_than_two_and_follows_resize_in_both_directions(cx: &mut 
         let mut view = fixture_window(window, cx);
         view.live.status = crate::state::ConnectionStatus::Connected;
         view.config.usage.show = true;
-        view.usage.host = Some(super::super::Host::Local);
-        view.usage.entries.insert(
-            super::super::Host::Local,
-            super::super::Entry {
-                readings: readings(),
-                ..Default::default()
-            },
-        );
+        view.usage = super::super::Usage::showing(super::super::Host::Local, readings());
         view
     });
     cx.simulate_resize(size(px(1800.), px(600.)));

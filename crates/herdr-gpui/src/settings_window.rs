@@ -164,6 +164,8 @@ struct SettingsWindow {
     controls: controls::Controls,
     plugins: controls::plugins::Plugins,
     code: controls::code::CodeSettings,
+    px0: controls::px0::Px0Settings,
+    chat_env: controls::chat_env::ChatEnvSettings,
     /// The open override dropdown, if any; its list renders inside its button.
     dropdown: Option<ui::Dropdown>,
     /// The number field being typed into, if any.
@@ -244,10 +246,19 @@ struct SettingsWindow {
     boat_card: Option<cloud_devices::BoatCard>,
     #[cfg(feature = "coder")]
     coder_card: Option<cloud_devices::CoderCard>,
+    #[cfg(feature = "container")]
+    container_card: Option<cloud_devices::ContainerCard>,
     #[cfg(feature = "daytona")]
     daytona_card: Option<cloud_devices::DaytonaCard>,
+    #[cfg(feature = "opensandbox")]
+    opensandbox_card: Option<cloud_devices::OpenSandboxCard>,
     #[cfg(feature = "railway")]
     railway_card: Option<cloud_devices::RailwayCard>,
+    /// Sandbox images, for the cards of providers that hold them.
+    #[cfg(any(feature = "container", feature = "daytona"))]
+    sandbox_images: cloud_devices::SandboxImages,
+    #[cfg(feature = "sprites")]
+    sprites_card: Option<cloud_devices::SpritesCard>,
     theme_loading: bool,
     theme_waiting: bool,
     theme_light: bool,
@@ -320,6 +331,8 @@ impl SettingsWindow {
             controls: controls::Controls::new(cx),
             plugins: controls::plugins::Plugins::new(cx),
             code: Default::default(),
+            px0: Default::default(),
+            chat_env: Default::default(),
             dropdown: None,
             number_edit: None,
             number_preview: None,
@@ -376,10 +389,18 @@ impl SettingsWindow {
             boat_card: None,
             #[cfg(feature = "coder")]
             coder_card: None,
+            #[cfg(feature = "container")]
+            container_card: None,
             #[cfg(feature = "daytona")]
             daytona_card: None,
+            #[cfg(feature = "opensandbox")]
+            opensandbox_card: None,
             #[cfg(feature = "railway")]
             railway_card: None,
+            #[cfg(any(feature = "container", feature = "daytona"))]
+            sandbox_images: Default::default(),
+            #[cfg(feature = "sprites")]
+            sprites_card: None,
             theme_loading: false,
             theme_waiting: false,
             theme_light: false,
@@ -502,8 +523,11 @@ impl SettingsWindow {
         let previous = cx.try_global::<crate::app::InitialAppearance>();
         let keys_changed =
             previous.is_none_or(|previous| previous.config.keybindings != self.config.keybindings);
-        let layout_changed =
-            previous.is_some_and(|previous| previous.config.layout.mode != self.config.layout.mode);
+        // Both layouts are checked in the View menu.
+        let layout_changed = previous.is_some_and(|previous| {
+            previous.config.layout.mode != self.config.layout.mode
+                || previous.config.tab_layout != self.config.tab_layout
+        });
         // Future windows inherit an explicit Settings draft, but not a main
         // picker's cancellable hover preview. Logs follow live appearance.
         let previewing = cx.windows().into_iter().any(|window| {
@@ -677,6 +701,10 @@ impl SettingsWindow {
         }
         if section == Section::Code {
             self.open_code_page(window, cx);
+            self.open_px0_settings(cx);
+        }
+        if section == Section::General {
+            self.open_chat_env_settings(cx);
         }
         self.body_scroll.set_offset(Point::default());
         window.focus(&self.focus, cx);

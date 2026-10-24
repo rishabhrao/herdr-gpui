@@ -14,7 +14,9 @@ use std::sync::Arc;
 /// A connected window with the bar, a blocked, a working, and a finished
 /// agent, on
 /// the Overview.
-fn fixture(cx: &mut gpui::TestAppContext) -> (Entity<HerdrWindow>, &mut VisualTestContext) {
+pub(super) fn fixture(
+    cx: &mut gpui::TestAppContext,
+) -> (Entity<HerdrWindow>, &mut VisualTestContext) {
     let (fixture, cx) = cx.add_window_view(|window, cx| {
         crate::bind_keys(cx);
         let view = cx.new(|cx| {
@@ -49,7 +51,7 @@ fn fixture(cx: &mut gpui::TestAppContext) -> (Entity<HerdrWindow>, &mut VisualTe
     (view, cx)
 }
 
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         window.refresh();
         full_draw(window, cx).clear(cx);
@@ -58,12 +60,15 @@ fn draw(cx: &mut VisualTestContext) {
 
 /// The bounds an element drew with; selectors built at run time are leaked,
 /// as the test context keeps only static ones.
-fn bounds(cx: &mut VisualTestContext, selector: impl Into<String>) -> Option<Bounds<Pixels>> {
+pub(super) fn bounds(
+    cx: &mut VisualTestContext,
+    selector: impl Into<String>,
+) -> Option<Bounds<Pixels>> {
     let selector: &'static str = Box::leak(selector.into().into_boxed_str());
     cx.debug_bounds(selector)
 }
 
-fn click(cx: &mut VisualTestContext, selector: impl Into<String>) {
+pub(super) fn click(cx: &mut VisualTestContext, selector: impl Into<String>) {
     let selector = selector.into();
     let bounds = bounds(cx, selector.clone()).unwrap_or_else(|| panic!("{selector}"));
     cx.simulate_click(bounds.center(), Modifiers::default());
@@ -71,7 +76,7 @@ fn click(cx: &mut VisualTestContext, selector: impl Into<String>) {
 }
 
 /// The selector part of the row whose agent is in `state`.
-fn row(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, state: State) -> String {
+pub(super) fn row(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, state: State) -> String {
     cx.update(|_, cx| {
         view.read(cx)
             .overview_rows(cx)

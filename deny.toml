@@ -1,7 +1,7 @@
 # cargo-deny configuration. Run locally with `cargo deny check`.
 #
-# Evaluate every shipped target: both macOS architectures, experimental
-# x86_64/ARM64 GNU/Linux, and experimental x86_64/ARM64 Windows. This set is pinned to
+# Evaluate every shipped target: both macOS architectures,
+# x86_64/ARM64 GNU/Linux, and x86_64/ARM64 Windows. This set is pinned to
 # the release targets by scripts/release/test-release-security.py.
 
 [graph]

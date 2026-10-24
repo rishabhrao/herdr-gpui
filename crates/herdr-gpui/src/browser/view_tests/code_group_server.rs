@@ -14,16 +14,18 @@ fn a_new_server_keeps_vs_code_tabs_where_they_are(cx: &mut gpui::TestAppContext)
         let tab_scope = scope(&view.read(cx).endpoints[0]);
         Store::update(cx, |store| {
             let grouped = store
-                .open_code_tab(
+                .open_editor_tab(
                     tab_scope.clone(),
                     "w1",
+                    Editor::VsCode,
                     Some(url("http://127.0.0.1:8000/?folder=/x&tkn=old")),
                 )
                 .unwrap();
             let other = store
-                .open_code_tab(
+                .open_editor_tab(
                     tab_scope,
                     "w2",
+                    Editor::VsCode,
                     Some(url("http://127.0.0.1:8000/?folder=/y")),
                 )
                 .unwrap();
@@ -45,7 +47,7 @@ fn a_new_server_keeps_vs_code_tabs_where_they_are(cx: &mut gpui::TestAppContext)
         // each page loads, and the old one is gone.
         for (id, folder) in [(grouped, "/x"), (other, "/y")] {
             let tab = store.get(id).unwrap();
-            assert_eq!(tab.place, Place::Code);
+            assert_eq!(tab.place, Place::Editor(Editor::VsCode));
             assert_eq!(
                 tab.location,
                 Some(url(&format!("http://127.0.0.1:9000/?folder={folder}")))

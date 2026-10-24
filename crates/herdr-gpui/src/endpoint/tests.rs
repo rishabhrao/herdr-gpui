@@ -2,6 +2,9 @@
 use super::*;
 use herdr_client::{ClientEvent, SavedHost};
 
+#[cfg(feature = "container")]
+mod container_stop;
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod local_peer_warning;
 mod staged_notifications;

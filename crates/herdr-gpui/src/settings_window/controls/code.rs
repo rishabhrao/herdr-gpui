@@ -351,6 +351,7 @@ impl SettingsWindow {
                 Some(CodeMode::Address) => page.child(self.render_code_address(cx)),
                 None => page,
             })
+            .child(self.render_px0_controls(cx))
     }
 
     /// The address of the user's own server, and its check.

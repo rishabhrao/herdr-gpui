@@ -1,5 +1,9 @@
-//! `pr`, `host`, `cloud`, `ports`, `usage`, and `system`.
+//! `pr`, `host`, `cloud`, `ports`, `usage`, `system`, `security`, and
+//! `automation`.
+use crate::control::ControlError;
+mod batch;
 mod cloud;
+mod exec;
 mod text;
 
 pub(super) use text::bytes;
@@ -9,9 +13,11 @@ mod tests;
 
 use super::{Context, Output, unexpected};
 use crate::{
-    cli::control::{CloudCommand, HostCommand, PortsCommand, PrCommand},
+    cli::control::{
+        AutomationCommand, CloudCommand, HostCommand, PortsCommand, PrCommand, SecurityCommand,
+    },
     control::protocol::{
-        Request, Response,
+        ErrorCode, Request, Response,
         hosts::{HostOp, Reply},
     },
 };
@@ -76,6 +82,12 @@ pub(super) fn cloud(command: CloudCommand, context: &Context) -> crate::Result<O
         CloudCommand::List => cloud::list(),
         CloudCommand::Add => context.act(Request::Host, HostOp::Cloud),
         CloudCommand::Setup(id) => context.act(Request::Host, HostOp::CloudSetup { id }),
+        CloudCommand::Images => cloud::images(),
+        CloudCommand::ImagesBuild(provider) => {
+            context.act(Request::Host, HostOp::CloudImages { provider })
+        }
+        CloudCommand::Batch(command) => batch::run(command, context),
+        CloudCommand::Exec(command) => exec::run(command, context),
     }
 }
 
@@ -110,6 +122,52 @@ pub(super) fn usage(context: &Context) -> crate::Result<Output> {
         }
         response => Err(unexpected(response)),
     }
+}
+
+pub(super) fn security(command: SecurityCommand, context: &Context) -> crate::Result<Output> {
+    if let SecurityCommand::Open { repository, item } = command {
+        return context.act(Request::Host, HostOp::SecurityOpen { repository, item });
+    }
+    match context.call(Request::Host, HostOp::Security)? {
+        Response::Host {
+            reply: reply @ Reply::Security { .. },
+        } => {
+            let empty = matches!(&reply, Reply::Security { repositories, .. }
+                if repositories.iter().all(|repo| repo.alerts.is_empty() && repo.reports.is_empty()));
+            let output = Output::data(text::security(&reply), &reply)?;
+            Ok(if empty { output.nothing() } else { output })
+        }
+        response => Err(unexpected(response)),
+    }
+}
+
+pub(super) fn automation(command: AutomationCommand, context: &Context) -> crate::Result<Output> {
+    let AutomationCommand::Approve { file, host } = command;
+    let path = script_path(&file)?;
+    context.act(Request::Host, HostOp::AutomationApprove { path, host })
+}
+
+/// The script's path as its host lists it: resolved where it exists here,
+/// else made absolute against the caller's directory, since a remote
+/// host's file is not on this machine.
+pub(super) fn script_path(file: &std::path::Path) -> crate::Result<String> {
+    let rejected = |message: String| {
+        crate::Error::Control(ControlError::Rejected {
+            code: ErrorCode::InvalidRequest,
+            message,
+        })
+    };
+    let path = match file.canonicalize() {
+        Ok(path) => path,
+        // Not here: a remote host's file. A Unix absolute path stays as it
+        // is, so a Windows client does not put its own drive in front.
+        Err(_) if file.to_str().is_some_and(|text| text.starts_with('/')) => file.to_owned(),
+        Err(_) => std::path::absolute(file)
+            .map_err(|error| rejected(format!("Cannot resolve {}: {error}", file.display())))?,
+    };
+    path.into_os_string()
+        .into_string()
+        .map_err(|_| rejected("The path must be UTF-8".to_owned()))
 }
 
 pub(super) fn system(context: &Context) -> crate::Result<Output> {

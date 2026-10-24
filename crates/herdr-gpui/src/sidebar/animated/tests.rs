@@ -97,7 +97,7 @@ fn stepped_animations_walk_every_frame_in_order() {
 
 #[test]
 fn spinner_frames_are_single_braille_cells() {
-    for frame in BRAILLE.iter().chain(&BREATHE).chain(&["⠿", "⠤", "⠄"]) {
+    for frame in BRAILLE.iter().chain(&BREATHE).chain(&["⠿", "⠒", "⠂"]) {
         let mut chars = frame.chars();
         let cell = chars.next().unwrap();
         assert!(chars.next().is_none(), "{frame}");
@@ -159,5 +159,85 @@ fn settled_marks_keep_their_family_inside_the_slot(cx: &mut TestAppContext) {
             bounds.size.width <= px(12.) && bounds.size.height <= px(12.),
             "{set:?} {status:?} {bounds:?}"
         );
+    }
+}
+
+/// Braille cells are drawn dot for dot from the glyph's bits, and the
+/// six-dot ones in three rows, so they center on the row instead of sitting
+/// high in a cell of four.
+#[test]
+fn braille_cells_decode_their_dots_and_rows() {
+    assert!(raised("⠁", 0, 0) && !raised("⠁", 0, 1));
+    assert!(raised("⡀", 3, 0) && !raised("⡀", 0, 0));
+    assert!(raised("⢀", 3, 1));
+    for (row, column) in [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)] {
+        assert!(raised("⠿", row, column), "{row} {column}");
+    }
+    assert!(!raised("x", 0, 0));
+    assert_eq!(rows(&BRAILLE), 3);
+    assert_eq!(rows(&BREATHE), 4);
+    // The settled marks sit on the middle of their three rows.
+    for glyph in ["⠒", "⠂"] {
+        assert_eq!(rows(&[glyph]), 3);
+        assert!((0..2).all(|column| !raised(glyph, 0, column) && !raised(glyph, 2, column)));
+    }
+}
+
+/// Three rows of dots take no more than seven tenths of the slot, so a
+/// compact row's cell is no taller than its letters, and never vanish at the
+/// smallest fonts.
+#[test]
+fn braille_dots_stay_within_seven_tenths_of_their_slot() {
+    for size in [6., 10., 12., 14., 16., 20., 28.] {
+        let dot = dot_diameter(size);
+        assert!(dot >= 1., "{size}: {dot}");
+        assert!(dot * 3. + 2. <= (size * 0.7).max(5.), "{size}: {dot}");
+        assert_eq!((dot * 2.).fract(), 0., "{size}: {dot}");
+    }
+}
+
+struct SizedMark {
+    status: AgentStatus,
+    size: f32,
+}
+
+impl Render for SizedMark {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().child(mark(StatusIcons::Braille, self.status, self.size, 0xf9e2af))
+    }
+}
+
+/// The drawn dots sit centered inside their slot at every size, as a grid
+/// of their own rows: three for the spinner and settled marks, four for the
+/// breathing blocked cell.
+#[gpui::test]
+fn braille_dots_render_centered_inside_their_slot(cx: &mut TestAppContext) {
+    for side in [8., 12., 20., 28.] {
+        for (status, selector, rows) in [
+            (AgentStatus::Working, "status-braille", 3.),
+            (AgentStatus::Blocked, "status-braille-fill", 4.),
+            (AgentStatus::Done, "status-braille-done", 3.),
+            (AgentStatus::Idle, "status-braille-idle", 3.),
+        ] {
+            let (_, cx) = cx.add_window_view(|_, _| SizedMark { status, size: side });
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let slot = cx.debug_bounds(selector).unwrap();
+            let grid = cx.debug_bounds("status-braille-dots").unwrap();
+            let dot = dot_diameter(side);
+            let case = format!("{status:?} at {side}: slot={slot:?}, grid={grid:?}");
+            assert_eq!(slot.size, size(px(side), px(side)), "{case}");
+            assert_eq!(grid.size.width, px(dot * 2. + 1.), "{case}");
+            assert_eq!(grid.size.height, px(dot * rows + rows - 1.), "{case}");
+            assert!(slot.contains(&grid.origin), "{case}");
+            assert!(slot.contains(&grid.bottom_right()), "{case}");
+            assert!(
+                (slot.center().x - grid.center().x).abs() <= px(0.5),
+                "{case}"
+            );
+            assert!(
+                (slot.center().y - grid.center().y).abs() <= px(0.5),
+                "{case}"
+            );
+        }
     }
 }

@@ -12,9 +12,18 @@ use gpui::Context;
 use std::{collections::HashSet, sync::Arc};
 
 impl OrchestratorView {
-    /// Lists exactly `specs`: a repository no longer asked for stops its
-    /// worker, a new one starts its own. The active one stays active.
-    pub(crate) fn set_repos(&mut self, specs: Vec<RepoSpec>, cx: &mut Context<Self>) {
+    /// The repositories the header, pills, and banners name: every one
+    /// asked for but folders outside Git.
+    pub(super) fn projects_named(&self) -> impl Iterator<Item = &Repo> {
+        self.repos.iter().filter(|repo| !repo.outside_git())
+    }
+
+    /// Lists the projects in `specs`: a repository no longer asked for stops
+    /// its worker, a new candidate starts its own. The active one stays active.
+    pub(crate) fn set_repos(&mut self, mut specs: Vec<RepoSpec>, cx: &mut Context<Self>) {
+        self.skipped_repos
+            .retain(|key| specs.iter().any(|spec| spec.key == *key));
+        specs.retain(|spec| !self.skipped_repos.contains(&spec.key));
         let same = specs.len() == self.repos.len()
             && specs
                 .iter()
@@ -43,6 +52,28 @@ impl OrchestratorView {
         cx.notify();
     }
 
+    /// Keep ordinary folders out of the project list without restarting a
+    /// failed discovery on every window tick. Other failures remain visible.
+    pub(super) fn discard_non_projects(&mut self) {
+        let active = self.repo().map(|repo| repo.key.clone());
+        self.repos.retain(|repo| {
+            if matches!(
+                repo.snapshot.error.as_deref(),
+                Some(crate::orchestrator::Error::NotARepository)
+            ) {
+                self.skipped_repos.insert(repo.key.clone());
+                false
+            } else {
+                true
+            }
+        });
+        self.active = active
+            .and_then(|key| self.repos.iter().position(|repo| repo.key == key))
+            .unwrap_or(0);
+        self.projects
+            .retain(|key| !self.skipped_repos.contains(key));
+    }
+
     /// Lists only the project `key` names, as a menu opening one workspace's
     /// issues asks.
     pub(crate) fn only_project(&mut self, key: String, cx: &mut Context<Self>) {
@@ -59,9 +90,24 @@ impl OrchestratorView {
         &self.repos[row.repo].snapshot.items[row.item]
     }
 
-    /// The repository listing `key`.
+    /// The repository listing `key`: the one its row in the shown list
+    /// came from, so a page and its actions go to the checkout the row is,
+    /// else the first holding it.
     pub(super) fn repo_of(&self, key: &str) -> Option<usize> {
-        self.repos.iter().position(|repo| repo.item(key).is_some())
+        self.lines
+            .iter()
+            .find_map(|line| match line {
+                rows::Line::Row(row) if self.row_item(row).key.canonical() == key => Some(row.repo),
+                _ => None,
+            })
+            .or_else(|| self.repos.iter().position(|repo| repo.item(key).is_some()))
+    }
+
+    /// The repositories listing the item `key`, beyond the one its row shows.
+    pub(super) fn twins(&self, key: &str) -> usize {
+        self.holders
+            .get(key)
+            .map_or(0, |repos| repos.len().saturating_sub(1))
     }
 
     /// Makes the repository listing `key` the active one, so its page and
@@ -73,6 +119,14 @@ impl OrchestratorView {
     }
 
     pub(super) fn refresh_rows(&mut self) {
+        // A folder outside Git has no pill (`projects_named`), so a pick of
+        // it, as opening its workspace's issues makes, could not be undone.
+        let repos = &self.repos;
+        self.projects.retain(|key| {
+            !repos
+                .iter()
+                .any(|repo| repo.key == *key && repo.outside_git())
+        });
         for (index, repo) in self.repos.iter_mut().enumerate() {
             let found = crate::orchestrator::naming::found_runs(
                 &repo.snapshot.items,
@@ -153,6 +207,8 @@ impl OrchestratorView {
             })
             .collect();
         let merged = rows::merge(lists, |row| self.row_item(row), self.sort);
+        let (merged, holders) = rows::dedupe(merged, |row| self.row_item(row).key.canonical());
+        self.holders = holders;
         let lines = match self.tab {
             Tab::Issues => rows::issue_lines(&merged, |row| self.row_item(row)),
             Tab::PullRequests => rows::pull_request_lines(&merged, |row| {
@@ -202,7 +258,11 @@ impl OrchestratorView {
     /// The item `key` names, or the stand-in of one a run works on that is
     /// no longer listed.
     pub(super) fn item(&self, key: &str) -> Option<&Item> {
-        self.repos.iter().find_map(|repo| repo.item(key))
+        // The copy of the checkout the row shows: another checkout may have
+        // read the item differently.
+        self.repo_of(key)
+            .and_then(|repo| self.repos[repo].item(key))
+            .or_else(|| self.repos.iter().find_map(|repo| repo.item(key)))
     }
 
     /// Every repository's items and runs, those found from branches

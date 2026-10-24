@@ -160,14 +160,16 @@ fn a_stored_panel_yields_to_one_picked_before_it_loaded(cx: &mut gpui::TestAppCo
     let (view, cx) = fixture(cx);
     view.update(cx, |view, _| {
         assert_eq!(view.activity.chosen(), None);
-        view.activity.restore(Some(ActivityPanel::Usage));
+        view.activity
+            .restore(Some(ActivityPanel::Usage), &Default::default());
         assert_eq!(view.activity.panel, ActivityPanel::Usage);
     });
     let (view, cx) = fixture(cx);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
             view.show_activity_panel(ActivityPanel::Issues, window, cx);
-            view.activity.restore(Some(ActivityPanel::Usage));
+            view.activity
+                .restore(Some(ActivityPanel::Usage), &Default::default());
             assert_eq!(view.activity.panel, ActivityPanel::Issues);
             assert_eq!(view.activity.chosen(), Some(ActivityPanel::Issues));
         })

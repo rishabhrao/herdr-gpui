@@ -237,15 +237,18 @@ fn a_watch_reports_a_stopped_worker_and_a_busy_one() {
     // One kill at a time: the first is still with the worker.
     assert!(matches!(
         watch.kill(vec![victim]),
-        Err(Error::ProcessesBusy)
+        Err(crate::Error::Processes(Error::Busy))
     ));
     assert_eq!(commands.recv().unwrap(), Command::Kill(vec![victim]));
     drop(updates);
-    assert!(matches!(watch.try_update(), Err(Error::ProcessesStopped)));
+    assert!(matches!(
+        watch.try_update(),
+        Err(crate::Error::Processes(Error::Stopped))
+    ));
     drop(commands);
     assert!(matches!(
         watch.kill(vec![victim]),
-        Err(Error::ProcessesStopped)
+        Err(crate::Error::Processes(Error::Stopped))
     ));
 }
 

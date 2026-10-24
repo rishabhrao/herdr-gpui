@@ -3,7 +3,11 @@
 //! instead of taking half the width from it. Choosing a place closes it.
 //! Wider windows keep the sidebar as it is, so the same app driven from a
 //! laptop gets its column back.
-use super::rail::RAIL_WIDTH;
+use super::{
+    layout::{self, SidebarLook},
+    rail::RAIL_WIDTH,
+    sidebar_width,
+};
 use crate::HerdrWindow;
 use gpui::{prelude::*, *};
 
@@ -12,6 +16,9 @@ pub(crate) const COMPACT_WIDTH: f32 = 600.;
 /// The drawer's widest, and the strip of terminal it leaves to tap away.
 const DRAWER_MAX: f32 = 360.;
 const DRAWER_GAP: f32 = 56.;
+/// Padding above and below a row's text in a phone's drawer, for rows
+/// about a fingertip tall.
+const DRAWER_ROW_PADDING: f32 = 9.;
 
 /// The drawer's width in a window `window_width` wide.
 pub(crate) fn drawer_width(window_width: f32) -> f32 {
@@ -44,10 +51,24 @@ impl HerdrWindow {
             .into_any_element()
     }
 
-    /// The expanded sidebar's width in the drawer, which the section tabs
-    /// sit above rather than beside.
-    pub(crate) fn drawer_sidebar_width(&self, window_width: f32) -> f32 {
-        drawer_width(window_width)
+    /// The expanded sidebar's width: in the drawer, which the section tabs
+    /// sit above rather than beside, or in its column.
+    pub(crate) fn sidebar_shown_width(&self, window_width: f32) -> f32 {
+        if self.drawer_open() {
+            drawer_width(window_width)
+        } else {
+            sidebar_width(self.sidebar_width, window_width)
+        }
+    }
+
+    /// How the sidebar's rows look. A phone's drawer is used with a thumb,
+    /// so its rows get a finger's height.
+    pub(super) fn sidebar_look(&self) -> SidebarLook {
+        let mut look = layout::for_config(&self.config, self.fill());
+        if self.drawer_open() {
+            look.density.row_padding = look.density.row_padding.max(DRAWER_ROW_PADDING);
+        }
+        look
     }
 
     /// The open drawer over the window body, and the shade beside it that

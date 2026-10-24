@@ -259,3 +259,64 @@ pub(super) fn system(reply: &Reply) -> String {
     }
     text
 }
+
+pub(super) fn security(reply: &Reply) -> String {
+    let Reply::Security { repositories, note } = reply else {
+        return String::new();
+    };
+    let mut text = String::new();
+    for repo in repositories {
+        let _ = write!(text, "{} ({})", repo.name, repo.host);
+        match repo.state.as_str() {
+            "off" => text.push_str(": Dependabot alerts are off"),
+            "hidden" => text.push_str(": Dependabot alerts are not readable with this sign-in"),
+            "error" => {
+                let _ = write!(text, ": {}", repo.error.as_deref().unwrap_or("not read"));
+            }
+            _ if repo.total == 0 => text.push_str(": no open alerts"),
+            _ => {
+                let _ = write!(text, ": {} open", repo.total);
+            }
+        }
+        text.push('\n');
+        for report in &repo.reports {
+            let _ = writeln!(
+                text,
+                "  reported {} [{}]",
+                report.summary,
+                report.severity.as_deref().unwrap_or("unrated")
+            );
+            let mut parts = vec![report.advisory.clone()];
+            parts.extend(report.reporter.as_ref().map(|login| format!("by {login}")));
+            parts.extend(report.url.clone());
+            let _ = writeln!(text, "           {}", parts.join(" · "));
+        }
+        if repo.more_reports {
+            let _ = writeln!(text, "  more reports in triage on GitHub");
+        }
+        if let Some(error) = &repo.reports_error {
+            let _ = writeln!(text, "  private reports: {error}");
+        }
+        for alert in &repo.alerts {
+            let _ = write!(
+                text,
+                "  {:<9}{} ({}) {}",
+                alert.severity, alert.package, alert.ecosystem, alert.summary
+            );
+            text.push('\n');
+            let fix = alert.patched.as_deref().map_or_else(
+                || "no fix yet".to_owned(),
+                |version| format!("fixed in {version}"),
+            );
+            let _ = writeln!(
+                text,
+                "           {} · {} · {fix} · {}",
+                alert.advisory, alert.manifest, alert.url
+            );
+        }
+    }
+    if let Some(note) = note {
+        text.push_str(note);
+    }
+    text.trim_end().to_owned()
+}

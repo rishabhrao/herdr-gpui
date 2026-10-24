@@ -8,7 +8,7 @@ use super::{
         ARROW_RESERVE,
         cell::{AgentRow, RowContext, RowLayout, RowState, WorkspaceRow},
         line_height,
-        row::{RowKind, RowTree, TokenLook, left_behind, row_text, token_column},
+        row::{Elbow, RowKind, RowTree, TokenLook, guide, left_behind, row_text, token_column},
         tokens::ResolvedToken,
     },
     parts::{self, Line},
@@ -17,6 +17,15 @@ use crate::config::Theme;
 use gpui::{prelude::*, *};
 
 pub(in super::super) struct Minimal;
+
+/// A child's guide gutter, as `(x, width)` from the sidebar's leading edge:
+/// Herdr's own, from the parent's label column, ending at the child's status
+/// dot, which these rows place without the wider indicators' extra indent.
+fn gutter(cx: &RowContext<'_>) -> (f32, f32) {
+    let (x, width) = super::super::row::tree_gutter(cx);
+    let extra = cx.indicators.width(cx.font) - super::super::STATUS_WIDTH;
+    (x, width - extra)
+}
 
 /// A row laid out by the density and style like Herdr's own: one centered
 /// line, or `Some` count of configured lines whose pieces align to the first.
@@ -90,6 +99,7 @@ impl RowLayout for Minimal {
         // teleported checkout is a copy left behind, so it keeps its mark.
         let teleported = row.badge.as_ref().is_some_and(|badge| badge.teleported);
         let mark = (line_height(cx.font) * 0.75).round().min(15.);
+        let worktree = parts::worktree(row.label, &row.icon, mark);
         let status = row.status();
         let line = Line::new(cx.look.content_width(cx.width) - indent, density.gap());
         let line = if row.lines.is_empty() {
@@ -97,6 +107,7 @@ impl RowLayout for Minimal {
                 cx.indicators.width(cx.font),
                 parts::status(status, row.removing, cx),
             )
+            .when_some(worktree, |line, glyph| line.fixed(mark, glyph))
             .fill(
                 name(row.label, RowKind::Workspace, state, teleported, theme),
                 row.label,
@@ -115,7 +126,10 @@ impl RowLayout for Minimal {
                     row.removing,
                 ),
                 line,
-                |line| line,
+                |line| match worktree {
+                    Some(glyph) => line.fixed(mark, parts::first_line(mark, glyph, cx)),
+                    None => line,
+                },
                 cx,
             )
         };
@@ -138,7 +152,20 @@ impl RowLayout for Minimal {
                 )
             });
         let lines = (!row.lines.is_empty()).then_some(row.lines.len());
-        shell(row.label, state, indent, (line, lines), cx)
+        // The first line sits where Herdr's rows put it, so the tick does too.
+        let look = cx.look;
+        let elbow = Elbow::At(look.row_padding() + look.spacing() / 2. + line_height(cx.font) / 2.);
+        shell(row.label, state, indent, (line, lines), cx).children(guide(
+            row.label,
+            row.tree,
+            gutter(cx),
+            elbow,
+            cx,
+        ))
+    }
+
+    fn trunk_below(&self, key: &str, tree: RowTree, cx: &RowContext<'_>) -> Option<Div> {
+        super::super::row::trunk_below(key, tree, gutter(cx), cx)
     }
 
     fn agent(&self, agent: AgentRow<'_>, state: RowState, cx: &RowContext<'_>) -> Div {
@@ -175,15 +202,30 @@ impl RowLayout for Minimal {
                 parts::status(agent.status, false, cx),
             )
             .fixed(icon, parts::icon(agent.icon.path(), icon, color))
-            .fill(name(&agent.key, kind, state, false, theme), agent.name)
-            .when_some(agent.status_text.as_deref(), |line, text| {
+            .lead(
+                name(&agent.key, kind, state, false, theme),
+                agent.name,
+                parts::glyph_at(font, font.size),
+                0.4,
+            )
+            .when_some(agent.pane, |line, pane| {
                 line.label(
+                    div()
+                        .debug_selector(|| format!("pane-{}", agent.key))
+                        .text_color(rgb(theme.muted)),
+                    pane,
+                    parts::glyph_at(font, font.size),
+                    0.5,
+                )
+            })
+            .when_some(agent.status_text.as_deref(), |line, text| {
+                line.keep(
                     div()
                         .debug_selector(|| format!("status-{}", agent.key))
                         .text_color(rgb(cx.indicators.color(agent.status))),
                     text,
                     parts::glyph_at(font, font.size),
-                    0.5,
+                    0.3,
                 )
             });
         shell(&agent.key, state, 0., (line, None), cx)

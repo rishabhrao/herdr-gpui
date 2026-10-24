@@ -187,6 +187,11 @@ impl HerdrWindow {
             self.add_cloud_key(provider, event, window, cx);
             return;
         }
+        #[cfg(feature = "cloud")]
+        if self.menu.page == Some(Page::AddProvider) {
+            self.add_provider_key(event, window, cx);
+            return;
+        }
         #[cfg(feature = "coder")]
         if self.menu.page == Some(Page::AddCoder) {
             if self.coder_key(event, window, cx) {
@@ -334,6 +339,14 @@ impl HerdrWindow {
             }
             "enter" if self.menu.page == Some(Page::OpenLink) => {
                 self.confirm_open_link(window, cx);
+            }
+            #[cfg(feature = "cloud")]
+            "enter" if self.menu.page == Some(Page::CreateCloud) => {
+                self.confirm_create_cloud(window, cx);
+            }
+            #[cfg(feature = "cloud")]
+            "enter" if self.menu.page == Some(Page::DestroyCloud) => {
+                self.confirm_destroy_cloud(window, cx);
             }
             "enter" if self.menu.page == Some(Page::OpenCheckout) => {
                 self.confirm_open_checkout(window, cx);

@@ -7,7 +7,7 @@ approval. Updating the GUI must not stop or upgrade the daemon or its terminals.
 
 The protected release pipeline builds macOS on Apple Silicon and Intel, combining
 both executables into a universal app, and Linux on native Ubuntu 24.04 x86_64 and
-ARM64 runners. Linux remains experimental. Package-managed installs are updated
+ARM64 runners. Package-managed installs are updated
 through their package manager, never by overwriting managed files: a macOS
 Homebrew cask is upgraded by running Homebrew (see [Homebrew Casks](#homebrew-casks)),
 and Linux `.deb`, `.rpm`, and Arch installations use their owning package manager
@@ -86,7 +86,7 @@ verification.
 
 ## Authentication Contract
 
-The source of truth is `crates/herdr-gpui/src/updater/release.rs`. Release assets
+The source of truth is `crates/herdr-updater/src/release.rs`. Release assets
 include `update-manifest.json` and `update-manifest.sig`. Example JSON, formatted
 here only for readability:
 
@@ -320,8 +320,8 @@ python3 scripts/test-updater.py
 python3 scripts/test-updater.py --offline
 ```
 
-The harness uses the real updater sources and the pinned toolchain/dependencies,
-without GPUI's desktop build dependencies. On Linux it also exercises a signed
+The harness builds and tests the `herdr-updater` crate from the workspace lock
+and fails if GPUI is among its dependencies. On Linux it also exercises a signed
 helper handoff, actual standalone replacement/relaunch, tampering refusal,
 cancellation, and rollback in private temporary installations under a test HOME.
 It does not build or test the complete Linux GUI or prove macOS Gatekeeper acceptance.

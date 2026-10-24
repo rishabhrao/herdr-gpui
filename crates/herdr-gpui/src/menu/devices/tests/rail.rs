@@ -43,8 +43,30 @@ fn configured_elsewhere() -> bool {
         || std::env::var_os("HERDR_DAYTONA_API_URL").is_some()
 }
 
+/// Each provider's entry in the rail, once it is in use.
+pub(super) fn rail_id(provider: CloudProvider) -> &'static str {
+    match provider {
+        #[cfg(feature = "azure")]
+        CloudProvider::Azure => "add-device-source-azure",
+        #[cfg(feature = "boat")]
+        CloudProvider::Boat => "add-device-source-boat",
+        #[cfg(feature = "coder")]
+        CloudProvider::Coder => "add-device-source-coder",
+        #[cfg(feature = "container")]
+        CloudProvider::Container => "add-device-source-container",
+        #[cfg(feature = "daytona")]
+        CloudProvider::Daytona => "add-device-source-daytona",
+        #[cfg(feature = "railway")]
+        CloudProvider::Railway => "add-device-source-railway",
+        #[cfg(feature = "opensandbox")]
+        CloudProvider::OpenSandbox => "add-device-source-opensandbox",
+        #[cfg(feature = "sprites")]
+        CloudProvider::Sprites => "add-device-source-sprites",
+    }
+}
+
 #[gpui::test]
-fn every_provider_sits_beside_ssh_and_says_whether_it_is_set_up(cx: &mut gpui::TestAppContext) {
+fn providers_not_in_use_wait_under_add_provider(cx: &mut gpui::TestAppContext) {
     let (view, cx) = open(cx);
     if crate::cloud::unavailable().is_some() {
         // Nothing offers to create a device that could never connect. Windows
@@ -54,32 +76,30 @@ fn every_provider_sits_beside_ssh_and_says_whether_it_is_set_up(cx: &mut gpui::T
     }
     assert_eq!(page(&view, cx), Some(Page::AddDevice));
     assert!(cx.debug_bounds("add-device-source-host").is_some());
-    for provider in CloudProvider::ALL {
-        let id = match provider {
-            #[cfg(feature = "azure")]
-            CloudProvider::Azure => "add-device-source-azure",
-            #[cfg(feature = "boat")]
-            CloudProvider::Boat => "add-device-source-boat",
-            #[cfg(feature = "coder")]
-            CloudProvider::Coder => "add-device-source-coder",
-            #[cfg(feature = "daytona")]
-            CloudProvider::Daytona => "add-device-source-daytona",
-            #[cfg(feature = "railway")]
-            CloudProvider::Railway => "add-device-source-railway",
-        };
-        assert!(cx.debug_bounds(id).is_some(), "{provider:?} is listed");
+    let listed = cx.update(|_, cx| view.read(cx).cloud_listed());
+    for &provider in CloudProvider::ALL {
+        assert_eq!(
+            cx.debug_bounds(rail_id(provider)).is_some(),
+            listed.contains(&provider),
+            "{provider:?} is in the rail only when in use"
+        );
+    }
+    click(cx, "add-device-source-catalog");
+    assert_eq!(page(&view, cx), Some(Page::AddProvider));
+    for &provider in CloudProvider::ALL {
+        let tile: &'static str = format!("add-provider-{}", provider.key()).leak();
+        assert_eq!(
+            cx.debug_bounds(tile).is_some(),
+            !listed.contains(&provider),
+            "{provider:?} has a tile only when the rail omits it"
+        );
     }
     if configured_elsewhere() {
         return;
     }
     #[cfg(feature = "coder")]
     {
-        assert!(cx.debug_bounds("add-device-source-coder-ready").is_none());
-        // Unconfigured, Coder's pane points to Settings.
-        click(cx, "add-device-source-coder");
-        assert_eq!(page(&view, cx), Some(Page::AddCloud(CloudProvider::Coder)));
-        assert!(cx.debug_bounds("cloud-setup-settings").is_some());
-
+        assert!(cx.debug_bounds("add-device-source-coder").is_none());
         cx.update(|_, cx| {
             view.update(cx, |view, _| {
                 view.config.coder.url = Some("https://coder.example.com".into());
@@ -87,6 +107,7 @@ fn every_provider_sits_beside_ssh_and_says_whether_it_is_set_up(cx: &mut gpui::T
         });
         draw(cx);
         assert!(cx.debug_bounds("add-device-source-coder-ready").is_some());
+        assert!(cx.debug_bounds("add-provider-coder").is_none());
     }
 }
 
@@ -128,12 +149,28 @@ fn settings_only() -> Vec<(CloudProvider, &'static str)> {
             CloudProvider::Boat => Some((provider, "add-device-source-boat")),
             #[cfg(feature = "coder")]
             CloudProvider::Coder => None,
+            #[cfg(feature = "container")]
+            CloudProvider::Container => Some((provider, "add-device-source-container")),
             #[cfg(feature = "daytona")]
             CloudProvider::Daytona => Some((provider, "add-device-source-daytona")),
             #[cfg(feature = "railway")]
             CloudProvider::Railway => Some((provider, "add-device-source-railway")),
+            #[cfg(feature = "opensandbox")]
+            CloudProvider::OpenSandbox => Some((provider, "add-device-source-opensandbox")),
+            #[cfg(feature = "sprites")]
+            CloudProvider::Sprites => Some((provider, "add-device-source-sprites")),
         })
         .collect()
+}
+
+/// Show `provider`'s pane, as its rail entry does once it is in use.
+fn show(view: &Entity<HerdrWindow>, cx: &mut VisualTestContext, provider: CloudProvider) {
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.open_source(frame::Source::Cloud(provider), window, cx)
+        })
+    });
+    draw(cx);
 }
 
 fn settings_opened(
@@ -145,12 +182,12 @@ fn settings_opened(
 
 #[gpui::test]
 fn the_settings_button_opens_that_providers_settings(cx: &mut gpui::TestAppContext) {
-    for (provider, entry) in settings_only() {
+    for (provider, _) in settings_only() {
         let (view, cx) = open(cx);
         if crate::cloud::unavailable().is_some() {
             return;
         }
-        click(cx, entry);
+        show(&view, cx, provider);
         assert_eq!(page(&view, cx), Some(Page::AddCloud(provider)));
         click(cx, "cloud-setup-settings");
         assert_eq!(settings_opened(&view, cx), Some(provider));
@@ -160,12 +197,12 @@ fn the_settings_button_opens_that_providers_settings(cx: &mut gpui::TestAppConte
 
 #[gpui::test]
 fn enter_opens_that_providers_settings(cx: &mut gpui::TestAppContext) {
-    for (provider, entry) in settings_only() {
+    for (provider, _) in settings_only() {
         let (view, cx) = open(cx);
         if crate::cloud::unavailable().is_some() {
             return;
         }
-        click(cx, entry);
+        show(&view, cx, provider);
         cx.simulate_keystrokes("enter");
         assert_eq!(settings_opened(&view, cx), Some(provider));
         assert_eq!(page(&view, cx), None);
@@ -174,12 +211,12 @@ fn enter_opens_that_providers_settings(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 fn escape_closes_a_settings_pane_without_opening_settings(cx: &mut gpui::TestAppContext) {
-    for (_, entry) in settings_only() {
+    for (provider, _) in settings_only() {
         let (view, cx) = open(cx);
         if crate::cloud::unavailable().is_some() {
             return;
         }
-        click(cx, entry);
+        show(&view, cx, provider);
         cx.simulate_keystrokes("escape");
         assert_eq!(page(&view, cx), None);
         assert_eq!(settings_opened(&view, cx), None);
@@ -259,7 +296,7 @@ fn the_keyboard_reaches_every_source(cx: &mut gpui::TestAppContext) {
     if crate::cloud::unavailable().is_some() {
         return;
     }
-    let count = 1 + CloudProvider::ALL.len();
+    let count = cx.update(|_, cx| view.read(cx).rail_sources().len());
     let host = Some(Page::AddDevice);
     // Ctrl-Tab steps through every source from the SSH field and wraps.
     let mut seen = vec![page(&view, cx)];
@@ -295,27 +332,17 @@ fn the_picker_names_cloud_machines_only_when_offered() {
 
 #[gpui::test]
 fn switching_sources_never_resizes_the_dialog(cx: &mut gpui::TestAppContext) {
-    let (_view, cx) = open(cx);
+    let (view, cx) = open(cx);
     if crate::cloud::unavailable().is_some() {
         return;
     }
     let ssh = cx.debug_bounds("menu-panel").unwrap();
-    for provider in CloudProvider::ALL {
-        let id = match provider {
-            #[cfg(feature = "azure")]
-            CloudProvider::Azure => "add-device-source-azure",
-            #[cfg(feature = "boat")]
-            CloudProvider::Boat => "add-device-source-boat",
-            #[cfg(feature = "coder")]
-            CloudProvider::Coder => "add-device-source-coder",
-            #[cfg(feature = "daytona")]
-            CloudProvider::Daytona => "add-device-source-daytona",
-            #[cfg(feature = "railway")]
-            CloudProvider::Railway => "add-device-source-railway",
-        };
-        click(cx, id);
+    for &provider in CloudProvider::ALL {
+        show(&view, cx, provider);
         assert_eq!(cx.debug_bounds("menu-panel").unwrap(), ssh, "{provider:?}");
     }
+    click(cx, "add-device-source-catalog");
+    assert_eq!(cx.debug_bounds("menu-panel").unwrap(), ssh, "Add provider");
     click(cx, "add-device-source-host");
     assert_eq!(cx.debug_bounds("menu-panel").unwrap(), ssh);
     // The fixed height still leaves the dialog inside a short window.

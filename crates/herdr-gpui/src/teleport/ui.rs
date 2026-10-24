@@ -5,13 +5,13 @@
 //! cancels discovery and review; a move in progress keeps going and reports
 //! its outcome as a flash, because stopping halfway would strand work.
 
-use super::{
+use crate::teleport::{
+    carry::describe,
     error::{Error, Step},
     job::{
         self, Action, Candidate, Destination, GitHubAccess, HostRepositories, Outcome, Place,
         Review, Source,
     },
-    launch::{Work, command_line},
     marks::{Destination as MarkDestination, Mark},
     provision::Arrival,
     remote::MatchReason,
@@ -309,23 +309,6 @@ fn destination_text(candidate: &Candidate) -> (String, String) {
                 None => "Copies the repository there first".to_owned(),
             },
         ),
-    }
-}
-
-pub(super) fn describe(work: &Work, action: &Action) -> String {
-    let program = work.program().unwrap_or("shell");
-    match action {
-        Action::Shell => "Shell".to_owned(),
-        Action::Resume(agent) => format!("{}: resume session", agent.binary()),
-        Action::Handoff { to, .. } if to.binary() == program => {
-            format!("{program}: handoff note, then start again")
-        }
-        Action::Handoff { to, .. } => {
-            format!("{program}: handoff note, continued by {}", to.binary())
-        }
-        Action::Start(argv) => format!("Start {}", command_line(argv)),
-        Action::Run(argv) => format!("Run {}", command_line(argv)),
-        Action::Missing(program) => format!("{program}: not installed there, skipped"),
     }
 }
 

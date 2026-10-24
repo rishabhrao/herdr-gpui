@@ -1,4 +1,5 @@
 use super::*;
+use crate::control::ControlError;
 use std::{fs, path::Path, process::Command};
 
 fn git(dir: &Path, args: &[&str]) {
@@ -63,16 +64,16 @@ fn the_current_checkout_is_named_as_the_daemon_names_it() {
     ));
     assert!(matches!(
         rejected(crate::Error::DetachedHead),
-        crate::Error::ControlRejected {
+        crate::Error::Control(ControlError::Rejected {
             code: ErrorCode::InvalidRequest,
             ..
-        }
+        })
     ));
     assert!(matches!(
         rejected(crate::Error::CheckpointMissing),
-        crate::Error::ControlRejected {
+        crate::Error::Control(ControlError::Rejected {
             code: ErrorCode::NotFound,
             ..
-        }
+        })
     ));
 }

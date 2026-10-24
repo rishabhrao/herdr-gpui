@@ -18,11 +18,21 @@ const MAX_BODY: usize = 64 * 1024;
 const MAX_LINES: usize = 400;
 const MAX_LINE: usize = 2000;
 const MAX_URL: usize = 1024;
+/// List nesting levels drawn; deeper items line up with the last.
+const MAX_INDENT: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
     Heading,
     Bullet,
+    /// An ordered list item, with the number it was written with.
+    Numbered(u32),
+    /// A `>` quoted line.
+    Quote,
+    /// A `---` thematic break.
+    Rule,
+    /// A `|`-separated table row, its cells joined by a bar.
+    Table,
     Paragraph,
     /// A line inside a fenced code block, drawn verbatim in the terminal font.
     Code,
@@ -43,7 +53,11 @@ pub(crate) struct Line {
     pub code: Vec<Range<usize>>,
     /// Byte ranges of `**strong**` spans in `text`.
     pub bold: Vec<Range<usize>>,
+    /// Byte ranges of `*emphasis*` and `_emphasis_` spans in `text`.
+    pub italic: Vec<Range<usize>>,
     pub links: Vec<Link>,
+    /// How deep a list item is nested, from its leading spaces.
+    pub indent: u8,
 }
 
 impl Line {
@@ -53,7 +67,9 @@ impl Line {
             text,
             code: Vec::new(),
             bold: Vec::new(),
+            italic: Vec::new(),
             links: Vec::new(),
+            indent: 0,
         }
     }
 }
@@ -62,6 +78,7 @@ impl Line {
 enum Mark {
     Code,
     Bold,
+    Italic,
     Link,
 }
 
@@ -73,6 +90,11 @@ impl Line {
             .iter()
             .map(|range| (range.clone(), Mark::Code))
             .chain(self.bold.iter().map(|range| (range.clone(), Mark::Bold)))
+            .chain(
+                self.italic
+                    .iter()
+                    .map(|range| (range.clone(), Mark::Italic)),
+            )
             .chain(
                 self.links
                     .iter()
@@ -110,24 +132,55 @@ pub(crate) struct DaemonText {
     pub release_notes: Prepared,
 }
 
+/// How much of a body is drawn.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Limits {
+    /// Bytes scanned; a longer body is cut at a character boundary.
+    pub(crate) body: usize,
+    pub(crate) lines: usize,
+    /// Characters kept of one line.
+    pub(crate) line: usize,
+}
+
+/// The limits for daemon text: release notes and announcements.
+const DAEMON: Limits = Limits {
+    body: MAX_BODY,
+    lines: MAX_LINES,
+    line: MAX_LINE,
+};
+
 /// Bounded, display-safe lines of a daemon-provided body.
 pub(crate) fn parse(body: &str) -> Vec<Line> {
-    let mut end = body.len().min(MAX_BODY);
+    parse_within(body, DAEMON).0
+}
+
+/// A quoted line saying something about the text around it, such as that
+/// part of it is not shown.
+pub(crate) fn note(text: &str) -> Line {
+    Line::plain(Kind::Quote, text.to_owned())
+}
+
+/// [`parse`] within `limits`, and whether part of the body was left out.
+pub(crate) fn parse_within(body: &str, limits: Limits) -> (Vec<Line>, bool) {
+    let mut end = body.len().min(limits.body);
     while !body.is_char_boundary(end) {
         end -= 1;
     }
+    let mut cut = end < body.len() || body[..end].lines().count() > limits.lines;
     let mut lines = Vec::new();
     let mut fenced = false;
-    for raw in body[..end].lines().take(MAX_LINES) {
+    for raw in body[..end].lines().take(limits.lines) {
+        cut |= raw.chars().count() > limits.line;
         let trimmed = raw.trim_end();
         if trimmed.trim_start().starts_with("```") {
             fenced = !fenced;
             continue;
         }
         if fenced {
-            lines.push(Line::plain(Kind::Code, safe_text(trimmed, MAX_LINE)));
+            lines.push(Line::plain(Kind::Code, safe_text(trimmed, limits.line)));
             continue;
         }
+        let indent = list_indent(trimmed);
         let trimmed = trimmed.trim_start();
         if trimmed.is_empty() {
             // Runs of blank lines read as one paragraph break.
@@ -139,31 +192,99 @@ pub(crate) fn parse(body: &str) -> Vec<Line> {
             }
             continue;
         }
+        if is_rule(trimmed) {
+            lines.push(Line::plain(Kind::Rule, String::new()));
+            continue;
+        }
+        if let Some(cells) = table_row(trimmed) {
+            // The `|---|---|` row under a header only aligns columns.
+            if !cells.iter().all(|cell| is_alignment(cell)) {
+                let row = cells.iter().map(|cell| cell.trim()).collect::<Vec<_>>();
+                lines.push(Line::plain(
+                    Kind::Table,
+                    safe_text(&row.join(" \u{2502} "), limits.line),
+                ));
+            }
+            continue;
+        }
         let heading = trimmed.trim_start_matches('#');
         let (kind, rest) = if heading.len() < trimmed.len() && heading.starts_with(' ') {
             (Kind::Heading, heading.trim())
         } else if let Some(rest) = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "))
         {
             (Kind::Bullet, rest)
+        } else if let Some((number, rest)) = numbered(trimmed) {
+            (Kind::Numbered(number), rest)
+        } else if let Some(rest) = trimmed.strip_prefix('>') {
+            (Kind::Quote, rest.trim_start())
         } else {
             (Kind::Paragraph, trimmed)
         };
-        let safe = safe_text(rest, MAX_LINE);
-        if kind == Kind::Heading {
-            lines.push(Line::plain(kind, safe));
+        let safe = safe_text(rest, limits.line);
+        let mut line = if kind == Kind::Heading {
+            Line::plain(kind, safe)
         } else {
-            lines.push(inline(kind, &safe));
+            inline(kind, &safe)
+        };
+        if matches!(kind, Kind::Bullet | Kind::Numbered(_)) {
+            line.indent = indent;
         }
+        lines.push(line);
     }
     while lines.last().is_some_and(|line| line.kind == Kind::Blank) {
         lines.pop();
     }
-    lines
+    (lines, cut)
 }
 
-/// Inline code spans, `**strong**` text, `[label](url)` links, and bare URLs.
+/// How deep a list item sits: two leading spaces, or a tab, per level.
+fn list_indent(line: &str) -> u8 {
+    let spaces: usize = line
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .map(|c| if c == '\t' { 2 } else { 1 })
+        .sum();
+    u8::try_from((spaces / 2).min(MAX_INDENT)).unwrap_or(0)
+}
+
+/// `---`, `***`, or `___`, with optional spaces between.
+fn is_rule(line: &str) -> bool {
+    let marks: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+    marks.len() >= 3
+        && ['-', '*', '_']
+            .iter()
+            .any(|mark| marks.chars().all(|c| c == *mark))
+}
+
+/// A table row's cells, when the line is one.
+fn table_row(line: &str) -> Option<Vec<&str>> {
+    let inner = line.strip_prefix('|')?;
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    Some(inner.split('|').collect())
+}
+
+fn is_alignment(cell: &str) -> bool {
+    let cell = cell.trim();
+    cell.contains('-') && cell.chars().all(|c| matches!(c, '-' | ':'))
+}
+
+/// `12. item` or `12) item`: its number and text.
+fn numbered(line: &str) -> Option<(u32, &str)> {
+    let digits = line.find(|c: char| !c.is_ascii_digit())?;
+    if digits == 0 || digits > 9 {
+        return None;
+    }
+    let rest = line[digits..]
+        .strip_prefix(". ")
+        .or_else(|| line[digits..].strip_prefix(") "))?;
+    Some((line[..digits].parse().ok()?, rest))
+}
+
+/// Inline code spans, `**strong**` and `*emphasized*` text, `[label](url)`
+/// links, and bare URLs.
 fn inline(kind: Kind, text: &str) -> Line {
     let mut line = Line::plain(kind, String::with_capacity(text.len()));
     let mut rest = text;
@@ -185,6 +306,30 @@ fn inline(kind: Kind, text: &str) -> Line {
             line.text.push_str(&after[..close]);
             line.bold.push(start..line.text.len());
             rest = &after[close + 2..];
+            continue;
+        }
+        // Emphasis opens only after a non-word character, so `snake_case`
+        // and `2*3*4` stay literal.
+        let opens = line
+            .text
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric());
+        if opens
+            && let Some(marker) = rest.chars().next().filter(|c| matches!(c, '*' | '_'))
+            && let Some(after) = rest.strip_prefix(marker)
+            && !after.starts_with(marker)
+            && let Some(close) = after.find(marker)
+            && flanked(&after[..close])
+            && after[close + 1..]
+                .chars()
+                .next()
+                .is_none_or(|c| !c.is_alphanumeric())
+        {
+            let start = line.text.len();
+            line.text.push_str(&after[..close]);
+            line.italic.push(start..line.text.len());
+            rest = &after[close + 1..];
             continue;
         }
         if let Some((label, url, consumed)) = markdown_link(rest) {
@@ -280,7 +425,19 @@ pub(crate) fn line(
     let accent = theme.ink(theme.palette[4]);
     let row = div()
         .debug_selector(move || format!("{id}-line-{index}"))
-        .min_w_0();
+        .min_w_0()
+        .pl(px(f32::from(line.indent) * 14.));
+    let item = |row: Div, marker: String| {
+        row.flex()
+            .gap(px(6.))
+            .child(div().flex_none().text_color(rgb(accent)).child(marker))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(rich(id, index, line, theme, accent)),
+            )
+    };
     match line.kind {
         Kind::Blank => row.h(px(6.)),
         Kind::Heading => row
@@ -295,16 +452,21 @@ pub(crate) fn line(
             .whitespace_nowrap()
             .overflow_hidden()
             .child(line.text.clone()),
-        Kind::Bullet => row
-            .flex()
-            .gap(px(6.))
-            .child(div().flex_none().text_color(rgb(accent)).child("•"))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(rich(id, index, line, theme, accent)),
-            ),
+        Kind::Bullet => item(row, "\u{2022}".to_owned()),
+        Kind::Numbered(number) => item(row, format!("{number}.")),
+        Kind::Quote => row
+            .pl(px(8.))
+            .border_l_2()
+            .border_color(rgb(theme.active))
+            .text_color(rgb(theme.subtext()))
+            .child(rich(id, index, line, theme, accent)),
+        Kind::Rule => row.py(px(4.)).child(div().h(px(1.)).bg(rgb(theme.active))),
+        Kind::Table => row
+            .px(px(8.))
+            .text_font(mono)
+            .whitespace_nowrap()
+            .overflow_hidden()
+            .child(line.text.clone()),
         Kind::Paragraph => row.child(rich(id, index, line, theme, accent)),
     }
 }
@@ -319,6 +481,10 @@ fn rich(id: &'static str, index: usize, line: &Line, theme: &Theme, accent: u32)
         font_weight: Some(FontWeight::SEMIBOLD),
         ..Default::default()
     };
+    let italic = HighlightStyle {
+        font_style: Some(FontStyle::Italic),
+        ..Default::default()
+    };
     let link = HighlightStyle {
         color: Some(rgb(accent).into()),
         underline: Some(UnderlineStyle {
@@ -331,6 +497,7 @@ fn rich(id: &'static str, index: usize, line: &Line, theme: &Theme, accent: u32)
         let style = match mark {
             Mark::Code => code,
             Mark::Bold => bold,
+            Mark::Italic => italic,
             Mark::Link => link,
         };
         (range, style)
@@ -351,6 +518,9 @@ fn rich(id: &'static str, index: usize, line: &Line, theme: &Theme, accent: u32)
         )
         .into_any_element()
 }
+
+#[cfg(test)]
+mod structure;
 
 #[cfg(test)]
 mod tests {

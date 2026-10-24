@@ -29,7 +29,7 @@ pub enum Error {
     Registry {
         operation: &'static str,
         #[source]
-        source: windows::core::Error,
+        source: windows_result::Error,
     },
 }
 
@@ -117,7 +117,7 @@ fn set_in(root: &Key, launcher: Option<&Path>) -> Result<(), Error> {
 fn read<T>(
     root: &Key,
     path: &str,
-    get: impl FnOnce(&Key) -> windows::core::Result<T>,
+    get: impl FnOnce(&Key) -> windows_result::Result<T>,
 ) -> Result<Option<T>, Error> {
     match root.open(path).and_then(|key| get(&key)) {
         Ok(value) => Ok(Some(value)),
@@ -149,11 +149,10 @@ fn remove(root: &Key, path: &str) -> Result<(), Error> {
     }
 }
 
-fn missing(error: &windows::core::Error) -> bool {
+fn missing(error: &windows_result::Error) -> bool {
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND};
-    [ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND]
-        .into_iter()
-        .any(|code| error.code() == windows::core::HRESULT::from_win32(code))
+    windows_result::WIN32_ERROR::from_error(error)
+        .is_some_and(|code| [ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND].contains(&code.0))
 }
 
 #[cfg(test)]
