@@ -3,14 +3,18 @@
 //! left go to the next session, right to the one before. A swipe moves one
 //! session however far it travels or coasts, and the ends do not wrap.
 use crate::{HerdrWindow, window::Flash};
-use gpui::{App, Context, ScrollWheelEvent, Window, px};
+use gpui::{App, Context, ScrollWheelEvent, TouchPhase, Window, px};
 use std::time::{Duration, Instant};
 
 /// Sideways travel, in pixels, that makes a swipe.
-const TRAVEL: f32 = 90.;
-/// A pause this long ends a swipe. A trackpad's or a fling's coasting keeps
-/// one going, so it steps once.
+const TRAVEL: f32 = 70.;
+/// A pause this long ends a swipe.
 const GAP: Duration = Duration::from_millis(250);
+/// After a step, the coasting that follows is the same swipe until a scroll
+/// this small, in pixels, or one the other way: a trackpad's or a fling's
+/// coasting slows down and never turns back, and a hand that swipes again
+/// starts slowly.
+const QUIET: f32 = 4.;
 /// How long a swipe made before the session list was read still counts.
 const WAIT: Duration = Duration::from_secs(2);
 /// A scroll counts as sideways when it moves this many times more across
@@ -28,27 +32,38 @@ pub(crate) enum Step {
 pub(crate) struct SessionSwipe {
     travel: f32,
     last: Option<Instant>,
-    stepped: bool,
+    /// The direction of the step just taken, while its coasting goes on.
+    coasting: Option<f32>,
     waiting: Option<(Step, Instant)>,
 }
 
 impl SessionSwipe {
     /// Adds one scroll's travel; the step to take when it completes a swipe.
-    pub(crate) fn scroll(&mut self, (x, y): (f32, f32), now: Instant) -> Option<Step> {
+    /// `touched` is a trackpad's fingers coming down, which always starts one.
+    pub(crate) fn scroll(&mut self, (x, y): (f32, f32), touched: bool, now: Instant) -> Option<Step> {
+        if touched || self.last.is_none_or(|last| now.duration_since(last) > GAP) {
+            self.travel = 0.;
+            self.coasting = None;
+        }
         if x.abs() < y.abs() * SIDEWAYS || x == 0. {
             return None;
         }
-        if self.last.is_none_or(|last| now.duration_since(last) > GAP) {
-            self.travel = 0.;
-            self.stepped = false;
-        }
         self.last = Some(now);
+        if let Some(direction) = self.coasting {
+            if x.abs() >= QUIET && x.signum() == direction {
+                return None;
+            }
+            self.coasting = None;
+            self.travel = 0.;
+        }
         self.travel += x;
-        if self.stepped || self.travel.abs() < TRAVEL {
+        if self.travel.abs() < TRAVEL {
             return None;
         }
-        self.stepped = true;
-        Some(if self.travel < 0. {
+        let direction = self.travel.signum();
+        self.coasting = Some(direction);
+        self.travel = 0.;
+        Some(if direction < 0. {
             Step::Next
         } else {
             Step::Previous
@@ -99,7 +114,8 @@ impl HerdrWindow {
             }
             let delta = event.delta.pixel_delta(px(20.));
             let travel = (f32::from(delta.x), f32::from(delta.y));
-            if let Some(step) = this.session_swipe.scroll(travel, Instant::now()) {
+            let touched = event.touch_phase == TouchPhase::Started;
+            if let Some(step) = this.session_swipe.scroll(travel, touched, Instant::now()) {
                 this.step_session(step, true, cx);
             }
         })
