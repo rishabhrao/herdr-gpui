@@ -115,7 +115,7 @@ impl HerdrWindow {
 
     /// The socket this window's local endpoint would dial. `Local` resolves
     /// through the environment, so no session name can say which one is current.
-    fn local_socket(&self) -> Option<std::path::PathBuf> {
+    pub(crate) fn local_socket(&self) -> Option<std::path::PathBuf> {
         self.endpoints[0].connection.target.socket_path().ok()
     }
 
@@ -557,21 +557,7 @@ impl HerdrWindow {
             Row::Add(target) => self.open_session_create(target, window, cx),
             Row::Local(name) => {
                 self.dismiss_menu(window, cx);
-                self.select_local_session(&name, cx);
-                // The picker's own follow-up: a sidebar showing one device
-                // follows the host just chosen, and another session's tree is
-                // not this one's. All Devices stays All Devices.
-                if self.device_filter.is_some() {
-                    self.device_filter = Some(self.endpoints[0].id.clone());
-                }
-                for scroll in &self.sidebar_scroll {
-                    scroll.set_offset(Point::default());
-                }
-                for revealed in &self.sidebar_revealed {
-                    revealed.set(None);
-                }
-                // The row a reveal left for the next frame is in the old list.
-                self.sidebar_pin_reveal.set(None);
+                self.attach_local_session(&name, cx);
             }
             // A device row is one of that device's sessions, so it retargets the
             // device rather than adding an endpoint for every session it runs.
@@ -603,6 +589,24 @@ impl HerdrWindow {
                 self.sidebar_pin_reveal.set(None);
             }
         }
+    }
+
+    /// Attach to local session `name`, from the picker or a swipe.
+    pub(crate) fn attach_local_session(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.select_local_session(name, cx);
+        // A sidebar showing one device follows the host just chosen, and
+        // another session's tree is not this one's. All Devices stays.
+        if self.device_filter.is_some() {
+            self.device_filter = Some(self.endpoints[0].id.clone());
+        }
+        for scroll in &self.sidebar_scroll {
+            scroll.set_offset(Point::default());
+        }
+        for revealed in &self.sidebar_revealed {
+            revealed.set(None);
+        }
+        // The row a reveal left for the next frame is in the old list.
+        self.sidebar_pin_reveal.set(None);
     }
 
     pub(super) fn sessions_key(

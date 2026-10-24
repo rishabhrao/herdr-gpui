@@ -76,7 +76,8 @@ impl HerdrWindow {
             .flex_col()
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll();
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis();
         let mut agents = div()
             .id("agents-scroll")
             .debug_selector(|| "agents-scroll".into())
@@ -86,7 +87,8 @@ impl HerdrWindow {
             .flex_col()
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll();
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis();
         spaces = spaces.track_scroll(&self.sidebar_scroll[0]);
         agents = agents.track_scroll(&self.sidebar_scroll[1]);
         let multi = self.endpoints.len() > 1;
@@ -690,6 +692,7 @@ impl HerdrWindow {
         div()
             .id("sidebar")
             .debug_selector(|| "sidebar".into())
+            .on_scroll_wheel(self.session_swipe_listener(cx))
             .role(Role::Navigation)
             .aria_label("Sidebar")
             .relative()

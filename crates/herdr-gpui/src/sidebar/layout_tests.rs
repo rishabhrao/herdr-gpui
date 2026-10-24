@@ -751,6 +751,7 @@ pub(crate) fn fixture_window(window: &mut Window, cx: &mut Context<HerdrWindow>)
         prefix_armed: false,
         resize_mode: false,
         server_keys: None,
+        session_swipe: Default::default(),
         shift_taps: Default::default(),
         _prefix_interceptor: HerdrWindow::intercept_prefix(window, cx),
     }

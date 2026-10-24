@@ -258,6 +258,7 @@ impl HerdrWindow {
             selection_follow: Default::default(),
             sent_focus: None,
             server_keys: None,
+            session_swipe: Default::default(),
             sessions: sessions::Sessions::default(),
             sessions_anchor: Default::default(),
             settings: Default::default(),

@@ -249,8 +249,10 @@ impl HerdrWindow {
     /// page starts one; results are cached between opens.
     pub(crate) fn poll_sessions(&mut self, cx: &mut Context<Self>) {
         let development = self.local_development();
-        let open = self.menu.page == Some(crate::menu::Page::Sessions);
         let now = Instant::now();
+        // A swipe made before the list was read reads it as the popup does.
+        let open =
+            self.menu.page == Some(crate::menu::Page::Sessions) || self.session_swipe.waiting(now);
         let targets = self.probe_targets();
         self.sessions.devices.forget_replaced(&targets);
         // Hold the catalog steady through the mutation and its successful exit
@@ -266,6 +268,7 @@ impl HerdrWindow {
             changed = true;
         }
         if changed {
+            self.step_waiting_session(cx);
             cx.notify();
         }
     }

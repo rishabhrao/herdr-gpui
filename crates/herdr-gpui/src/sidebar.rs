@@ -20,6 +20,7 @@ mod render;
 mod reorder;
 mod row;
 mod search;
+mod session_swipe;
 mod sticky;
 mod tokens;
 mod view;
@@ -46,6 +47,7 @@ pub(crate) use {
     reorder::WorkspaceDrag,
     row::{compact, github_mark, label_text, styled as styled_token},
     search::SidebarSearch,
+    session_swipe::SessionSwipe,
     view::SidebarView,
     workspaces::{workspace_entries, workspace_label},
 };

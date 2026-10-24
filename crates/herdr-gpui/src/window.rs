@@ -312,6 +312,8 @@ pub(crate) struct HerdrWindow {
     pub(crate) sent_focus: Option<bool>,
     /// The selected device's server keymap, when it opted into one.
     pub(crate) server_keys: Option<server_keys::ServerKeymap>,
+    /// A sideways swipe on the sidebar, stepping between local sessions.
+    pub(crate) session_swipe: sidebar::SessionSwipe,
     /// Local sessions on this machine, scanned on a worker while the popup is open.
     pub(crate) sessions: sessions::Sessions,
     /// Where the footer's sessions button last painted. The window owns it so a
